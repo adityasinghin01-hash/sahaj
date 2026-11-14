@@ -1,0 +1,19 @@
+{
+  "extends": "../../../tsconfig.base.json",
+  "compilerOptions": {
+    "noEmit": true,
+    "noUncheckedIndexedAccess": false,
+    "paths": {
+      "@/*": ["../../../apps/api/src/*"],
+      "@sahaj/gate": ["../../../packages/gate/src/index.ts"],
+      "@sahaj/atlas": ["../../../packages/atlas/src/index.ts"],
+      "@sahaj/adapters": ["../../../packages/adapters/src/index.ts"]
+    },
+    "types": ["node"]
+  },
+  "include": [
+    "./**/*.ts",
+    "../../../harness/core1/**/*.ts",
+    "../../../harness/core2/**/*.ts"
+  ]
+}
