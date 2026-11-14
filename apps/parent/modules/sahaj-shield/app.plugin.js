@@ -48,6 +48,10 @@ function applyManifest(androidManifest) {
   manifest.$['xmlns:tools'] = manifest.$['xmlns:tools'] || 'http://schemas.android.com/tools';
   manifest['uses-permission'] = manifest['uses-permission'] || [];
   for (const p of PERMISSIONS) upsertByName(manifest['uses-permission'], { $: { 'android:name': p } });
+  // T5: granted by the user in Settings → Usage access. It is a "protected" permission, so lint needs the ignore.
+  upsertByName(manifest['uses-permission'], {
+    $: { 'android:name': 'android.permission.PACKAGE_USAGE_STATS', 'tools:ignore': 'ProtectedPermissions' },
+  });
 
   manifest.queries = manifest.queries || [{}];
   const q = manifest.queries[0];
@@ -92,6 +96,31 @@ function applyManifest(androidManifest) {
     },
     'intent-filter': [
       { action: [{ $: { 'android:name': 'android.telecom.CallScreeningService' } }] },
+    ],
+  });
+
+  // T4: logging only. Always places the call unmodified (Phase 2 adds real behaviour).
+  upsertByName(app.service, {
+    $: {
+      'android:name': `${PKG}.ShieldCallRedirectionService`,
+      'android:exported': 'true',
+      'android:permission': 'android.permission.BIND_CALL_REDIRECTION_SERVICE',
+    },
+    'intent-filter': [
+      { action: [{ $: { 'android:name': 'android.telecom.CallRedirectionService' } }] },
+    ],
+  });
+
+  // T6: logging only. Looks at WhatsApp / WhatsApp Business notifications, logs yes/no facts, never the text.
+  upsertByName(app.service, {
+    $: {
+      'android:name': `${PKG}.ShieldNotificationListener`,
+      'android:exported': 'true',
+      'android:label': 'Sahaj Maa',
+      'android:permission': 'android.permission.BIND_NOTIFICATION_LISTENER_SERVICE',
+    },
+    'intent-filter': [
+      { action: [{ $: { 'android:name': 'android.service.notification.NotificationListenerService' } }] },
     ],
   });
 

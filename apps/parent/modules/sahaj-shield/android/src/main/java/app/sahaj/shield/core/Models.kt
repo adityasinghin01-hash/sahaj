@@ -36,7 +36,14 @@ data class LocalVerdict(
   val maskedText: String,
   val senderType: String,
   val linkDomains: List<String>,
-)
+  /** ScamType from rules.json ("kyc_block", "otp_theft", …). Only shown on the debug screen. */
+  val scamType: String = "unknown",
+) {
+  companion object {
+    /** Rule ids that mean "OTP during an unsaved call". rules.json v1 uses "pattern.P1". */
+    val P1_RULE_IDS = setOf("P1", "pattern.P1")
+  }
+}
 
 /** Implemented by the rules-engine card. Must be pure and fast (runs inside a BroadcastReceiver). */
 interface RulesEngine {
@@ -49,8 +56,8 @@ fun interface RulesEngineFactory {
 }
 
 /**
- * Used until the real engine lands: everything is GREEN, so nothing leaves the phone.
- * The rules-engine card replaces [RulesEngineRegistry.factory].
+ * Fallback when rules.json cannot be parsed (e.g. the placeholder): everything is GREEN,
+ * so nothing leaves the phone. See [RulesEngineRegistry.load].
  */
 class NoRulesEngine : RulesEngine {
   override fun check(input: SmsInput, ctx: PhoneContext) = LocalVerdict(
@@ -63,7 +70,49 @@ class NoRulesEngine : RulesEngine {
   )
 }
 
+/**
+ * The real engine from packages/shield-kotlin (compiled into this module from its source dir).
+ * Maps the module's types to the engine's types and back. The pipeline still re-masks every text field.
+ */
+class JsonRulesEngineAdapter(rulesJson: String) : RulesEngine {
+  private val engine = app.sahaj.shield.rules.JsonRulesEngine(rulesJson)
+
+  override fun check(input: SmsInput, ctx: PhoneContext): LocalVerdict {
+    val v = engine.check(
+      app.sahaj.shield.rules.SmsInput(input.sender, input.body, input.receivedAtMs),
+      app.sahaj.shield.rules.PhoneContext(ctx.onCallWithUnsaved, ctx.callStartedAtMs),
+    )
+    return LocalVerdict(
+      level = when (v.level) {
+        app.sahaj.shield.rules.Level.RED -> LocalLevel.RED
+        app.sahaj.shield.rules.Level.YELLOW -> LocalLevel.YELLOW
+        app.sahaj.shield.rules.Level.GREEN -> LocalLevel.GREEN
+      },
+      reasons = v.reasons,
+      matchedRules = v.matchedRules,
+      maskedText = v.maskedText,
+      senderType = v.senderType,
+      linkDomains = v.linkDomains,
+      scamType = v.scamType,
+    )
+  }
+}
+
 object RulesEngineRegistry {
   @Volatile
-  var factory: RulesEngineFactory = RulesEngineFactory { NoRulesEngine() }
+  var factory: RulesEngineFactory = RulesEngineFactory { json -> JsonRulesEngineAdapter(json) }
+
+  /** Name of the engine that is actually running, for getStatus(): "json" or "none". */
+  data class Loaded(val engine: RulesEngine, val name: String, val error: String?)
+
+  /**
+   * Builds the engine from rules.json. A missing or placeholder rules file ({"version":"0"}) cannot be
+   * parsed by the real engine; then everything stays GREEN (nothing leaves the phone) and [Loaded.error] says why.
+   */
+  fun load(rulesJson: String): Loaded = try {
+    val e = factory.create(rulesJson)
+    Loaded(e, if (e is NoRulesEngine) "none" else "json", null)
+  } catch (e: Exception) {
+    Loaded(NoRulesEngine(), "none", "${e.javaClass.simpleName}: ${e.message?.take(120)}")
+  }
 }

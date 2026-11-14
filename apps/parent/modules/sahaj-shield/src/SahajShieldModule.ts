@@ -13,8 +13,16 @@ declare class SahajShieldModule extends NativeModule<SahajShieldModuleEvents> {
   /** READ_PHONE_STATE + READ_CONTACTS (+ POST_NOTIFICATIONS on Android 13+). */
   requestPhonePermissions(): Promise<boolean>;
   requestCallScreeningRole(): Promise<boolean>;
-  /** ROLE_CALL_REDIRECTION. "not_declared_yet" until the Phase 2 CallRedirectionService exists. */
+  /** ROLE_CALL_REDIRECTION: opens the system role dialog (T4). */
   requestCallRedirectionRole(): Promise<CallRedirectionResult>;
+  /** T5: PACKAGE_USAGE_STATS granted in Settings → Usage access. */
+  isUsageAccessGranted(): boolean;
+  /** T5: package name that came to the foreground in the last 10 s, or null. Throws if usage access is off. */
+  foregroundAppNow(): string | null;
+  /** T6: Sahaj Maa enabled in Settings → Notification access. */
+  isNotificationAccessGranted(): boolean;
+  /** T4/T6 service log lines, newest first. Memory only; never numbers or message text. */
+  getDebugEvents(): string[];
   requestOverlayPermission(): Promise<boolean>;
   /** Debug screen only: Log.i("SahajShieldTest", message). */
   debugLog(message: string): void;

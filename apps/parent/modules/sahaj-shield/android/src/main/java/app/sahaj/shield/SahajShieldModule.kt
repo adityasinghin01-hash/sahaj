@@ -1,7 +1,9 @@
 package app.sahaj.shield
 
 import android.Manifest
+import android.app.NotificationManager
 import android.app.role.RoleManager
+import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
@@ -18,6 +20,9 @@ import expo.modules.kotlin.modules.Module
 import expo.modules.kotlin.modules.ModuleDefinition
 import expo.modules.kotlin.records.Field
 import expo.modules.kotlin.records.Record
+
+/** Logcat tag for the debug test screen and the T4/T5/T6 logging services. */
+internal const val TEST_LOG_TAG = "SahajShieldTest"
 
 class PairingRecord : Record {
   @Field val baseUrl: String = ""
@@ -49,6 +54,7 @@ class SahajShieldModule : Module() {
         "maskedText" to v.maskedText, // already re-masked by the pipeline
         "senderType" to v.senderType,
         "linkDomains" to v.linkDomains,
+        "scamType" to v.scamType,
       )
     )
   }
@@ -95,8 +101,8 @@ class SahajShieldModule : Module() {
 
     /**
      * ROLE_CALL_REDIRECTION. Resolves "held" | "denied" | "not_declared_yet" | "role_unavailable" | "unsupported_sdk".
-     * The CallRedirectionService manifest entry is Phase 2; until it exists Android cannot grant the role,
-     * so this resolves "not_declared_yet" without opening the system dialog.
+     * ShieldCallRedirectionService is declared, so this opens the system role dialog. "not_declared_yet"
+     * is kept only as a guard in case the manifest entry is missing from a build.
      */
     AsyncFunction("requestCallRedirectionRole") { promise: Promise ->
       if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) { promise.resolve("unsupported_sdk"); return@AsyncFunction }
@@ -109,6 +115,21 @@ class SahajShieldModule : Module() {
       pendingRedirection = promise
       activity.startActivityForResult(rm.createRequestRoleIntent(RoleManager.ROLE_CALL_REDIRECTION), RC_REDIRECTION)
     }
+
+    /** T5: PACKAGE_USAGE_STATS is granted in Settings → Usage access. */
+    Function("isUsageAccessGranted") { UsageAccess.isGranted(context) }
+
+    /** T5: package name of the app that came to the foreground most recently in the last 10 s, or null. */
+    Function("foregroundAppNow") {
+      if (!UsageAccess.isGranted(context)) throw CodedException("E_NO_USAGE_ACCESS", "Usage access is not granted", null)
+      UsageAccess.foregroundAppNow(context)
+    }
+
+    /** T6: Sahaj Maa is enabled in Settings → Notification access. */
+    Function("isNotificationAccessGranted") { notificationAccessGranted() }
+
+    /** T4/T6: recent debug lines from the redirection and notification services (newest first, memory only). */
+    Function("getDebugEvents") { shield.debugEvents.snapshot() }
 
     /** Debug test screen: writes to logcat with tag "SahajShieldTest". */
     Function("debugLog") { message: String ->
@@ -180,6 +201,16 @@ class SahajShieldModule : Module() {
       Intent("android.telecom.CallRedirectionService").setPackage(context.packageName), 0,
     ).isNotEmpty()
 
+  private fun notificationAccessGranted(): Boolean {
+    val cn = ComponentName(context, ShieldNotificationListener::class.java)
+    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O_MR1) {
+      val nm = context.getSystemService(NotificationManager::class.java)
+      return nm?.isNotificationListenerAccessGranted(cn) == true
+    }
+    val enabled = Settings.Secure.getString(context.contentResolver, "enabled_notification_listeners") ?: return false
+    return enabled.split(':').any { ComponentName.unflattenFromString(it) == cn }
+  }
+
   private fun granted(p: String) = context.checkSelfPermission(p) == PackageManager.PERMISSION_GRANTED
 
   private fun status(): Map<String, Any?> {
@@ -201,6 +232,9 @@ class SahajShieldModule : Module() {
       "paired" to rt.isPaired(),
       "queuedEvents" to rt.queue.size(),
       "rulesVersion" to rt.rulesVersion,
+      "rulesEngine" to rt.rulesEngineName,
+      "usageAccess" to UsageAccess.isGranted(context),
+      "notificationAccess" to notificationAccessGranted(),
     )
   }
 
@@ -208,6 +242,5 @@ class SahajShieldModule : Module() {
     private const val RC_ROLE = 0x5A01
     private const val RC_OVERLAY = 0x5A02
     private const val RC_REDIRECTION = 0x5A03
-    private const val TEST_LOG_TAG = "SahajShieldTest"
   }
 }

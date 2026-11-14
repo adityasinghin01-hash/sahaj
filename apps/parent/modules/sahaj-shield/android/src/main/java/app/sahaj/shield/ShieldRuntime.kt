@@ -4,6 +4,7 @@ import android.content.Context
 import android.content.pm.ApplicationInfo
 import android.util.Log
 import app.sahaj.shield.core.CallStateTracker
+import app.sahaj.shield.core.DebugEvents
 import app.sahaj.shield.core.EventSender
 import app.sahaj.shield.core.FileEventQueue
 import app.sahaj.shield.core.LocalVerdict
@@ -37,7 +38,18 @@ internal class ShieldRuntime private constructor(val app: Context) {
 
   val rulesJson: String by lazy { readRulesAsset() }
   val rulesVersion: String by lazy { RULES_VERSION.find(rulesJson)?.groupValues?.get(1) ?: "unknown" }
-  private val engine: RulesEngine by lazy { RulesEngineRegistry.factory.create(rulesJson) }
+  private val loadedEngine: RulesEngineRegistry.Loaded by lazy {
+    RulesEngineRegistry.load(rulesJson).also { l ->
+      if (l.error != null) Log.w(TAG, "rules engine not loaded, everything stays GREEN: ${l.error}")
+      else Log.i(TAG, "rules engine '${l.name}' loaded, rules v$rulesVersion")
+    }
+  }
+  private val engine: RulesEngine get() = loadedEngine.engine
+  /** "json" when the real JsonRulesEngine is running, "none" when rules.json could not be parsed. */
+  val rulesEngineName: String get() = loadedEngine.name
+
+  /** T4/T6 debug lines for the test screen. Memory only; no numbers, no message text. */
+  val debugEvents = DebugEvents()
 
   val sender = EventSender(queue, HttpTransport, { secure.load() })
 

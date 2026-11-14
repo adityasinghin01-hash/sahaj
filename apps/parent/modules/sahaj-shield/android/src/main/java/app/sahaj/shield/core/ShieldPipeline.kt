@@ -35,7 +35,7 @@ class ShieldPipeline(
     if (verdict.level == LocalLevel.GREEN) return Outcome.GREEN_DROPPED
 
     if (verdict.level == LocalLevel.RED) {
-      if (ctx.onCallWithUnsaved && "P1" in verdict.matchedRules) calls.markP1()
+      if (ctx.onCallWithUnsaved && verdict.matchedRules.any { it in LocalVerdict.P1_RULE_IDS }) calls.markP1()
       alerts.showRedScreen(verdict, call.callActive)
     }
 

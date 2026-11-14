@@ -6,17 +6,34 @@ plugins {
 group = 'app.sahaj.shield'
 version = '0.1.0'
 
+// The real rules engine (app.sahaj.shield.rules.JsonRulesEngine) lives in packages/shield-kotlin and is
+// compiled straight into this module from its source dir, so there is one copy of the code.
+// projectDir = apps/parent/modules/sahaj-shield/android → five levels up is the repo root.
+def repoRoot = new File(projectDir, '../../../../..').canonicalFile
+def shieldKotlinSrc = new File(repoRoot, 'packages/shield-kotlin/src/main/kotlin')
+def shieldRulesJson = new File(repoRoot, 'packages/shield/rules/rules.json')
+if (!shieldKotlinSrc.isDirectory()) {
+  throw new GradleException("sahaj-shield: rules engine sources not found at ${shieldKotlinSrc}")
+}
+
 android {
   namespace "app.sahaj.shield"
   defaultConfig {
     versionCode 1
     versionName "0.1.0"
   }
+  sourceSets {
+    main {
+      java.srcDirs += shieldKotlinSrc
+    }
+  }
   lintOptions {
     abortOnError false
   }
   testOptions {
     unitTests.all {
+      // The real-engine test reads the same rules.json that prebuild bundles as an asset.
+      systemProperty 'sahaj.rulesJson', shieldRulesJson.absolutePath
       testLogging {
         events "passed", "failed", "skipped"
         exceptionFormat "full"
@@ -26,6 +43,8 @@ android {
 }
 
 dependencies {
-  // JVM unit tests cover app.sahaj.shield.core only (no Android classes there).
+  // Same version as packages/shield-kotlin/build.gradle.kts (JsonRulesEngine parses rules.json with it).
+  implementation 'org.jetbrains.kotlinx:kotlinx-serialization-json:1.6.3'
+  // JVM unit tests cover app.sahaj.shield.core and app.sahaj.shield.rules (no Android classes there).
   testImplementation 'junit:junit:4.13.2'
 }

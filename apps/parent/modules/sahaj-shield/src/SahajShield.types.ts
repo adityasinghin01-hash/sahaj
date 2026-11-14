@@ -8,6 +8,8 @@ export type LocalVerdictEvent = {
   maskedText: string;
   senderType: string;
   linkDomains: string[];
+  /** ScamType from rules.json, e.g. "kyc_block", "otp_theft"; "unknown" if none. */
+  scamType: string;
 };
 
 export type ShieldStatus = {
@@ -25,6 +27,12 @@ export type ShieldStatus = {
   paired: boolean;
   queuedEvents: number;
   rulesVersion: string;
+  /** "json" = real JsonRulesEngine running; "none" = rules.json could not be parsed, everything GREEN. */
+  rulesEngine: 'json' | 'none';
+  /** T5: Settings → Usage access. */
+  usageAccess: boolean;
+  /** T6: Settings → Notification access. */
+  notificationAccess: boolean;
 };
 
 export type CallRedirectionResult =

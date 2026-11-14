@@ -22,6 +22,8 @@ const STATUS_ROWS: { key: keyof ShieldStatus; label: string }[] = [
   { key: 'callScreeningRole', label: 'Call screening role' },
   { key: 'callRedirectionRole', label: 'Call redirection role' },
   { key: 'overlay', label: 'Overlay (draw over apps)' },
+  { key: 'usageAccess', label: 'Usage access (T5)' },
+  { key: 'notificationAccess', label: 'Notification access (T6)' },
   { key: 'batteryOptimizationIgnored', label: 'Battery optimisation exempt' },
   { key: 'paired', label: 'Paired' },
 ];
@@ -81,12 +83,30 @@ export default function ShieldTestScreen() {
   useEffect(() => {
     if (Platform.OS !== 'android') return;
     const sub = SahajShield.addListener('onVerdict', (v: LocalVerdictEvent) => {
-      const line = `${v.level.toUpperCase()} · rules=${v.matchedRules.join(',') || '-'} · ${v.reasons[0] ?? ''} · "${v.maskedText.slice(0, 80)}"`;
+      const line = `${v.level.toUpperCase()} · ${v.scamType} · rules=${v.matchedRules.join(',') || '-'} · ${v.reasons[0] ?? ''} · "${v.maskedText.slice(0, 80)}"`;
       setLastVerdict(`${now()} ${line}`);
       write(`onVerdict: ${line}`);
     });
     return () => sub.remove();
   }, [write]);
+
+  const showServiceLog = (prefix: string) => {
+    try {
+      const lines = SahajShield.getDebugEvents().filter((l) => l.includes(prefix));
+      write(`${prefix} service log: ${lines.length === 0 ? 'nothing yet' : `\n${lines.slice(0, 10).join('\n')}`}`);
+    } catch (e) {
+      write(`${prefix} service log ERROR: ${errText(e)}`);
+    }
+  };
+
+  const checkForeground = (label: string) => {
+    try {
+      const pkg = SahajShield.foregroundAppNow();
+      write(`${label}: ${pkg ?? 'no app came to the foreground in the last 10 s'}`);
+    } catch (e) {
+      write(`${label} ERROR: ${errText(e)}`);
+    }
+  };
 
   const run = (name: string, fn: () => unknown) => async () => {
     write(`${name}: started`);
@@ -123,7 +143,7 @@ export default function ShieldTestScreen() {
       {status && (
         <Text style={styles.small}>
           {status.manufacturer} · SDK {status.sdkInt} · queued {status.queuedEvents} · rules v
-          {status.rulesVersion} · autostart screen {status.autostartScreenAvailable ? 'yes' : 'no'}
+          {status.rulesVersion} ({status.rulesEngine === 'json' ? 'real engine' : 'NO ENGINE, all green'}) · autostart screen {status.autostartScreenAvailable ? 'yes' : 'no'}
         </Text>
       )}
       <Btn title="Refresh status" onPress={refresh} />
@@ -160,25 +180,45 @@ export default function ShieldTestScreen() {
         title="T4 Request call redirection role"
         onPress={run('T4 requestCallRedirectionRole', () => SahajShield.requestCallRedirectionRole())}
       />
+      <Text style={styles.hint}>
+        Then dial any number: the call must go through unchanged. Tap below to see the log line.
+      </Text>
+      <Btn title="T4 Show redirection log" onPress={() => showServiceLog('T4')} />
 
       <Text style={styles.h2}>T5 · Usage access</Text>
       <Btn
         title="T5 Open Usage access settings"
         onPress={run('T5 open usage access', async () => {
           await Linking.sendIntent('android.settings.USAGE_ACCESS_SETTINGS');
-          return 'opened (Sahaj Maa is not listed yet: PACKAGE_USAGE_STATS not declared)';
+          return 'opened: turn on Sahaj Maa, then come back';
         })}
       />
-      <Btn title="Check foreground app now" onPress={() => write('T5 check foreground app: not built yet (no module API)')} />
+      <Btn title="T5 Is usage access granted?" onPress={run('T5 isUsageAccessGranted', () => SahajShield.isUsageAccessGranted())} />
+      <Btn title="T5 Check foreground app now" onPress={() => checkForeground('T5 foregroundAppNow')} />
+      <Btn
+        title="T5 Check foreground app in 5 s"
+        onPress={() => {
+          write('T5 foregroundAppNow in 5 s: scheduled (switch to WhatsApp now)');
+          setTimeout(() => checkForeground('T5 foregroundAppNow (delayed)'), 5_000);
+        }}
+      />
 
       <Text style={styles.h2}>T6 · Notification access</Text>
       <Btn
         title="T6 Open Notification access settings"
         onPress={run('T6 open notification access', async () => {
           await Linking.sendIntent('android.settings.ACTION_NOTIFICATION_LISTENER_SETTINGS');
-          return 'opened (Sahaj Maa is not listed yet: no NotificationListenerService; listener not built)';
+          return 'opened: turn on Sahaj Maa, then come back';
         })}
       />
+      <Btn
+        title="T6 Is notification access granted?"
+        onPress={run('T6 isNotificationAccessGranted', () => SahajShield.isNotificationAccessGranted())}
+      />
+      <Text style={styles.hint}>
+        Then get a WhatsApp message, a WhatsApp call and an .apk document. Tap below to see what was logged.
+      </Text>
+      <Btn title="T6 Show notification log" onPress={() => showServiceLog('T6')} />
 
       <Text style={styles.h2}>Staying alive</Text>
       <Btn title="Battery optimisation exemption" onPress={run('openBatteryOptimizationSettings', () => SahajShield.openBatteryOptimizationSettings())} />
