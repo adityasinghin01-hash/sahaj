@@ -1,9 +1,9 @@
 # Shield brain integration
 
 ```ts
-import { buildShieldGraph, handleScheduledJob, type ShieldDeps } from "@sahaj/shield";
+import { buildShieldGraph, handleScheduledJob, type ShieldBrainDeps } from "@sahaj/shield";
 
-// Implement ShieldDeps using the host's persistent adapters.
+// Implement ShieldBrainDeps using the host's persistent adapters.
 const graph = buildShieldGraph(deps);
 const state = await graph.invoke({ event: maskedShieldEvent });
 const { verdict, verdictId } = state.decision;
@@ -12,7 +12,7 @@ const { verdict, verdictId } = state.decision;
 await handleScheduledJob(job.name, job.payload, deps);
 ```
 
-`deps` above is the host's `ShieldDeps`; the complete port signatures are in `types.ts`. Register this compiled graph with Atlas. It has no checkpointer. Input is `{ event: ShieldEvent }`; output `decision` has the gated `verdict` and persisted `verdictId`.
+`deps` above is the host's `ShieldBrainDeps`; the complete port signatures are in `types.ts`. Register this compiled graph with Atlas. It has no checkpointer. Input is `{ event: ShieldEvent }`; output `decision` has the gated `verdict` and persisted `verdictId`.
 
 ## Host responsibilities
 

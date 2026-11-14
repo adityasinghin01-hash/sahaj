@@ -1,11 +1,11 @@
-import type { LinkResult, ShieldDeps } from "./types.js";
+import type { LinkResult, ShieldBrainDeps } from "./types.js";
 import { createSandbox, publicUrl } from "./sandbox.js";
 import { withDeadline } from "./deadline.js";
 
 const SHORTENERS = new Set(["bit.ly", "tinyurl.com", "t.co", "goo.gl", "ow.ly", "is.gd", "buff.ly", "cutt.ly", "rb.gy", "shorturl.at", "rebrand.ly", "lnkd.in", "s.id", "tiny.cc"]);
 const DAY_SECONDS = 24 * 60 * 60;
 
-async function safeBrowsing(urls: string[], deps: ShieldDeps, signal: AbortSignal): Promise<boolean> {
+async function safeBrowsing(urls: string[], deps: ShieldBrainDeps, signal: AbortSignal): Promise<boolean> {
   if (urls.length > 500) {
     const batches: string[][] = [];
     for (let start = 0; start < urls.length; start += 500) batches.push(urls.slice(start, start + 500));
@@ -40,7 +40,7 @@ async function safeBrowsing(urls: string[], deps: ShieldDeps, signal: AbortSigna
 }
 
 /** A domain-wide request includes every event URL on that domain, not just the first path. */
-export async function checkLinks(links: { url: string; domain: string }[], deps: ShieldDeps): Promise<LinkResult[]> {
+export async function checkLinks(links: { url: string; domain: string }[], deps: ShieldBrainDeps): Promise<LinkResult[]> {
   const grouped = new Map<string, Set<string>>();
   const invalid: LinkResult[] = [];
   for (const link of links) {

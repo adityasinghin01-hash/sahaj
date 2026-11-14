@@ -47,7 +47,7 @@ export interface ChildCard {
   push: true;
   offer1930: boolean;
 }
-export interface ShieldDeps {
+export interface ShieldBrainDeps {
   db: {
     getParent(input: { familyId: string; parentId: string }): Promise<Parent | null>;
     getRecentEvents(input: { familyId: string; parentId: string; since: string; until: string }): Promise<ShieldEvent[]>;

@@ -1,6 +1,6 @@
 import { z } from "zod";
 import type { ShieldAction, ShieldEvent, Verdict } from "@sahaj/shared";
-import type { ShieldDeps, StoredVerdict, TimelineRow } from "./types.js";
+import type { ShieldBrainDeps, StoredVerdict, TimelineRow } from "./types.js";
 
 export const RETRY_PARENT_JOB = "retryCallParent";
 export const NO_REACTION_JOB = "shield.no_reaction_check";
@@ -13,15 +13,15 @@ export function ladderActions(event: ShieldEvent, verdict: Verdict): ShieldActio
   if (event.context.money_already_left === true) actions.push("offer_1930");
   return actions;
 }
-export function scaledDelay(deps: ShieldDeps): number {
+export function scaledDelay(deps: ShieldBrainDeps): number {
   const scale = Number((deps.env ?? process.env).DEMO_TIMER_SCALE ?? "1");
   return 120000 / (Number.isFinite(scale) && scale > 0 ? scale : 1);
 }
-export async function audit(deps: ShieldDeps, record: Omit<StoredVerdict, "id"> & { id?: string }, row: Pick<TimelineRow, "step" | "status" | "action" | "details">) {
+export async function audit(deps: ShieldBrainDeps, record: Omit<StoredVerdict, "id"> & { id?: string }, row: Pick<TimelineRow, "step" | "status" | "action" | "details">) {
   await deps.sign({ familyId: record.event.family_id, parentId: record.event.parent_id,
     eventKey: record.event.idempotency_key, ...(record.id ? { verdictId: record.id } : {}), ...row });
 }
-export async function checkAction(deps: ShieldDeps, record: Omit<StoredVerdict, "id"> & { id?: string }, action: ShieldAction): Promise<boolean> {
+export async function checkAction(deps: ShieldBrainDeps, record: Omit<StoredVerdict, "id"> & { id?: string }, action: ShieldAction): Promise<boolean> {
   let allowed = false;
   try { allowed = (await deps.gate.check({ familyId: record.event.family_id, action })).allowed === true; }
   catch { /* A failed gate is a denial, never implicit approval. */ }
@@ -29,16 +29,16 @@ export async function checkAction(deps: ShieldDeps, record: Omit<StoredVerdict, 
   return allowed;
 }
 // Catch only the provider operation. An audit/signing failure must remain visible to the host.
-async function effect(deps: ShieldDeps, record: StoredVerdict, step: string, operation: () => Promise<unknown>, action?: ShieldAction): Promise<boolean> {
+async function effect(deps: ShieldBrainDeps, record: StoredVerdict, step: string, operation: () => Promise<unknown>, action?: ShieldAction): Promise<boolean> {
   let status: TimelineRow["status"] = "ok";
   try { await operation(); } catch { status = "failed"; }
   await audit(deps, record, { step, status, ...(action ? { action } : {}) });
   return status === "ok";
 }
-async function schedule(deps: ShieldDeps, record: StoredVerdict, name: string, payload: Record<string, unknown>) {
+async function schedule(deps: ShieldBrainDeps, record: StoredVerdict, name: string, payload: Record<string, unknown>) {
   await effect(deps, record, `schedule.${name}`, () => deps.scheduler.after(scaledDelay(deps), name, payload));
 }
-async function callParent(record: StoredVerdict, deps: ShieldDeps, attempt: number) {
+async function callParent(record: StoredVerdict, deps: ShieldBrainDeps, attempt: number) {
   const lineId = record.parent.line_id;
   if (!lineId) {
     await audit(deps, record, { step: "call_parent", status: "skipped", action: "speak_clip", details: { reason: "missing_line", attempt } }); return;
@@ -53,7 +53,7 @@ async function callParent(record: StoredVerdict, deps: ShieldDeps, attempt: numb
     await schedule(deps, record, RETRY_PARENT_JOB, { verdictId: record.id, attempt: attempt + 1 });
   }
 }
-export async function respond(record: StoredVerdict, deps: ShieldDeps) {
+export async function respond(record: StoredVerdict, deps: ShieldBrainDeps) {
   const { verdict, event } = record;
   const allowed = (action: ShieldAction) => verdict.actions.includes(action);
   if (verdict.level === "green") return;
@@ -82,7 +82,7 @@ export async function respond(record: StoredVerdict, deps: ShieldDeps) {
 }
 const reactionPayload = z.object({ verdictId: z.string().min(1) }).strict();
 const retryPayload = z.object({ verdictId: z.string().min(1), attempt: z.number().int().min(2).max(3) }).strict();
-export async function handleScheduledJob(name: string, payload: unknown, deps: ShieldDeps): Promise<void> {
+export async function handleScheduledJob(name: string, payload: unknown, deps: ShieldBrainDeps): Promise<void> {
   if (name !== RETRY_PARENT_JOB && name !== NO_REACTION_JOB) throw new Error("Unknown Shield scheduled job");
   const input = name === RETRY_PARENT_JOB ? retryPayload.parse(payload) : reactionPayload.parse(payload);
   const record = await deps.db.getVerdict(input.verdictId);

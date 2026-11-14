@@ -1,6 +1,6 @@
 import { vi } from "vitest";
 import { ShieldEvent, type Verdict, type ScamJudgement } from "@sahaj/shared";
-import type { ShieldDeps, StoredVerdict, TwoLockResult } from "../../src/brain/types.js";
+import type { ShieldBrainDeps, StoredVerdict, TwoLockResult } from "../../src/brain/types.js";
 
 export const event = (overrides: Partial<ShieldEvent> = {}): ShieldEvent => ShieldEvent.parse({
   idempotency_key: "event-key-one", family_id: "family-a", parent_id: "maa",
@@ -28,8 +28,8 @@ export function fixtures(level: Verdict["level"] = "green", needs_ai = false) {
   const cache = new Map();
   const deps = {
     db: {
-      getParent: vi.fn<ShieldDeps["db"]["getParent"]>(async () => ({ id: "maa", family_id: "family-a", line_id: "line-maa" })),
-      getRecentEvents: vi.fn<ShieldDeps["db"]["getRecentEvents"]>(async () => []),
+      getParent: vi.fn<ShieldBrainDeps["db"]["getParent"]>(async () => ({ id: "maa", family_id: "family-a", line_id: "line-maa" })),
+      getRecentEvents: vi.fn<ShieldBrainDeps["db"]["getRecentEvents"]>(async () => []),
       insertVerdict: vi.fn(async (row: Omit<StoredVerdict, "id">) => {
         stored.set("verdict-a", { ...row, id: "verdict-a" }); return { id: "verdict-a" };
       }),
@@ -37,17 +37,17 @@ export function fixtures(level: Verdict["level"] = "green", needs_ai = false) {
       hasChildReaction: vi.fn(async () => false),
     },
     rules: { evaluate: vi.fn(async () => ({ verdict: verdict(level), needs_ai, links: [] as { url: string; domain: string }[] })) },
-    cache: { get: vi.fn<ShieldDeps["cache"]["get"]>(async (k: string) => cache.get(k)), set: vi.fn<ShieldDeps["cache"]["set"]>(async (k: string, v: unknown) => { cache.set(k, v); }) },
-    gate: { check: vi.fn<ShieldDeps["gate"]["check"]>(async () => ({ allowed: true })) },
-    notify: { childCard: vi.fn<ShieldDeps["notify"]["childCard"]>(async () => {}) },
-    whatsapp: { sendShieldAlert: vi.fn<ShieldDeps["whatsapp"]["sendShieldAlert"]>(async () => {}) },
-    calls: { callParent: vi.fn<ShieldDeps["calls"]["callParent"]>(async () => ({ status: "busy" as "busy" | "answered" | "no_answer" | "failed" })) },
-    scheduler: { after: vi.fn<ShieldDeps["scheduler"]["after"]>(async () => {}) },
-    atlas: { startCircleChain: vi.fn<ShieldDeps["atlas"]["startCircleChain"]>(async () => {}) },
-    sign: vi.fn<ShieldDeps["sign"]>(async () => {}), twoLock: vi.fn<NonNullable<ShieldDeps["twoLock"]>>(async () => locks()),
+    cache: { get: vi.fn<ShieldBrainDeps["cache"]["get"]>(async (k: string) => cache.get(k)), set: vi.fn<ShieldBrainDeps["cache"]["set"]>(async (k: string, v: unknown) => { cache.set(k, v); }) },
+    gate: { check: vi.fn<ShieldBrainDeps["gate"]["check"]>(async () => ({ allowed: true })) },
+    notify: { childCard: vi.fn<ShieldBrainDeps["notify"]["childCard"]>(async () => {}) },
+    whatsapp: { sendShieldAlert: vi.fn<ShieldBrainDeps["whatsapp"]["sendShieldAlert"]>(async () => {}) },
+    calls: { callParent: vi.fn<ShieldBrainDeps["calls"]["callParent"]>(async () => ({ status: "busy" as "busy" | "answered" | "no_answer" | "failed" })) },
+    scheduler: { after: vi.fn<ShieldBrainDeps["scheduler"]["after"]>(async () => {}) },
+    atlas: { startCircleChain: vi.fn<ShieldBrainDeps["atlas"]["startCircleChain"]>(async () => {}) },
+    sign: vi.fn<ShieldBrainDeps["sign"]>(async () => {}), twoLock: vi.fn<NonNullable<ShieldBrainDeps["twoLock"]>>(async () => locks()),
     env: {}, now: () => Date.parse("2026-11-14T09:05:00.000Z"),
     safeBrowsingFetch: vi.fn<typeof fetch>(async () => new Response("{}")),
     sandbox: { unshorten: vi.fn(async (url: string) => url) },
-  } satisfies ShieldDeps;
+  } satisfies ShieldBrainDeps;
   return { deps, stored };
 }

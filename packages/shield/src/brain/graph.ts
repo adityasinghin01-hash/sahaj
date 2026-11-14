@@ -1,6 +1,6 @@
 import { Annotation, StateGraph, START, END } from "@langchain/langgraph";
 import { ShieldEvent, Verdict, type ShieldAction } from "@sahaj/shared";
-import type { ShieldDeps, Parent, RulesResult, LinkResult, TwoLockResult, StoredVerdict } from "./types.js";
+import type { ShieldBrainDeps, Parent, RulesResult, LinkResult, TwoLockResult, StoredVerdict } from "./types.js";
 import { checkLinks } from "./links.js";
 import { judge, mergeVerdict } from "./judgement.js";
 import { checkAction, ladderActions, respond } from "./respond.js";
@@ -18,7 +18,7 @@ type GraphState = typeof State.State;
 type Update = Partial<GraphState>;
 
 /** Invoke with { event }; read result.decision.{verdict,verdictId}. Atlas owns persistence/retries. */
-export function buildShieldGraph(deps: ShieldDeps) {
+export function buildShieldGraph(deps: ShieldBrainDeps) {
   const node = (step: string, work: (state: GraphState) => Promise<Update>) => async (state: GraphState): Promise<Update> => {
     let update: Update;
     try { update = await work(state); }
