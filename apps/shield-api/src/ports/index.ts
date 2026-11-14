@@ -91,6 +91,16 @@ export function createShieldPorts(opts: {
         console.error(message, meta ? JSON.stringify(meta) : "");
       },
     },
+    // C-06 additions: configured delivery and the existing runtime evidence port.
+    ...createAppDeliveryPorts(opts),
   };
 }
 
+import { createAppTimelinePort } from "../lib/app_timeline";
+export function createAppDeliveryPorts(opts: { auxSql: Sql; env: Readonly<Record<string,string|undefined>>; fetchFn?: typeof fetch }): Partial<Pick<ShieldRuntimePorts, "push" | "calls" | "timeline">> {
+  return {
+    push: createPushPort(opts.auxSql, opts.env, opts.fetchFn),
+    calls: createCallsPort(opts.auxSql, opts.env, opts.fetchFn),
+    timeline: createAppTimelinePort(opts.auxSql),
+  };
+}

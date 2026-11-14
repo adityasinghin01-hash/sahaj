@@ -26,6 +26,7 @@ import { createPgHeartbeatStore, handleShieldHeartbeat } from "./heartbeat";
 import { createShieldPorts, getPortsStatus, type PortsStatus } from "@/ports";
 import { writeOutbox } from "@/ports/outbox";
 import { createPhase2Ports } from "@/ports/phase2";
+import type { SarvamCallsPort } from "@/ports/calls";
 import type { z } from "zod";
 
 export interface OutboxRow {
@@ -153,6 +154,10 @@ export function createShieldApp(env: Readonly<Record<string, string | undefined>
     warningsDeps,
     clock,
     fallbackHandleScheduledJob: (name, payload) => runtime.handleScheduledJob(name, payload),
+    placeCheckinRetry: (input) => {
+      const calls = ports.calls as Partial<SarvamCallsPort>;
+      return calls.placeCheckinRetry ? calls.placeCheckinRetry(input) : Promise.resolve({ placed: false });
+    },
   });
 
   const gatewayStore = createPgGatewayAdminStore(auxSql);

@@ -94,3 +94,10 @@ describe("check-in variables → weekly fraud tip (Phase 2 step 2.5)", () => {
     expect((await createCheckinVarsHandler(() => missing.app)(get(FAMILY))).status).toBe(404);
   });
 });
+
+describe("webhook reads the metadata our Sarvam calls port sends", () => {
+  it("metadata.family_id / person_id / purpose / in_checkin_window are used", () => {
+    const parsed = parseSarvamStatus({ status: "busy", metadata: { family_id: FAMILY, person_id: PARENT, purpose: "checkin", in_checkin_window: true, streak_id: "s" } });
+    expect(parsed).toMatchObject({ family_id: FAMILY, parent_id: PARENT, purpose: "checkin", status: "busy", in_checkin_window: true });
+  });
+});

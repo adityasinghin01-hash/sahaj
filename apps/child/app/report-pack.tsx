@@ -1,3 +1,5 @@
+import { useSession } from '@/lib/session';
+import { LiveEvidence, LiveLoading } from '@/components/sahaj/live';
 import {
   Btn,
   Card,
@@ -13,7 +15,7 @@ import { shield, useDemo, showToast } from '@/lib/demo';
 import { useLocalSearchParams } from 'expo-router';
 import { Download } from 'lucide-react-native';
 import { Platform, Share } from 'react-native';
-export default function ReportPack() {
+function DemoReportPack() {
   const { id } = useLocalSearchParams<{ id?: string }>();
   const demo = useDemo();
   const alert = id ? shield.alerts.find((row) => row.id === id) : shield.alerts[0];
@@ -103,4 +105,11 @@ export default function ReportPack() {
       </Notice>
     </Screen>
   );
+}
+
+export default function ReportPack() {
+  const {ready,session}=useSession();
+  const {id} = useLocalSearchParams<{id?:string}>();
+  if(!ready) return <LiveLoading/>;
+  return session ? <LiveEvidence id={id ?? ""}/> : <DemoReportPack/>;
 }

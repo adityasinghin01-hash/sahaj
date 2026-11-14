@@ -1,10 +1,12 @@
+import { useSession } from '@/lib/session';
+import { LiveVerify, LiveLoading } from '@/components/sahaj/live';
 import { Icon } from '@/components/ui/icon';
 import { Btn, Card, LiveDot, Pop, Screen, T, TopBar } from '@/components/sahaj/ui';
 import { checkDemoLink, verification } from '@/lib/demo';
 import { Check, LockKeyhole, RotateCcw } from 'lucide-react-native';
 import * as React from 'react';
 import { View } from 'react-native';
-export default function Verify() {
+function DemoVerify() {
   const [checked, setChecked] = React.useState(0);
   const [run, setRun] = React.useState(0);
   const [failed, setFailed] = React.useState(false);
@@ -94,4 +96,10 @@ export default function Verify() {
       />
     </Screen>
   );
+}
+
+export default function Verify() {
+  const {ready,session}=useSession();
+  if(!ready) return <LiveLoading/>;
+  return session ? <LiveVerify/> : <DemoVerify/>;
 }

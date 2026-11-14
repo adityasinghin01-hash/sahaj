@@ -1,3 +1,5 @@
+import { useSession } from '@/lib/session';
+import { LiveTimeline, LiveLoading } from '@/components/sahaj/live';
 import { Icon } from '@/components/ui/icon';
 import { Card, IconTile, Pop, Screen, Section, T, Tap } from '@/components/sahaj/ui';
 import { timeline, useDemo, type TimelineKind } from '@/lib/demo';
@@ -23,7 +25,7 @@ const icons: Record<TimelineKind, LucideIcon> = {
   urgent: Siren,
   safe: Heart,
 };
-export default function Timeline() {
+function DemoTimeline() {
   const demo = useDemo();
   return (
     <Screen>
@@ -96,4 +98,10 @@ export default function Timeline() {
       </T>
     </Screen>
   );
+}
+
+export default function Timeline() {
+  const {ready,session}=useSession();
+  if(!ready) return <LiveLoading/>;
+  return session ? <LiveTimeline/> : <DemoTimeline/>;
 }

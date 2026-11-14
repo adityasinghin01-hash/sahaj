@@ -38,11 +38,13 @@ function truthy(value: unknown): boolean {
 
 export function parseSarvamStatus(body: Record<string, unknown>) {
   const nested = asRecord(body.data) ?? {};
-  const vars = asRecord(pick(body, "agent_variables", "variables")) ?? asRecord(pick(nested, "agent_variables", "variables")) ?? {};
+  // Our calls port puts family/parent/purpose in webhook_config.metadata; agent_variables also accepted.
+  const vars = asRecord(pick(body, "metadata", "agent_variables", "variables"))
+    ?? asRecord(pick(nested, "metadata", "agent_variables", "variables")) ?? {};
   const rawStatus = String(pick(body, "status", "call_status") ?? pick(nested, "status", "call_status") ?? "").toLowerCase();
   const status = STATUS_ALIASES[rawStatus];
   const family = Uuid.safeParse(vars.family_id);
-  const parent = Uuid.safeParse(vars.parent_id);
+  const parent = Uuid.safeParse(vars.parent_id ?? vars.person_id);
   if (!status || !family.success || !parent.success) return null;
   const at = pick(body, "ended_at", "updated_at", "timestamp") ?? pick(nested, "ended_at", "updated_at", "timestamp");
   const atIso = typeof at === "string" && !Number.isNaN(Date.parse(at)) ? new Date(at).toISOString() : undefined;
