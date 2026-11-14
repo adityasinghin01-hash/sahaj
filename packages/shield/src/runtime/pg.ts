@@ -1,4 +1,6 @@
 import type { ISql, Sql } from "postgres";
+import { createDrillPg } from "../drills";
+import { createEvidencePg } from "../evidence";
 import { ShieldEvent, Verdict } from "@sahaj/shared";
 import type { StoredVerdict } from "../brain/types.js";
 import { createShieldPg, isUuid } from "../db/pg";
@@ -23,6 +25,8 @@ export function createShieldRuntimePg(sql: Sql): ShieldRuntimeDb {
   const build = (query: ISql): ShieldRuntimeDb => {
     const pg = createShieldPg(query);
     const db: ShieldRuntimeDb = {
+      drills: createDrillPg(sql),
+      evidence: createEvidencePg(query),
       server: pg.server,
       tools: {
         ...pg.tools,
