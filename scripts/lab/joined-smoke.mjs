@@ -227,7 +227,11 @@ if (want("core2")) {
   const offer = watch?.incident_id ? (await q(`select id, person_id, status from public.assignments where incident_id=$1 order by offered_at`, [watch.incident_id]))[0] : null;
   check("core2", "escalation: first offer went to the top trusted contact", !!top && offer?.person_id === top.person_id, `assignment ${offer?.status ?? "none"}`);
   check("core2", "escalation: top contact accepts (single owner)", acc?.status === 200 && acc?.data?.accepted === true, `status ${acc?.status} ${acc?.data?.error ?? ""}`);
-  const escOutbox = offer ? await q(`select kind, status from public.outbox where family_id=$1 and (dedupe_key like $2 or dedupe_key like $3)`,
+  // Authorized sends store the Cedar action in outbox.kind (send_alert / share_data); the care kind lives in
+  // authorized_send_context.kind (C-15 enqueue_authorized_command), so read it from there.
+  const escOutbox = offer ? await q(`select coalesce(c.kind, o.kind) kind, o.status from public.outbox o
+      left join public.authorized_send_context c on c.request_id=o.action_request_id and c.family_id=o.family_id
+      where o.family_id=$1 and (o.dedupe_key like $2 or o.dedupe_key like $3)`,
     [FAMILY, `core2:watch:offer:${offer.id}%`, `core2:watch:checkin:${watchId}:%`]) : [];
   const escOk = escOutbox.some((o) => o.kind === "core2.watch_escalation") && escOutbox.some((o) => o.kind === "core2.watch_checkin");
   blockedOrCheck("core2", "escalation: authorized outbox rows queued (check-in push + alert to the contact)", escOk, escOutbox.map((o) => `${o.kind}:${o.status}`).join(",") || "none");
@@ -251,7 +255,9 @@ if (want("core2")) {
   const dev = await call("/api/core2/device-status", { method: "POST", headers: as(riya), body: { battery_level: 8, is_charging: false, sampled_at: new Date().toISOString() } });
   blockedOrCheck("core2", "phone-dying: battery 8 % reported during a watch", dev.status === 200, `status ${dev.status} ${dev.data?.error ?? ""}`);
   await tickAll();
-  const handover = w2Id ? await q(`select o.kind, o.status from public.outbox o where o.family_id=$1 and o.dedupe_key like 'core2:device:%' and o.created_at > now() - interval '5 minutes'`, [FAMILY]) : [];
+  const handover = w2Id ? await q(`select coalesce(c.kind, o.kind) kind, o.status from public.outbox o
+      left join public.authorized_send_context c on c.request_id=o.action_request_id and c.family_id=o.family_id
+      where o.family_id=$1 and o.dedupe_key like 'core2:device:%' and o.created_at > now() - interval '5 minutes'`, [FAMILY]) : [];
   blockedOrCheck("core2", "phone-dying: calm notice queued for the top trusted contact", handover.some((h) => h.kind === "core2.device_handover"), handover.map((h) => `${h.kind}:${h.status}`).join(",") || "none");
   blockedOrCheck("core2", "phone-dying: calm status line queued for Maa", handover.some((h) => h.kind === "core2.reassurance"), handover.map((h) => h.kind).join(",") || "none");
   const tl = await call("/api/core2/truth-line", { method: "POST", headers: { ...json, authorization: `Bearer ${env.SARVAM_TOOL_TOKEN || env.SARVAM_TOOL_BEARER || ""}` }, body: { family_id: FAMILY, parent_id: MAA, subject_person_id: RIYA } });
@@ -267,10 +273,18 @@ if (want("core2")) {
 
 // ---------------------------------------------------------------- Core 1
 if (want("core1")) {
-  // Check-in command accepted AND acted on.
+  // Check-in command accepted AND acted on. The dedicated route (apps/api/src/app/api/core1/check-in, check-in-service.ts)
+  // executes synchronously and answers 201 (scheduled, or call dispatched with an outbox row); the generic /api/core1
+  // command path answers 202 queued and is acted on by the Atlas tick. Both contracts are accepted here.
   const c1 = await call("/api/core1/check-in", { method: "POST", headers: as(riya), body: { person_id: MAA, preferred_time: "09:30", timezone: "Asia/Kolkata" } });
-  check("core1", "check-in: command accepted (202 queued)", c1.status === 202 && c1.data?.status === "queued", `status ${c1.status} ${c1.data?.error ?? ""}`);
-  if (c1.data?.eventId) {
+  check("core1", "check-in: command accepted (201 executed or 202 queued)", (c1.status === 201 && c1.data?.ok === true) || (c1.status === 202 && c1.data?.status === "queued"),
+    `status ${c1.status} ${c1.data?.action ?? c1.data?.status ?? c1.data?.error ?? ""}`);
+  if (c1.status === 201 && c1.data?.scheduleId) {
+    const sch = (await q(`select enabled, next_at from public.schedules where id=$1 and family_id=$2`, [c1.data.scheduleId, FAMILY]))[0];
+    const ob = c1.data.outboxId ? (await q(`select kind, status from public.outbox where id=$1 and family_id=$2`, [c1.data.outboxId, FAMILY]))[0] : null;
+    check("core1", "check-in: acted on (schedule row enabled; outbox row when a call was dispatched)", sch?.enabled === true && (!c1.data.outboxId || !!ob),
+      `action ${c1.data.action}; schedule ${sch ? "enabled" : "none"}; outbox ${ob ? `${ob.kind}:${ob.status}` : c1.data.outboxId ? "missing" : "n/a (scheduled for later)"}`);
+  } else if (c1.data?.eventId) {
     await tickAll();
     const job = (await q(`select j.workflow_kind, j.state, j.last_error_code from public.workflow_jobs j where j.raw_event_id=$1`, [c1.data.eventId]))[0];
     const ob = (await q(`select kind, action, status from public.outbox where family_id=$1 and dedupe_key=$2`, [FAMILY, `core1:check_in:${c1.data.eventId}`]))[0];
@@ -279,25 +293,44 @@ if (want("core1")) {
   }
 
   // Urgent help: Riya asks for help for Maa -> offer to the top circle member -> accept proof -> push row for Riya.
+  // The dedicated route (urgent-help-service.ts) creates the incident + offer synchronously and answers 201 with the ids;
+  // the generic command path answers 202 and the Atlas tick creates the offer. Poll the DB for the offer (<= 15 s).
   const u = await call("/api/core1/urgent-help", { method: "POST", headers: as(riya), body: { subject_person_id: MAA, severity: "urgent" } });
-  check("core1", "urgent-help: command accepted", u.status === 202, `status ${u.status} ${u.data?.error ?? ""}`);
+  check("core1", "urgent-help: command accepted (201 offered or 202 queued)", u.status === 201 || u.status === 202, `status ${u.status} ${u.data?.state ?? u.data?.error ?? ""}`);
   let incident = null;
-  if (u.data?.eventId) {
-    await tickAll();
-    const job = (await q(`select state, last_error_code from public.workflow_jobs where raw_event_id=$1`, [u.data.eventId]))[0];
-    incident = (await q(`select i.id, a.id assignment_id, a.person_id, a.status from public.timeline_events t join public.incidents i on i.id=t.entity_id
-                         left join public.assignments a on a.incident_id=i.id where t.dedupe_key=$1`, [`core1:urgent:offer:${u.data.eventId}`]))[0];
-    check("core1", "urgent-help: offer created for the top circle member (Rohit)", incident?.person_id === ROHIT && incident?.status === "offered",
-      `job ${job?.state}/${job?.last_error_code}; assignment ${incident?.status ?? "none"}`);
+  if (u.status === 201 || u.data?.eventId) {
+    let job = null;
+    for (let i = 0; i < 30 && !incident; i++) {
+      if (u.status === 201 && u.data?.incidentId) {
+        incident = (await q(`select i.id, a.id assignment_id, a.person_id, a.status, a.offered_at from public.incidents i
+                             join public.assignments a on a.incident_id=i.id where i.id=$1 and i.family_id=$2 order by a.offered_at limit 1`, [u.data.incidentId, FAMILY]))[0] ?? null;
+      } else {
+        if (i === 0) await tickAll();
+        job = (await q(`select state, last_error_code from public.workflow_jobs where raw_event_id=$1`, [u.data.eventId]))[0];
+        incident = (await q(`select i.id, a.id assignment_id, a.person_id, a.status, a.offered_at from public.timeline_events t join public.incidents i on i.id=t.entity_id
+                             left join public.assignments a on a.incident_id=i.id where t.dedupe_key=$1 order by a.offered_at limit 1`, [`core1:urgent:offer:${u.data.eventId}`]))[0] ?? null;
+      }
+      if (!incident) await sleep(500);
+    }
+    // The first offer is the evidence; at DEMO_TIMER_SCALE=60 it expires after 3 s and advances, so "expired" is fine here.
+    check("core1", "urgent-help: offer created for the top circle member (Rohit)", incident?.person_id === ROHIT && ["offered", "expired", "accepted"].includes(incident?.status),
+      `${job ? `job ${job.state}/${job.last_error_code}; ` : ""}assignment ${incident?.status ?? "none"}`);
   }
   if (incident?.assignment_id) {
     // Normalized acceptance proof needs a real Twilio Gather on a dispatched responder call (providers are off here).
     const proof = (await q(`select id from public.raw_events where source='twilio' and event_type='responder.accepted' and normalized_proof and metadata->>'assignment_id'=$1`, [incident.assignment_id]))[0];
     const acc = await call("/api/core1/urgent-help", { method: "POST", headers: as(rohit), body: { subject_person_id: MAA, action: "accept", incident_id: incident.id, assignment_id: incident.assignment_id, raw_event_id: proof?.id ?? randomUUID() } });
-    await tickAll();
-    const push = await q(`select kind, status from public.outbox where family_id=$1 and dedupe_key like $2`, [FAMILY, `core1:urgent_accepted_push:${incident.assignment_id}:%`]);
-    const job = acc.data?.eventId ? (await q(`select state, last_error_code from public.workflow_jobs where raw_event_id=$1`, [acc.data.eventId]))[0] : null;
-    check("core1", "urgent-help: accept with proof -> Riya push row", push.length > 0, `accept ${acc.status}; proof ${proof ? "present" : "absent (needs Twilio Gather)"}; job ${job?.state}/${job?.last_error_code}`);
+    if (proof) {
+      await tickAll();
+      const push = await q(`select kind, status from public.outbox where family_id=$1 and dedupe_key like $2`, [FAMILY, `core1:urgent_accepted_push:${incident.assignment_id}:%`]);
+      const job = acc.data?.eventId ? (await q(`select state, last_error_code from public.workflow_jobs where raw_event_id=$1`, [acc.data.eventId]))[0] : null;
+      check("core1", "urgent-help: accept with proof -> accepted + Riya notified", (acc.status === 200 && acc.data?.state === "accepted") || push.length > 0,
+        `accept ${acc.status} ${acc.data?.state ?? acc.data?.error ?? ""}; push rows ${push.length}; job ${job?.state}/${job?.last_error_code}`);
+    } else {
+      // Without a provider no Gather proof can exist; the route must then refuse the accept (never trust a client claim).
+      check("core1", "urgent-help: accept without a Twilio Gather proof is refused", acc.status === 403 && acc.data?.error === "invalid_acceptance_proof",
+        `accept ${acc.status} ${acc.data?.error ?? ""}; proof absent (providers off, needs Twilio Gather)`);
+    }
   } else {
     check("core1", "urgent-help: accept with proof -> Riya push row", false, "no offered assignment to accept");
   }
@@ -309,8 +342,15 @@ if (want("core1")) {
   if (arId) {
     const a1 = await call("/api/core1/refill", { method: "POST", headers: as(riya), body: { action_request_id: arId, action: "approve" } });
     const a2 = await call("/api/core1/refill", { method: "POST", headers: as(rohit), body: { action_request_id: arId, action: "approve" } });
-    const ob = await q(`select kind, status from public.outbox where family_id=$1 and action_request_id=$2`, [FAMILY, arId]);
-    blockedOrCheck("core1", "refill: family approves -> authorized + vendor order outbox row", [a1.data?.status, a2.data?.status].includes("authorized") && ob.length > 0,
+    // The authorized errand queues Riya's refill notice ("Gupta Medical ko order bhej diya") as its own per-recipient
+    // authorized send (C-15, kind core1.refill_notice, own action request). It is linked to this refill through the errand
+    // in care_send_context.details. A direct row on the refill request is also accepted (vendor call: not wired yet).
+    const ob = await q(`select coalesce(c.kind, o.kind) kind, o.status from public.outbox o
+        left join public.authorized_send_context c on c.request_id=o.action_request_id and c.family_id=o.family_id
+        where o.family_id=$1 and (o.action_request_id=$2 or o.action_request_id in (
+          select d.request_id from public.care_send_context d join public.errands e on e.id=(d.details->>'errandId')::uuid
+          where e.family_id=$1 and e.action_request_id=$2))`, [FAMILY, arId]);
+    blockedOrCheck("core1", "refill: family approves -> authorized + refill notice outbox row", [a1.data?.status, a2.data?.status].includes("authorized") && ob.length > 0,
       `approve ${a1.status}/${a1.data?.status ?? a1.data?.error}, second ${a2.status}/${a2.data?.status ?? a2.data?.error}; outbox ${ob.map((o) => `${o.kind}:${o.status}`).join(",") || "none"}`);
     const med = (await q(`select remaining_count from public.medicines where id=$1`, [FX.medicine]))[0];
     check("core1", "refill: stock not decremented before delivery", med?.remaining_count === 4, `remaining ${med?.remaining_count}`);

@@ -262,7 +262,12 @@ load_lab2_env() {
 # Keeps only the named variables (plus PATH/HOME/TMPDIR) in the current shell. Call inside a subshell.
 only_env() {
   local keep=" PATH HOME TMPDIR $* " name
-  for name in $(compgen -e); do [[ "$keep" == *" $name "* ]] || unset "$name" 2>/dev/null || true; done
+  for name in $(compgen -e); do
+    [[ "$keep" == *" $name "* ]] && continue
+    # LAB2_* layout overrides (ports, LAB2_DIR) may arrive exported from the caller's shell; start_bg still needs them,
+    # so they leave the child's environment but stay as shell variables. Everything else (secrets) is unset.
+    if [[ "$name" == LAB2_* ]]; then export -n "$name"; else unset "$name" 2>/dev/null || true; fi
+  done
 }
 
 # Exports the env for ONE process (call inside a subshell). $1 = shield|api|pgrst|proxy-door|proxy-supabase|cron-*.

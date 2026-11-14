@@ -619,6 +619,120 @@ on conflict (id) do update
       revoked_at          = null;
 
 -- ============================================================================
+-- 10b. Care-notice permissions for the C-15 authorized send path (authorized-send.ts -> prepare_care_send ->
+--      load_gate_snapshot -> enqueue_authorized_command). Each care notice is one per-recipient Cedar request
+--      bound to the family principal: send_alert for alerts, share_data for Maa's calm status line.
+--      Without these rows Cedar answers "ask/no_permission" and no outbox row is queued.
+--      * Riya send_alert -> Riya (watch check-in push), Priya + Rohit (her trusted contacts: SOS, watch
+--        escalation, phone-dying notice). The SQL fence (care_send_problem) still requires the active,
+--        consented trusted-contact row with the matching scope.
+--      * Riya share_data -> Maa ("Main safe hoon" / phone-dying status line). Cedar still requires Riya's
+--        voice_share:<Maa> consent and her core2 sharing preference.
+--      * Maa send_alert -> Riya + Rohit (refill notice "Gupta Medical ko order bhej diya"). The SQL fence still
+--        requires an authorized errand and a child recipient.
+-- ============================================================================
+insert into public.permissions (
+  id, family_id, person_id, principal_id, action, decision, limits,
+  valid_from, expires_at, period_start, period_end,
+  max_uses, used_count, max_amount_minor,
+  target_ids, vendor_ids, item_ids,
+  consent_id, two_person_required, revoked_at, created_at
+) values
+  (
+    '77777777-7777-4777-8777-777777777720',
+    '11111111-1111-4111-8111-111111111111',
+    '22222222-2222-4222-8222-222222222222', -- Riya
+    '44444444-4444-4444-8444-444444444441',
+    'send_alert',
+    'allow',
+    '{"title":"Riya safety alerts: check-in to herself, SOS / watch / phone-dying notices to her trusted contacts"}'::jsonb,
+    '2026-11-01T00:00:00+05:30'::timestamptz,
+    '2026-12-31T23:59:59+05:30'::timestamptz,
+    '2026-11-01T00:00:00+05:30'::timestamptz,
+    '2026-12-31T23:59:59+05:30'::timestamptz,
+    1000,
+    0,
+    0,
+    array[
+      '22222222-2222-4222-8222-222222222222',
+      '22222222-2222-4222-8222-222222222225',
+      '22222222-2222-4222-8222-222222222223'
+    ],
+    '{}',
+    '{}',
+    '88888888-8888-4888-8888-888888888810',
+    false,
+    null,
+    '2026-11-01T10:06:00+05:30'::timestamptz
+  ),
+  (
+    '77777777-7777-4777-8777-777777777721',
+    '11111111-1111-4111-8111-111111111111',
+    '22222222-2222-4222-8222-222222222222', -- Riya
+    '44444444-4444-4444-8444-444444444441',
+    'share_data',
+    'allow',
+    '{"title":"Riya shares a calm status line with Maa"}'::jsonb,
+    '2026-11-01T00:00:00+05:30'::timestamptz,
+    '2026-12-31T23:59:59+05:30'::timestamptz,
+    '2026-11-01T00:00:00+05:30'::timestamptz,
+    '2026-12-31T23:59:59+05:30'::timestamptz,
+    1000,
+    0,
+    0,
+    array['22222222-2222-4222-8222-222222222221'],
+    '{}',
+    '{}',
+    '88888888-8888-4888-8888-888888888814',
+    false,
+    null,
+    '2026-11-01T10:07:00+05:30'::timestamptz
+  ),
+  (
+    '77777777-7777-4777-8777-777777777722',
+    '11111111-1111-4111-8111-111111111111',
+    '22222222-2222-4222-8222-222222222221', -- Maa
+    '44444444-4444-4444-8444-444444444441',
+    'send_alert',
+    'allow',
+    '{"title":"Refill notice to Maa''s children after an authorized Gupta Medical order"}'::jsonb,
+    '2026-11-01T00:00:00+05:30'::timestamptz,
+    '2026-12-31T23:59:59+05:30'::timestamptz,
+    '2026-11-01T00:00:00+05:30'::timestamptz,
+    '2026-12-31T23:59:59+05:30'::timestamptz,
+    1000,
+    0,
+    0,
+    array[
+      '22222222-2222-4222-8222-222222222222',
+      '22222222-2222-4222-8222-222222222223'
+    ],
+    '{}',
+    '{}',
+    '88888888-8888-4888-8888-888888888809',
+    false,
+    null,
+    '2026-11-01T10:08:00+05:30'::timestamptz
+  )
+on conflict (id) do update
+  set principal_id        = excluded.principal_id,
+      decision            = excluded.decision,
+      limits              = excluded.limits,
+      valid_from          = excluded.valid_from,
+      expires_at          = excluded.expires_at,
+      period_start        = excluded.period_start,
+      period_end          = excluded.period_end,
+      max_uses            = excluded.max_uses,
+      used_count          = excluded.used_count,
+      max_amount_minor    = excluded.max_amount_minor,
+      target_ids          = excluded.target_ids,
+      vendor_ids          = excluded.vendor_ids,
+      item_ids            = excluded.item_ids,
+      consent_id          = excluded.consent_id,
+      two_person_required = excluded.two_person_required,
+      revoked_at          = null;
+
+-- ============================================================================
 -- 11. Core 2 Child Safety (Riya's trusted contacts, reassurance prefs, device)
 --     Priya = Rank 1 local friend in Bengaluru (approved, consented, active)
 --     Rohit = Rank 2 brother in Pune (approved, consented, active)
