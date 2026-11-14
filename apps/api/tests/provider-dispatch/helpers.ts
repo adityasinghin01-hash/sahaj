@@ -54,6 +54,11 @@ export class FakeStore implements DispatchStore {
   async bindOutbox(i: BindInput) {
     const have = this.bindings.get(i.outboxId);
     if (have && JSON.stringify(have) !== JSON.stringify(i)) throw new DispatchError("dispatch_conflict");
+    if (!have && i.callId) {
+      // SQL: the call must be this recipient's call in this family and not yet bound to a provider reference
+      const c = this.calls.get(i.callId);
+      if (!c || c.familyId !== i.familyId || c.personId !== i.personId || c.external) throw new DispatchError("identity_mismatch");
+    }
     this.bindings.set(i.outboxId, i); return true;
   }
   async claim(i: ClaimInput) {
@@ -63,6 +68,8 @@ export class FakeStore implements DispatchStore {
     if (!this.bindings.has(i.outboxId) && this.autoBind) this.bindings.set(i.outboxId, { familyId: i.familyId, outboxId: i.outboxId, personId: i.personId, provider: i.provider, action: i.action, callId: i.callId });
     const b = this.bindings.get(i.outboxId);
     if (!b || b.familyId !== i.familyId || b.personId !== i.personId || b.provider !== i.provider || b.action !== i.action || b.callId !== i.callId) throw new DispatchError("identity_mismatch");
+    // SQL: the bound call is re-validated against the BOUND recipient before any ledger write
+    if (b.callId) { const bc = this.calls.get(b.callId); if (!bc || bc.familyId !== b.familyId || bc.personId !== b.personId) throw new DispatchError("identity_mismatch"); }
     if (i.callId) {
       const c = this.calls.get(i.callId);
       if (!c || c.familyId !== i.familyId || c.personId !== i.personId) throw new DispatchError("identity_mismatch");

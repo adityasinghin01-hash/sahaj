@@ -2,7 +2,7 @@
 
 Owner: Kiro A. Reconciled with Phase 3 `c614a32` (`atlas-runtime/CONTRACTS.md`, migrations `20261114201500` / `20261114210000`).
 Code: `apps/api/src/lib/provider-dispatch/**`, `recording-worker/**`, `provider-ingestion/**`, `apps/api/src/app/api/twilio/gather/**`.
-SQL: `infra/supabase/migrations/20261114201600_phase2_dispatch_recording.sql` (unapplied; must sort AFTER `20261114201500`, which creates `outbox.action`, `outbox.incident_id` and `consent_max_age()`).
+SQL: `infra/supabase/migrations/20261114201600_phase2_dispatch_recording.sql` (unapplied). Final order: Phase 3 base `201500` (creates `outbox.action`, `outbox.incident_id`, `consent_max_age()`) -> this file `201600` -> Phase 3 review `210000` -> Phase 3 bridge `213000` (calls `bind_outbox_dispatch`, `call_recording_consent`, `dispatch_account`, reads `normalized_proof`).
 Tests: `apps/api/tests/{provider-dispatch,recording-worker,provider-ingestion}`, `infra/supabase/tests/phase2_dispatch_recording.sql`, `apps/api/tests/provider-dispatch/sql-concurrency.ps1`.
 **The SQL and both scripts have NOT been executed** (no Postgres in the authoring environment). TypeScript tests use in-memory models of the SQL rules.
 
@@ -12,6 +12,7 @@ Tests: `apps/api/tests/{provider-dispatch,recording-worker,provider-ingestion}`,
 - **Consent in the future:** refused by writers in both lanes (`consents_future` in Phase 3, `consents_serialize` here). Both are harmless together.
 - `service_role` has SELECT only on `dispatch_ledger` and `dispatch_bindings`. Changes go through the functions below.
 - `raw_events.normalized_proof` is set only by `record_delivery_proof` / `record_responder_acceptance` (trigger-guarded). Generic `ingest_raw_event` cannot create it, flip it, or forge a row that satisfies a strict consumer.
+- **Normalized proof is frozen evidence.** `raw_events_guard_proof` (insert/update/delete) rejects, with `42501`, any update to a normalized row that changes any column other than worker bookkeeping (`attempt_count, max_attempts, retry_at, lease_token, lease_until, worker_id, last_error_code`), and any delete. That covers id, family, source, provider event id, event type, metadata (action, person, account, ...), hashes, ciphertext, status and timestamps. A proof therefore cannot be rewritten into another accepted action, person or account. Scratch cleanup must disable the trigger as owner.
 
 ## 1. Phase 3 atomic enqueue MUST call the binding RPC
 
@@ -23,7 +24,7 @@ public.bind_outbox_dispatch(
 Call it in the SAME transaction as the `outbox` insert, after `outbox.action`, `.incident_id`, `.action_request_id` are set.
 - `p_person_id`: the person who will be contacted (for urgent responder calls, the RESPONDER, not the incident subject).
 - `p_provider`: `sarvam | twilio | whatsapp`. `p_action`: the PROVIDER operation, must start with `<provider>.`: `sarvam.outbound_call`, `twilio.create_call`, `whatsapp.send_text`. This is NOT `outbox.action` (the care/domain action such as `check_in`, `send_alert`, `urgent_responder`).
-- `p_call_id`: required for the two call operations: an existing `calls` row of that person, `external_id` null.
+- `p_call_id`: required for the two call operations. **Validated at bind time:** the `calls` row must exist in the same family, belong to `p_person_id` and have `external_id` null, otherwise `42501 call_person_mismatch` and nothing is recorded (an identical replay after dispatch is still a no-op). `claim_dispatch` re-validates that the bound call still belongs to the BOUND recipient before any ledger row is written, so a same-family call swap after binding is refused before any external send.
 - `p_incident_id`: optional; if the outbox row has `incident_id` it must match and is used when omitted. `p_assignment_id`: urgent responder only; its person must equal `p_person_id` and its incident the bound incident.
 - `action_request_id` is copied from the outbox row (never passed in). Rebinding with different values raises `23505`; identical is a no-op. Row is immutable (update/delete trigger).
 - Without a binding, `claim_dispatch` refuses the row (`42501`). With one, a claim whose person, provider, action or call differs is refused even with a valid lease inside the family.
@@ -45,6 +46,8 @@ Phase 3 predicate parity: `infra/supabase/tests/phase2_dispatch_recording.sql` m
 
 ## 3. Consent validity: ONE shared policy
 
+`sahaj_private.call_recording_consent(family, call, person)` returns `TABLE(id uuid, granted_at timestamptz)` (zero rows when not effective), NOT a scalar uuid, and is executable by nobody except definer functions. Call it as `select e.id into v from sahaj_private.call_recording_consent(...) e` inside a definer function.
+
 `sahaj_private.consent_max_age()` = 365 days is defined in both migrations (`create or replace`, identical) and read by Phase 3 `consent_current`, by `call_recording_consent` / `put_call_recording` / purge here, and mirrored in TS (`provider-ingestion/consent-policy.ts`, `CONSENT_MAX_AGE_MS`). A grant counts only while `created_at <= now` and `created_at > now - 365d` (strict); newest row for the exact call plus global refusals wins, ties go to refusal, refusals never age out, a global yes never grants, other purposes (`call_transcript`, `voice_share:*`) never grant `call_recording`. Stored recording retention is capped at `grant.created_at + 365d` in SQL and TS, and the purge treats an aged-out grant like a revoked one, so no stored recording survives the gate refusing it. If Phase 3 changes the value, change the single function and `CONSENT_MAX_AGE_MS` together (a TS test pins the number).
 
 ## 4. Runner entrypoints (stable, gated, no live calls here)
@@ -65,6 +68,8 @@ Factories for the real stores: `dispatchStore()`, `recordingStore()`, `recording
 - Environment names introduced: `TWILIO_GATHER_CALLBACK_URL`, `SARVAM_RECORDING_RETRIEVAL`; worker config values are passed in by the caller.
 
 ## 6. Open items needing other lanes
+
+0. **Phase 3 bridge `c184a68` (read-only review, not edited):** (a) `20261114213000_phase3_bridge.sql` `request_consent` assigns `cid := sahaj_private.call_recording_consent(...)` as a scalar; the function returns a table, so that must become `select e.id into cid from sahaj_private.call_recording_consent(...) e`, otherwise `record_audio` consent fails at runtime. (b) Its comment says recording consent has \
 
 1. Phase 3 enqueue must call `bind_outbox_dispatch` and set `outbox.action` / `incident_id`; its `observe_delivery` / `outbox_acceptance` should add the strict join in section 2.
 2. Phase 3 cron must route `twilio.call_status` and the Sarvam/WhatsApp status events through `runStatusNormalizationJob`, `twilio.recording.retrieval_requested` and `sarvam.recording.retrieval_requested` through `runRecordingJob`, and schedule `runOutboxDispatchTick` / `runRecordingPurgeTick`. Phase 3's router lists only the Twilio recording event today.

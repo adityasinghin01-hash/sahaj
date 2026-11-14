@@ -217,7 +217,29 @@ describe("identity and reference substitution", () => {
     expect(await dispatchOutbound(deps(store, t.transport), sarvamCmd())).toMatchObject({ status: "failed", code: "identity_mismatch" });
     noNetwork(t);
   });
-  it("bindings are immutable: a conflicting rebind is refused", async () => {
+  it("binding a call that belongs to another person, another family or nobody is refused and records nothing", async () => {
+    const store = new FakeStore(); store.autoBind = false;
+    store.calls.set("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", { familyId: FAMILY, personId: OTHER_PERSON, ai: false });
+    store.calls.set("bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb", { familyId: OTHER_FAMILY, personId: PERSON, ai: false });
+    store.calls.set("cccccccc-cccc-4ccc-8ccc-cccccccccccc", { familyId: FAMILY, personId: PERSON, external: "att-old", ai: false });
+    for (const callId of ["aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb", "cccccccc-cccc-4ccc-8ccc-cccccccccccc", "dddddddd-dddd-4ddd-8ddd-dddddddddddd"]) {
+      await expect(store.bindOutbox({ familyId: FAMILY, outboxId: OUTBOX, personId: PERSON, provider: "sarvam", action: "sarvam.outbound_call", callId })).rejects.toMatchObject({ code: "identity_mismatch" });
+    }
+    expect(store.bindings.size).toBe(0);
+    // an identical replay after the call was bound at dispatch stays a no-op
+    const b = { familyId: FAMILY, outboxId: OUTBOX, personId: PERSON, provider: "sarvam" as const, action: "sarvam.outbound_call" as const, callId: CALL };
+    await store.bindOutbox(b); store.calls.get(CALL)!.external = "att-1";
+    expect(await store.bindOutbox(b)).toBe(true);
+  });
+  it("a call swapped to another person after binding is refused at claim: nothing is claimed and no provider is contacted", async () => {
+    const store = new FakeStore(); store.autoBind = false;
+    await store.bindOutbox({ familyId: FAMILY, outboxId: OUTBOX, personId: PERSON, provider: "sarvam", action: "sarvam.outbound_call", callId: CALL });
+    store.calls.get(CALL)!.personId = OTHER_PERSON; // same family, different recipient
+    const t = scripted(ok());
+    expect(await dispatchOutbound(deps(store, t.transport), sarvamCmd())).toMatchObject({ status: "failed", code: "identity_mismatch", reachedProvider: false });
+    expect(store.ledger.size).toBe(0); noNetwork(t);
+    expect(store.calls.get(CALL)!.external).toBeUndefined(); expect(store.identities.size).toBe(0);
+  });  it("bindings are immutable: a conflicting rebind is refused", async () => {
     const store = new FakeStore();
     const b = { familyId: FAMILY, outboxId: OUTBOX, personId: PERSON, provider: "sarvam" as const, action: "sarvam.outbound_call" as const, callId: CALL };
     await store.bindOutbox(b);

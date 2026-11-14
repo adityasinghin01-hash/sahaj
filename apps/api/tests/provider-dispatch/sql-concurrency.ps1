@@ -38,7 +38,7 @@ $L1 = 'f9000000-0000-4000-8000-000000000001'; $L2 = 'f9000000-0000-4000-8000-000
 $INC = 'a9000000-0000-4000-8000-000000000001'; $AR = 'a9000000-0000-4000-8000-000000000002'; $ASG = 'a9000000-0000-4000-8000-000000000003'
 
 function Cleanup {
-  Sql "delete from public.assignments where family_id='$F'; delete from public.raw_events where family_id='$F';
+  Sql "delete from public.assignments where family_id='$F'; alter table public.raw_events disable trigger raw_events_guard_proof; delete from public.raw_events where family_id='$F'; alter table public.raw_events enable trigger raw_events_guard_proof;
        delete from public.dispatch_ledger where family_id='$F'; alter table public.dispatch_bindings disable trigger dispatch_bindings_immutable;
        delete from public.dispatch_bindings where family_id='$F'; alter table public.dispatch_bindings enable trigger dispatch_bindings_immutable;
        delete from public.outbox where family_id='$F'; delete from public.action_requests where family_id='$F'; delete from public.incidents where family_id='$F';

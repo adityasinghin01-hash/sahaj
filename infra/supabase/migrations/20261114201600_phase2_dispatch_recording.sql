@@ -50,18 +50,29 @@ revoke all on function sahaj_private.call_recording_consent(uuid,uuid,uuid) from
 alter table public.raw_events add column normalized_proof boolean not null default false;
 create function sahaj_private.guard_normalized_proof() returns trigger
 language plpgsql set search_path='' as $$
+declare volatile_cols constant text[] := array['attempt_count','max_attempts','retry_at','lease_token','lease_until','worker_id','last_error_code'];
 begin
   if tg_op='INSERT' then
     if new.normalized_proof and coalesce(current_setting('sahaj.proof_writer',true),'')<>'1' then
       raise exception 'proof_writer_required' using errcode='42501';
     end if;
-  elsif new.normalized_proof is distinct from old.normalized_proof then
+    return new;
+  elsif tg_op='DELETE' then
+    if old.normalized_proof then raise exception 'proof_immutable' using errcode='42501'; end if;
+    return old;
+  end if;
+  if new.normalized_proof is distinct from old.normalized_proof then
     raise exception 'proof_flag_immutable' using errcode='42501';
+  end if;
+  -- Normalized proof is frozen evidence: every column except worker lease/retry bookkeeping (id, family, source,
+  -- provider event id, type, metadata, hashes, ciphertext, status, timestamps and any future column) must stay identical.
+  if old.normalized_proof and (to_jsonb(new)-volatile_cols) is distinct from (to_jsonb(old)-volatile_cols) then
+    raise exception 'proof_immutable' using errcode='42501';
   end if;
   return new;
 end$$;
 revoke all on function sahaj_private.guard_normalized_proof() from public,anon,authenticated,service_role;
-create trigger raw_events_guard_proof before insert or update on public.raw_events for each row execute function sahaj_private.guard_normalized_proof();
+create trigger raw_events_guard_proof before insert or update or delete on public.raw_events for each row execute function sahaj_private.guard_normalized_proof();
 
 ------------------------------------------------------------------ ledger and immutable bindings
 create table public.dispatch_bindings (
@@ -162,6 +173,12 @@ begin
     end if;
     inc := a.incident_id;
   end if;
+  if p_call_id is not null and not exists(select 1 from public.dispatch_bindings x where x.outbox_id=p_outbox_id) then
+    -- The call must be a call of THIS recipient in THIS family, not yet bound to a provider reference. Checked here and again at claim.
+    if not exists(select 1 from public.calls c where c.id=p_call_id and c.family_id=p_family_id and c.person_id=p_person_id and c.external_id is null) then
+      raise exception 'call_person_mismatch' using errcode='42501';
+    end if;
+  end if;
   insert into public.dispatch_bindings(outbox_id,family_id,person_id,provider,action,call_id,incident_id,assignment_id,action_request_id)
     values(p_outbox_id,p_family_id,p_person_id,p_provider,p_action,p_call_id,inc,p_assignment_id,o.action_request_id)
     on conflict(outbox_id) do nothing;
@@ -199,6 +216,9 @@ begin
   if b.outbox_id is null or b.person_id<>p_person_id or b.provider<>p_provider or b.action<>p_action
     or b.call_id is distinct from p_call_id then
     raise exception 'dispatch_binding_mismatch' using errcode='42501';
+  end if;
+  if b.call_id is not null and not exists(select 1 from public.calls c where c.id=b.call_id and c.family_id=b.family_id and c.person_id=b.person_id) then
+    raise exception 'call_person_mismatch' using errcode='42501';
   end if;
   select * into existing from public.dispatch_ledger where family_id=p_family_id and idempotency_key=p_key;
   if existing.id is not null then

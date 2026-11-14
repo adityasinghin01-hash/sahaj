@@ -78,6 +78,28 @@ begin
         and l.idempotency_key=e.metadata->>'dispatch_key' and l.provider_ref=c.external_id and l.status in ('dispatched','delivered')))));
 end$$;
 
+create function pg_temp.assert_frozen(p_id uuid) returns void language plpgsql as $$
+declare stmt text;
+begin
+  foreach stmt in array array[
+    'metadata=metadata||jsonb_build_object(''action'',''urgent_responder'')',
+    'metadata=metadata||jsonb_build_object(''person_id'',''c2000000-0000-4000-8000-000000000002'')',
+    'metadata=metadata||jsonb_build_object(''account_id'',''ACforged'')',
+    'metadata=''{}''::jsonb',
+    'event_type=case when event_type=''responder.accepted'' then ''delivery.confirmed'' else ''responder.accepted'' end',
+    'source=''sarvam''','provider_event_id=provider_event_id||''x''','payload_hash=repeat(''0'',64)','status=''failed''',
+    'family_id=''b2000000-0000-4000-8000-000000000002''','received_at=received_at+interval ''1 day''','processed_at=null'] loop
+    begin
+      execute format('update public.raw_events set %s where id=%L',stmt,p_id);
+      raise exception 'FAIL normalized proof rewritten by: %',stmt;
+    exception when insufficient_privilege then null; end;
+  end loop;
+  begin delete from public.raw_events where id=p_id; raise exception 'FAIL normalized proof deleted'; exception when insufficient_privilege then null; end;
+  begin update public.raw_events set normalized_proof=false where id=p_id; raise exception 'FAIL flag cleared'; exception when insufficient_privilege then null; end;
+  -- worker bookkeeping is still allowed
+  update public.raw_events set attempt_count=attempt_count+1,last_error_code=null where id=p_id;
+end$$;
+
 -- ---------------------------------------------------------------- privileges
 do $$ declare t text; begin
   foreach t in array array['public.dispatch_ledger','public.dispatch_bindings'] loop
@@ -159,6 +181,14 @@ do $$ declare r text; begin
     raise exception 'FAIL unbound outbox claimed'; exception when insufficient_privilege then null; end;
   begin perform public.claim_dispatch('b2000000-0000-4000-8000-000000000001','c2000000-0000-4000-8000-000000000001','dispatch:o1:a1','sarvam','sarvam.outbound_call','e2000000-0000-4000-8000-000000000001','f2000000-0000-4000-8000-0000000000ff','d2000000-0000-4000-8000-000000000001');
     raise exception 'FAIL wrong lease'; exception when serialization_failure then null; end;
+  -- same-family call substitution at BIND time: a call of another person, another family, or an already bound call
+  begin perform public.bind_outbox_dispatch('b2000000-0000-4000-8000-000000000001','e2000000-0000-4000-8000-000000000005','c2000000-0000-4000-8000-000000000001','twilio','twilio.create_call','d2000000-0000-4000-8000-000000000002');
+    raise exception 'FAIL bound to another person''s call'; exception when insufficient_privilege then null; end;
+  begin perform public.bind_outbox_dispatch('b2000000-0000-4000-8000-000000000001','e2000000-0000-4000-8000-000000000005','c2000000-0000-4000-8000-000000000001','twilio','twilio.create_call','d2000000-0000-4000-8000-000000000003');
+    raise exception 'FAIL bound to another family''s call'; exception when insufficient_privilege then null; end;
+  begin perform public.bind_outbox_dispatch('b2000000-0000-4000-8000-000000000001','e2000000-0000-4000-8000-000000000005','c2000000-0000-4000-8000-000000000001','twilio','twilio.create_call','d2000000-0000-4000-8000-0000000000aa');
+    raise exception 'FAIL bound to a missing call'; exception when insufficient_privilege then null; end;
+  if exists(select 1 from public.dispatch_bindings where outbox_id='e2000000-0000-4000-8000-000000000005') then raise exception 'FAIL refused bind left a row'; end if;
   if (select count(*) from public.dispatch_ledger)<>0 then raise exception 'FAIL ledger written by refused claims'; end if;
   r := public.claim_dispatch('b2000000-0000-4000-8000-000000000001','c2000000-0000-4000-8000-000000000001','dispatch:o1:a1','sarvam','sarvam.outbound_call','e2000000-0000-4000-8000-000000000001','f2000000-0000-4000-8000-000000000001','d2000000-0000-4000-8000-000000000001');
   if r<>'claimed' then raise exception 'FAIL first claim %',r; end if;
@@ -213,6 +243,8 @@ do $$ declare fam uuid := 'b2000000-0000-4000-8000-000000000001'; tw uuid := 'd2
   if pg_temp.p3_delivery(o,'c2000000-0000-4000-8000-000000000001',false) is distinct from 'not_sent'
     or pg_temp.p3_delivery(o,'c2000000-0000-4000-8000-000000000001',true) is distinct from 'not_sent' then raise exception 'FAIL real proof vs Phase 3 predicate'; end if;
   if pg_temp.p3_delivery(o,'c2000000-0000-4000-8000-000000000002',true) is not null then raise exception 'FAIL proof matched another person'; end if;
+  perform pg_temp.assert_frozen((proof->>'proof_event_id')::uuid);
+  if pg_temp.p3_delivery(o,'c2000000-0000-4000-8000-000000000001',true) is distinct from 'not_sent' then raise exception 'FAIL frozen proof changed meaning'; end if;
   if public.record_delivery_proof(fam,src,'confirmed_not_sent')->>'proof_event_id'<>proof->>'proof_event_id' then raise exception 'FAIL proof replay'; end if;
   if public.reconcile_dispatch(fam,'dispatch:other:a1',(proof->>'proof_event_id')::uuid,'confirmed_not_sent') then raise exception 'FAIL other key'; end if;
   if public.reconcile_dispatch(fam,k,(proof->>'proof_event_id')::uuid,'delivered') then raise exception 'FAIL other outcome'; end if;
@@ -231,6 +263,12 @@ exception when serialization_failure then null; end $$;
 -- sweep: abandoned claims become delivery_unknown, never a retryable state
 do $$ begin
   perform public.bind_outbox_dispatch('b2000000-0000-4000-8000-000000000001','e2000000-0000-4000-8000-000000000005','c2000000-0000-4000-8000-000000000001','twilio','twilio.create_call','d2000000-0000-4000-8000-000000000005');
+  -- the bound call is re-validated against the bound recipient at claim time, before any ledger row or external send
+  update public.calls set person_id='c2000000-0000-4000-8000-000000000003' where id='d2000000-0000-4000-8000-000000000005';
+  begin perform public.claim_dispatch('b2000000-0000-4000-8000-000000000001','c2000000-0000-4000-8000-000000000001','dispatch:o5:a0','twilio','twilio.create_call','e2000000-0000-4000-8000-000000000005','f2000000-0000-4000-8000-000000000005','d2000000-0000-4000-8000-000000000005');
+    raise exception 'FAIL claimed with a substituted call'; exception when insufficient_privilege then null; end;
+  if exists(select 1 from public.dispatch_ledger where idempotency_key='dispatch:o5:a0') then raise exception 'FAIL ledger row for refused claim'; end if;
+  update public.calls set person_id='c2000000-0000-4000-8000-000000000001' where id='d2000000-0000-4000-8000-000000000005';
   perform public.claim_dispatch('b2000000-0000-4000-8000-000000000001','c2000000-0000-4000-8000-000000000001','dispatch:o5:a1','twilio','twilio.create_call','e2000000-0000-4000-8000-000000000005','f2000000-0000-4000-8000-000000000005','d2000000-0000-4000-8000-000000000005');
   update public.dispatch_ledger set claimed_at=now()-interval '1 hour' where idempotency_key='dispatch:o5:a1';
   if public.sweep_stale_dispatch_claims(120)<1 then raise exception 'FAIL sweep'; end if;
@@ -281,6 +319,8 @@ do $$ declare fam uuid := 'b2000000-0000-4000-8000-000000000001'; tw uuid := 'd2
   if pg_temp.p3_accept(o,false) then raise exception 'FAIL Phase 3 saw acceptance before the assignment was accepted'; end if;
   if not public.accept_assignment_verified(fam,asg,(proof->>'proof_event_id')::uuid) then raise exception 'FAIL valid accept'; end if;
   if not pg_temp.p3_accept(o,false) or not pg_temp.p3_accept(o,true) then raise exception 'FAIL real responder.accepted vs Phase 3 predicate'; end if;
+  perform pg_temp.assert_frozen((proof->>'proof_event_id')::uuid);
+  if not pg_temp.p3_accept(o,true) then raise exception 'FAIL frozen acceptance changed meaning'; end if;
   if (select status from public.assignments where id=asg)<>'accepted' then raise exception 'FAIL status'; end if;
   if not public.accept_assignment_verified(fam,asg,(proof->>'proof_event_id')::uuid) then raise exception 'FAIL idempotent accept'; end if;
   p2 := public.record_responder_acceptance(fam,'AC:gather:CA1');
