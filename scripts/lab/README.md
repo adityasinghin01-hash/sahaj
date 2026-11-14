@@ -110,3 +110,7 @@ The cloudflared quick tunnel forwards to `http://127.0.0.1:3100`; it is never st
 3. `LAB2_PROXY_PORT=3100 bash scripts/lab/lab-up2.sh`
 4. `curl "$(cat ~/.sahaj-lab/public-url.txt)/api/health"` and `.../api/health/readiness`.
 5. Rollback: `bash scripts/lab/lab-down2.sh && bash scripts/lab/lab-up.sh`.
+
+### Riya's web app on the public URL (`LAB2_WEB_DIR`)
+- Open the lab's public URL (`cat ~/.sahaj-lab/public-url.txt`, or `http://127.0.0.1:3100`) in a laptop browser; `proxy.mjs` serves `LAB2_WEB_DIR` (default `~/dev/sahaj-riya-web`) for non-`/api` `GET`/`HEAD` requests, and Riya's web app defaults its server URL to `window.location.origin` with no CORS issues.
+- Rebuild Riya's static web bundle: `pnpm -C apps/child exec expo export --platform web --output-dir ~/dev/sahaj-riya-web`

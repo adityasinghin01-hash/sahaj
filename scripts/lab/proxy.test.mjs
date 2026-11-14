@@ -3,7 +3,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import http from "node:http";
 import { createHash, randomBytes } from "node:crypto";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createLabStorage, createProxy, DOOR_RULES, SUPABASE_RULES, route, withLabStorageRemove } from "./proxy.mjs";
@@ -145,4 +145,102 @@ test("upstream down -> 502 JSON", async (t) => {
   const res = await fetch(new URL("/api/health", pu));
   assert.equal(res.status, 502);
   assert.deepEqual(await res.json(), { error: "upstream_unavailable" });
+});
+
+test("door static web serve from LAB2_WEB_DIR, SPA fallback, traversal blocked, and /api still proxied", async (t) => {
+  const parentDir = await mkdtemp(join(tmpdir(), "lab-web-test-"));
+  const webDir = join(parentDir, "web");
+  await mkdir(join(webDir, "_expo", "static"), { recursive: true });
+  await mkdir(join(webDir, "assets"), { recursive: true });
+  await writeFile(join(parentDir, "outside.txt"), "top-secret-outside");
+  await writeFile(join(webDir, "index.html"), "<!doctype html><title>Sahaj Riya</title>");
+  const fixtures = [
+    ["app.js", "console.log(1);", "application/javascript; charset=utf-8"],
+    ["app.css", "body{margin:0}", "text/css; charset=utf-8"],
+    ["metadata.json", '{"v":1}', "application/json; charset=utf-8"],
+    ["icon.png", "PNG", "image/png"],
+    ["logo.svg", "<svg/>", "image/svg+xml"],
+    ["favicon.ico", "ICO", "image/x-icon"],
+    ["font.ttf", "TTF", "font/ttf"],
+    ["font.woff2", "WOFF2", "font/woff2"],
+    ["clip.wav", "WAV", "audio/wav"],
+    ["clip.mp3", "MP3", "audio/mpeg"],
+  ];
+  for (const [name, content] of fixtures) {
+    await writeFile(join(webDir, name), content);
+  }
+  await writeFile(join(webDir, "_expo", "static", "entry.js"), "export default 1;");
+
+  const prevWebDir = process.env.LAB2_WEB_DIR;
+  process.env.LAB2_WEB_DIR = webDir;
+
+  const shield = echo("shield"), api = echo("api");
+  const [su, au] = [await listen(shield), await listen(api)];
+  const proxy = createProxy({ rules: DOOR_RULES, targets: { shield: su, api: au }, fallback: { to: "shield" } });
+  const pu = await listen(proxy);
+
+  t.after(async () => {
+    if (prevWebDir === undefined) delete process.env.LAB2_WEB_DIR;
+    else process.env.LAB2_WEB_DIR = prevWebDir;
+    proxy.close();
+    shield.close();
+    api.close();
+    await rm(parentDir, { recursive: true, force: true });
+  });
+
+  // 1. Static serve: / and /index.html with cache-control: no-store, plus HEAD and all content-types.
+  const rootRes = await fetch(new URL("/", pu));
+  assert.equal(rootRes.status, 200);
+  assert.equal(rootRes.headers.get("content-type"), "text/html; charset=utf-8");
+  assert.equal(rootRes.headers.get("cache-control"), "no-store");
+  assert.equal(await rootRes.text(), "<!doctype html><title>Sahaj Riya</title>");
+
+  const headRes = await fetch(new URL("/index.html", pu), { method: "HEAD" });
+  assert.equal(headRes.status, 200);
+  assert.equal(headRes.headers.get("content-type"), "text/html; charset=utf-8");
+  assert.equal(headRes.headers.get("cache-control"), "no-store");
+  assert.equal(await headRes.text(), "");
+
+  for (const [name, content, expectedType] of fixtures) {
+    const r = await fetch(new URL(`/${name}`, pu));
+    assert.equal(r.status, 200, `status for ${name}`);
+    assert.equal(r.headers.get("content-type"), expectedType, `content-type for ${name}`);
+    assert.equal(r.headers.get("cache-control"), null, `cache-control for ${name}`);
+    assert.equal(await r.text(), content, `body for ${name}`);
+  }
+
+  // 2. SPA fallback to index.html for unknown non-file paths; 404 for unknown files; no directory listing.
+  const spaRes = await fetch(new URL("/family/alerts?tab=1", pu));
+  assert.equal(spaRes.status, 200);
+  assert.equal(spaRes.headers.get("content-type"), "text/html; charset=utf-8");
+  assert.equal(spaRes.headers.get("cache-control"), "no-store");
+  assert.equal(await spaRes.text(), "<!doctype html><title>Sahaj Riya</title>");
+
+  assert.equal((await fetch(new URL("/missing.js", pu))).status, 404);
+  assert.equal((await fetch(new URL("/_expo", pu))).status, 404);
+  assert.equal((await fetch(new URL("/assets/", pu))).status, 404);
+
+  // 3. Path traversal blocked (both percent-encoded and raw un-normalized HTTP path).
+  assert.equal((await fetch(new URL("/..%2foutside.txt", pu))).status, 403);
+  assert.equal((await fetch(new URL("/assets/..%2f..%2foutside.txt", pu))).status, 403);
+  for (const rawPath of ["/../outside.txt", "/%2e%2e/outside.txt"]) {
+    const rawTraversalStatus = await new Promise((resolveStatus, reject) => {
+      const req = http.request(
+        { hostname: pu.hostname, port: pu.port, method: "GET", path: rawPath },
+        (res) => { res.resume(); res.on("end", () => resolveStatus(res.statusCode)); },
+      );
+      req.on("error", reject);
+      req.end();
+    });
+    assert.equal(rawTraversalStatus, 403, `traversal status for ${rawPath}`);
+  }
+
+  // 4. /api/** routing is byte-for-byte unchanged (both GET and POST).
+  const apiHealth = await (await fetch(new URL("/api/health", pu))).json();
+  assert.equal(apiHealth.name, "shield");
+  assert.equal(apiHealth.url, "/api/health");
+
+  const apiCore1 = await (await fetch(new URL("/api/core1/check-in?x=1", pu))).json();
+  assert.equal(apiCore1.name, "api");
+  assert.equal(apiCore1.url, "/api/core1/check-in?x=1");
 });

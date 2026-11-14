@@ -19,7 +19,8 @@
 import http from "node:http";
 import { createHmac, randomBytes, randomUUID, timingSafeEqual } from "node:crypto";
 import { mkdir, readFile, rm, stat, writeFile } from "node:fs/promises";
-import { dirname, join } from "node:path";
+import { homedir } from "node:os";
+import { dirname, extname, join, resolve, sep } from "node:path";
 import { pathToFileURL } from "node:url";
 
 /**
@@ -119,7 +120,80 @@ function sendJson(res, status, body) {
   res.end(text);
 }
 
-export function createProxy({ rules, targets, fallback, log = () => {} }) {
+export const WEB_CONTENT_TYPES = {
+  ".html": "text/html; charset=utf-8",
+  ".js": "application/javascript; charset=utf-8",
+  ".mjs": "application/javascript; charset=utf-8",
+  ".css": "text/css; charset=utf-8",
+  ".json": "application/json; charset=utf-8",
+  ".map": "application/json; charset=utf-8",
+  ".png": "image/png",
+  ".svg": "image/svg+xml",
+  ".ico": "image/x-icon",
+  ".ttf": "font/ttf",
+  ".woff2": "font/woff2",
+  ".wav": "audio/wav",
+  ".mp3": "audio/mpeg",
+};
+
+export function defaultWebDir() {
+  return process.env.LAB2_WEB_DIR || join(process.env.HOME || homedir(), "dev", "sahaj-riya-web");
+}
+
+async function serveWeb(req, res, pathname, dir) {
+  let decoded;
+  try {
+    decoded = decodeURIComponent(pathname);
+  } catch {
+    sendJson(res, 400, { error: "bad_path" });
+    return 400;
+  }
+  if (decoded.includes("\0") || decoded.includes("\\")) {
+    sendJson(res, 400, { error: "bad_path" });
+    return 400;
+  }
+  const root = resolve(dir);
+  const rel = decoded === "/" ? "index.html" : `.${decoded}`;
+  const candidate = resolve(root, rel);
+  if ((candidate !== root && !candidate.startsWith(`${root}${sep}`)) || decoded.split("/").includes("..")) {
+    sendJson(res, 403, { error: "forbidden" });
+    return 403;
+  }
+
+  let file = candidate;
+  let st = await stat(file).catch(() => null);
+  if (st && st.isDirectory()) {
+    sendJson(res, 404, { error: "not_found" });
+    return 404;
+  }
+  if (!st || !st.isFile()) {
+    if (extname(decoded) !== "") {
+      sendJson(res, 404, { error: "not_found" });
+      return 404;
+    }
+    file = resolve(root, "index.html");
+    st = await stat(file).catch(() => null);
+    if (!st || !st.isFile()) {
+      sendJson(res, 404, { error: "not_found" });
+      return 404;
+    }
+  }
+
+  const bytes = await readFile(file);
+  const ext = extname(file).toLowerCase();
+  const isIndex = file === resolve(root, "index.html");
+  const headers = {
+    "content-type": WEB_CONTENT_TYPES[ext] ?? "application/octet-stream",
+    "content-length": bytes.length,
+    ...(isIndex ? { "cache-control": "no-store" } : {}),
+  };
+  res.writeHead(200, headers);
+  if (req.method === "HEAD") res.end();
+  else res.end(bytes);
+  return 200;
+}
+
+export function createProxy({ rules, targets, fallback, webDir, log = () => {} }) {
   return http.createServer((req, res) => {
     const started = Date.now();
     const rawUrl = req.url ?? "/";
@@ -129,6 +203,16 @@ export function createProxy({ rules, targets, fallback, log = () => {} }) {
     if (!pathname.startsWith("/") || pathname.includes("\\")) return sendJson(res, 400, { error: "bad_path" });
     const { rule, label } = route(rules, pathname, fallback);
     const done = (status, to) => log(`${req.method} ${label} -> ${to} ${status} ${Date.now() - started}ms`);
+    if (
+      (req.method === "GET" || req.method === "HEAD") &&
+      !pathname.startsWith("/api") &&
+      (webDir !== undefined ? Boolean(webDir) : rules === DOOR_RULES)
+    ) {
+      return serveWeb(req, res, pathname, webDir || defaultWebDir()).then(
+        (status) => done(status, "web"),
+        () => { done(500, "web"); sendJson(res, 500, { error: "web_static_failed" }); },
+      );
+    }
     if (rule.to === "none") {
       done(rule.status, "local");
       return sendJson(res, rule.status, { error: rule.error });

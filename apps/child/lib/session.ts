@@ -9,7 +9,11 @@ export interface Session {
 }
 type State = { ready: boolean; session: Session | null; storage: 'memory' | 'secure' | 'browser' };
 const KEY = 'sahaj.lab.session.v1';
-export const DEFAULT_SERVER_URL = process.env.EXPO_PUBLIC_SAHAJ_API_URL ?? '';
+export const DEFAULT_SERVER_URL =
+  process.env.EXPO_PUBLIC_SAHAJ_API_URL ||
+  (Platform.OS === 'web' && typeof window !== 'undefined' && window.location?.origin
+    ? window.location.origin
+    : '');
 let state: State = { ready: false, session: null, storage: 'memory' };
 let initializing: Promise<void> | undefined;
 let revision = 0;
