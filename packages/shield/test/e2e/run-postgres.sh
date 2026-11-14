@@ -13,6 +13,7 @@ MIGRATIONS=(
 )
 PKG="$(cd "$HERE/../.." && pwd)"
 VITEST="$PKG/node_modules/.bin/vitest"
+[[ -x "$VITEST" ]] || VITEST="$(cd "$PKG/../.." && pwd)/node_modules/.bin/vitest"   # hoisted installs
 DB=shield_db_test
 
 for bin in initdb pg_ctl psql; do
