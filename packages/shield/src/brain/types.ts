@@ -37,6 +37,16 @@ export interface LinkResult {
   status: "checked" | "unavailable" | "blocked";
   /** Negative cache results apply only to the exact URLs that were checked. */
   checkedUrls?: string[];
+  /** Set when a link on this host is on the OpenPhish public feed (`threat` is then true as well). */
+  phishFeed?: boolean;
+  /** Set when the registrable domain was registered fewer than 30 days ago (RDAP). */
+  newDomain?: boolean;
+  /** Whole days since domain registration, when RDAP knew it. */
+  domainAgeDays?: number;
+  /** Cache-only: RDAP registration time for `rdap:domain:v1:<domain>` (null = unknown). */
+  registeredAt?: string | null;
+  /** Cache-only: parsed OpenPhish feed for `openphish:feed:v1` (normalised URLs, host-wide hostnames). */
+  feed?: { urls: string[]; hosts: string[] };
 }
 export interface ChildCard {
   verdictId: string;
@@ -77,6 +87,11 @@ export interface ShieldBrainDeps {
   now?: () => number;
   /** Fixed Google endpoint only; never used for fetching event links. */
   safeBrowsingFetch?: typeof fetch;
+  /**
+   * Fixed trusted hosts only (openphish.com feed, rdap.org with the registrable domain); never event links.
+   * Absent = OpenPhish and RDAP checks are off. Hosts pass global `fetch` to turn them on.
+   */
+  linkIntelFetch?: typeof fetch;
   /** Tests may inject a sandbox instance. Production defaults to the pinned transport. */
   sandbox?: { unshorten(url: string, signal?: AbortSignal): Promise<string> };
 }

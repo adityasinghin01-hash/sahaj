@@ -1,5 +1,6 @@
 export {};
 export * from "./brain/index.js";
+export * from "./links/index.js";
 export * from "./rules";
 // The runtime owns the complete tool map/guard, including drill_answer.
 export { maskDigits, STOP_SCRIPTS, SAFE_FALLBACK_LINE, SAFE_FALLBACK_LINE_ID,

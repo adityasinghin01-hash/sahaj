@@ -19,14 +19,32 @@ export async function judge(event: ShieldEvent, deps: ShieldBrainDeps): Promise<
 }
 const rank = { green: 0, yellow: 1, red: 2 };
 const higher = (a: Verdict["level"], b: Verdict["level"]) => rank[a] >= rank[b] ? a : b;
+/**
+ * Rule ids (from rules.json) that make a days-old website red: scam-script wording (script.*),
+ * pressure/OTP/money asks (signal.*), an OTP in the message, a brand look-alike or punycode host,
+ * a shortener, a bank/electricity/courier link from a mobile number (pattern.P5.red), or a mobile number claiming a brand.
+ * pattern.P5.yellow is not enough: it fires for any link from an unsaved mobile number.
+ */
+const SCAM_CONTEXT_IDS = new Set(["otp.present", "link.look_alike", "link.punycode", "link.shortener",
+  "sender.mobile_claims_brand", "pattern.P5.red"]);
+const isScamContext = (id: string) => SCAM_CONTEXT_IDS.has(id) || id.startsWith("script.") || id.startsWith("signal.");
 export function mergeVerdict(base: Verdict, links: LinkResult[], ai?: TwoLockResult): Verdict {
   const verdict: Verdict = { ...base, reasons: [...base.reasons], checks_fired: [...base.checks_fired], ai_used: !!ai, models_agreed: [], actions: [] };
   const add = (rule_id: string, hi: string, en: string) => {
     verdict.reasons.push({ rule_id, hi, en }); verdict.checks_fired.push(rule_id);
   };
-  if (links.some(link => link.threat)) {
+  if (links.some(link => link.threat && !link.phishFeed)) {
     verdict.level = "red"; verdict.confidence = Math.max(base.confidence, 0.99);
     add("link.safe_browsing", "लिंक को असुरक्षित पाया गया है।", "Google Safe Browsing identified an unsafe link.");
+  }
+  if (links.some(link => link.phishFeed)) {
+    verdict.level = "red"; verdict.confidence = Math.max(base.confidence, 0.99);
+    add("link.phish_feed", "यह लिंक फ़िशिंग सूची में है।", "This link is on a public phishing list.");
+  }
+  if (links.some(link => link.newDomain)) {
+    // Yellow on its own; red only with a scam signal the rules already found in this message.
+    verdict.level = higher(verdict.level, base.checks_fired.some(isScamContext) ? "red" : "yellow");
+    add("link.new_domain", "यह वेबसाइट कुछ ही दिन पहले बनी है।", "This website was registered only days ago.");
   }
   if (links.some(link => link.status !== "checked")) {
     verdict.level = higher(verdict.level, "yellow");

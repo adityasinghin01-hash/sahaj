@@ -1,6 +1,7 @@
 import type { LinkResult, ShieldBrainDeps } from "./types.js";
 import { createSandbox, publicUrl } from "./sandbox.js";
 import { withDeadline } from "./deadline.js";
+import { checkLinkIntel, type LinkIntel } from "../links/index.js";
 
 const SHORTENERS = new Set(["bit.ly", "tinyurl.com", "t.co", "goo.gl", "ow.ly", "is.gd", "buff.ly", "cutt.ly", "rb.gy", "shorturl.at", "rebrand.ly", "lnkd.in", "s.id", "tiny.cc"]);
 const DAY_SECONDS = 24 * 60 * 60;
@@ -40,7 +41,7 @@ async function safeBrowsing(urls: string[], deps: ShieldBrainDeps, signal: Abort
 }
 
 /** A domain-wide request includes every event URL on that domain, not just the first path. */
-export async function checkLinks(links: { url: string; domain: string }[], deps: ShieldBrainDeps): Promise<LinkResult[]> {
+async function checkSafeBrowsing(links: { url: string; domain: string }[], deps: ShieldBrainDeps): Promise<LinkResult[]> {
   const grouped = new Map<string, Set<string>>();
   const invalid: LinkResult[] = [];
   for (const link of links) {
@@ -116,4 +117,25 @@ export async function checkLinks(links: { url: string; domain: string }[], deps:
     });
   } catch { /* Use completed checks; unresolved domains remain explicitly unavailable. */ }
   return [...invalid, ...domains.map(([domain]) => completed.get(domain) ?? { domain, threat: false, status: "unavailable" as const })];
+}
+
+/**
+ * Safe Browsing (optional, keyed) plus the key-free OpenPhish feed and RDAP domain age.
+ * The key-free checks only add signals: a feed hit is a threat; their failure never makes a link "unverified".
+ */
+export async function checkLinks(links: { url: string; domain: string }[], deps: ShieldBrainDeps): Promise<LinkResult[]> {
+  const [results, intel] = await Promise.all([
+    checkSafeBrowsing(links, deps),
+    checkLinkIntel(links, deps).catch(() => new Map<string, LinkIntel>()),
+  ]);
+  return results.map(result => {
+    if (result.status === "blocked") return result;
+    const extra = intel.get(result.domain);
+    if (!extra) return result;
+    const next: LinkResult = { ...result };
+    if (extra.phishFeed) { next.phishFeed = true; next.threat = true; next.status = "checked"; }
+    if (extra.newDomain) next.newDomain = true;
+    if (extra.domainAgeDays !== null) next.domainAgeDays = extra.domainAgeDays;
+    return next;
+  });
 }
