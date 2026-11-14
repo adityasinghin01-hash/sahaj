@@ -2,7 +2,10 @@ import { generateKeyPairSync } from "node:crypto";
 import { createAtlas } from "@sahaj/atlas";
 import { MemorySaver } from "@sahaj/atlas/testing";
 import { describe, expect, it } from "vitest";
-import type { RpcDb } from "../../src/lib/atlas-runtime/db";
+import { loadAtlasConfig } from "../../src/lib/atlas-runtime/config";
+import { RuntimeError, type RpcDb } from "../../src/lib/atlas-runtime/db";
+import { startLeaseHeartbeat } from "../../src/lib/atlas-runtime/lease-guard";
+import { acquireThreadLock } from "../../src/lib/atlas-runtime/thread-lock";
 import { createAtlasPorts, requestIdFor } from "../../src/lib/atlas-runtime/repository";
 import { dispatchEvents, interruptRef, routeEventKind, runWorkflowJobs, type AtlasLike, type ClaimedJob } from "../../src/lib/atlas-runtime/runner";
 import { createTimelineWriter, type StoredTimelineRow, type TimelineStore } from "../../src/lib/atlas-runtime/timeline-writer";
@@ -74,12 +77,13 @@ function world(over: Partial<World> = {}): World & { db: RpcDb } {
 function memoryTimeline() {
   const rows = new Map<string, StoredTimelineRow>();
   const events: SignedTimelineEvent[] = [];
-  let loseResponse = false, conflictOnce = false;
+  let loseResponse = false, conflictOnce = false, staleLease = false; const fences: string[] = [];
   const store: TimelineStore = {
     async head(familyId) { const last = events.filter(e => e.envelope.familyId === familyId).at(-1);
       return { familyId, sequence: last?.envelope.sequence ?? 0, chainHash: last?.chainHash ?? null }; },
     async findByDedupe(_f, key) { return rows.get(key) ?? null; },
-    async append(event) {
+    async append(event, _payload, fence) {
+      fences.push(fence.token); if (staleLease) throw Object.assign(new Error("sj"), { code: "SJ001" });
       if (conflictOnce) { conflictOnce = false; throw Object.assign(new Error("x"), { code: "40001" }); }
       rows.set(event.envelope.dedupeKey, { envelopeCanonical: JSON.stringify(event.envelope), chainHash: event.chainHash, signature: event.signature });
       events.push(event);
@@ -88,7 +92,7 @@ function memoryTimeline() {
   };
   const { privateKey, publicKey } = generateKeyPairSync("ed25519");
   const append = createTimelineWriter({ store, privateKey, publicKey, keyId: "k1", now: () => new Date(NOW) });
-  return { append, rows, events, publicKey, lose() { loseResponse = true; }, conflict() { conflictOnce = true; } };
+  return { append, rows, events, publicKey, fences, lose() { loseResponse = true; }, conflict() { conflictOnce = true; }, expireLease() { staleLease = true; } };
 }
 
 function atlasFor(w: World & { db: RpcDb }, tl = memoryTimeline(), saver = new MemorySaver()) {
@@ -101,6 +105,7 @@ describe("event routing", () => {
     expect(routeEventKind("whatsapp.text")).toBe("core1.atlas");
     expect(routeEventKind("delivery.confirmed")).toBe("core1.proof");
     expect(routeEventKind("twilio.call_status")).toBe("core1.provider_status");
+    for (const k of ["sarvam.outbound", "sarvam.inbound", "telecmi.missed_call"]) expect(routeEventKind(k)).toBe("core1.atlas");
     expect(routeEventKind("twilio.recording.retrieval_requested")).toBe("core1.recording");
     for (const bad of ["", "whatsapp.", "payment.approved", "WHATSAPP.text", "twilio.call_status.x"]) expect(routeEventKind(bad)).toBeNull();
     const calls: Array<[string, Record<string, unknown>]> = [];
@@ -189,7 +194,7 @@ describe("Atlas repository wiring", () => {
     await expect(ports.loadJob({ familyId: "b3000000-0000-4000-8000-000000000002", jobId: JOB })).rejects.toThrow("scope_mismatch");
     w.leaseOk = false;
     await expect(ports.withJobLock({ familyId: FAMILY, jobId: JOB }, async () => "ran")).rejects.toThrow("stale_lease");
-    await expect(ports.appendSignedOutcome({ familyId: FAMILY, jobId: JOB, eventId: EVENT, status: "delivered", idempotencyKey: "k" })).rejects.toThrow("stale_lease");
+    // Timeline appends are fenced inside the database transaction (see the timeline fencing tests).
   });
   it("recovers a committed enqueue after a crash without charging usage twice", async () => {
     const w = world();
@@ -207,7 +212,7 @@ describe("Atlas repository wiring", () => {
 });
 
 describe("timeline writer", () => {
-  const base = { familyId: FAMILY, eventType: "atlas.outcome.delivered", entityId: JOB, humanLine: "A care action was delivered.", payload: { a: 1 }, dedupeKey: "k1" };
+  const base = { familyId: FAMILY, eventType: "atlas.outcome.delivered", entityId: JOB, humanLine: "A care action was delivered.", payload: { a: 1 }, dedupeKey: "k1", fence: { jobId: JOB, token: TOKEN } };
   it("returns the stored row after a lost response and never signs a second variant", async () => {
     const tl = memoryTimeline(); tl.lose();
     const a = await tl.append(base);
@@ -307,5 +312,127 @@ describe("principal, snapshot revision and overlapping decisions", () => {
     const atlas = createAtlas(createAtlasPorts({ db: tampered, lease, encryptionKeyHex: KEY, appendTimeline: async () => undefined }), new MemorySaver());
     await expect(atlas.start({ familyId: FAMILY, jobId: JOB })).rejects.toThrow();
     expect(w.outbox.size).toBe(0);
+  });
+});
+
+describe("timeline replay and fencing", () => {
+  const base = { familyId: FAMILY, eventType: "atlas.outcome.delivered", entityId: JOB, humanLine: "A care action was delivered.", payload: { a: 1 }, dedupeKey: "rk", fence: { jobId: JOB, token: TOKEN } };
+  it("a valid replay returns the stored row even though head and clock differ now", async () => {
+    const tl = memoryTimeline(); const first = await tl.append(base); await tl.append({ ...base, dedupeKey: "other" });
+    expect(await tl.append(base)).toEqual(first); expect(tl.events).toHaveLength(2);
+  });
+  it("conflicts when payload, entity or human line changes under an existing dedupe key", async () => {
+    const tl = memoryTimeline(); await tl.append(base);
+    await expect(tl.append({ ...base, payload: { a: 2 } })).rejects.toThrow("timeline_dedupe_conflict");
+    await expect(tl.append({ ...base, entityId: "d3000000-0000-4000-8000-0000000000aa" })).rejects.toThrow("timeline_dedupe_conflict");
+    await expect(tl.append({ ...base, humanLine: "A care action could not be delivered." })).rejects.toThrow("timeline_dedupe_conflict");
+    await expect(tl.append({ ...base, eventType: "atlas.outcome.failed" })).rejects.toThrow("timeline_dedupe_conflict");
+  });
+  it("sends the lease fence with every append and stops at once when the lease is gone", async () => {
+    const tl = memoryTimeline(); await tl.append(base); expect(tl.fences).toEqual([TOKEN]);
+    tl.expireLease();
+    await expect(tl.append({ ...base, dedupeKey: "late" })).rejects.toThrow("stale_lease");
+    expect(tl.fences).toHaveLength(2); // exactly one attempt, no retry loop
+    expect(tl.events).toHaveLength(1);
+  });
+});
+
+describe("Sarvam and missed-call content", () => {
+  const sarvamWorld = (payload: unknown, eventType = "sarvam.outbound") => {
+    const w = world({ payload }); const real = w.db.rpc.bind(w.db);
+    w.db.rpc = async (n, a) => { const r = await real(n, a); if (n === "load_atlas_job" && r.data) { (r.data as Record<string, unknown>).eventType = eventType; (r.data as Record<string, unknown>).source = "whatsapp"; } return r; };
+    return w;
+  };
+  const withPerson = (p: Record<string, unknown>) => ({ person_id: PERSON, ...p });
+  it("routes consent-missing, status-only and missed-call events to durable review, not success", async () => {
+    for (const [payload, type] of [[withPerson({ review_required: "consent_missing", status: "completed" }), "sarvam.outbound"], [withPerson({ status: "completed" }), "sarvam.outbound"], [withPerson({ app_id: "x" }), "telecmi.missed_call"]] as const) {
+      const w = sarvamWorld(payload, type);
+      const s = await atlasFor(w).atlas.start({ familyId: FAMILY, jobId: JOB });
+      expect(s.values.status).toBe("review"); expect(s.next).toEqual(["review"]);
+      expect(w.calls).not.toContain("enqueue_authorized_command"); expect(w.calls).not.toContain("ensure_action_request");
+    }
+  });
+  it("hands consented transcript content only to the injected port; without a port it stays in review", async () => {
+    const payload = withPerson({ interaction_transcript: [{ role: "user", text: "check in" }], final_agent_variables: { mood: "ok" } });
+    const w = sarvamWorld(payload);
+    expect((await atlasFor(w).atlas.start({ familyId: FAMILY, jobId: JOB })).values.status).toBe("review");
+    const seen: unknown[] = [];
+    const w2 = sarvamWorld(payload); const saver = new MemorySaver();
+    const ports = createAtlasPorts({ db: w2.db, lease, encryptionKeyHex: KEY, appendTimeline: async () => undefined,
+      understanding: { async understand(i) { seen.push(i); return { action: "check_in", certainty: "ready", evidence: "model" }; } } });
+    const s = await createAtlas(ports, saver).start({ familyId: FAMILY, jobId: JOB });
+    expect(seen).toHaveLength(1); expect(seen[0]).toMatchObject({ eventType: "sarvam.outbound", text: null, content: { transcript: [{ role: "user", text: "check in" }] } });
+    expect(w2.outbox.size).toBe(1); expect(JSON.stringify(s.values)).not.toContain("check in");
+  });
+  it("never treats a transcript saying 'check in' as an exact command", async () => {
+    const w = sarvamWorld(withPerson({ interaction_transcript: [{ role: "user", text: "check in" }] }));
+    const s = await atlasFor(w).atlas.start({ familyId: FAMILY, jobId: JOB });
+    expect(s.values.status).toBe("review"); expect(w.outbox.size).toBe(0);
+  });
+});
+
+describe("lease heartbeat, thread lock and cancellation", () => {
+  it("heartbeat renews during long work and flags a lost lease, which cancels at the next port call", async () => {
+    const calls: number[] = []; let ok = true;
+    const db: RpcDb = { async rpc() { calls.push(Date.now()); return { data: ok, error: null }; } };
+    const guard = startLeaseHeartbeat(db, lease, { intervalMs: 5, seconds: 120 });
+    await new Promise(r => setTimeout(r, 200)); expect(calls.length).toBeGreaterThanOrEqual(2); expect(guard.lost).toBe(false); guard.assertLive();
+    ok = false; await new Promise(r => setTimeout(r, 200));
+    expect(guard.lost).toBe(true); expect(() => guard.assertLive()).toThrow("stale_lease"); guard.stop();
+    const w = world(); const ports = createAtlasPorts({ db: w.db, lease, encryptionKeyHex: KEY, appendTimeline: async () => undefined, guard });
+    await expect(ports.loadJob({ familyId: FAMILY, jobId: JOB })).rejects.toThrow("stale_lease");
+    await expect(ports.enqueueAuthorized({ familyId: FAMILY, jobId: JOB, eventId: EVENT, action: "check_in", idempotencyKey: "k" })).rejects.toThrow("stale_lease");
+    expect(w.outbox.size).toBe(0);
+  });
+  it("acquires the advisory lock once, refuses a second holder, and releases", async () => {
+    const held = new Set<string>(); const released: boolean[] = [];
+    const pool = { async connect() { return { async query(sql: string, v: unknown[] = []) { const k = String(v[0]);
+      if (sql.includes("pg_try_advisory_lock")) { if (held.has(k)) return { rows: [{ ok: false }] }; held.add(k); return { rows: [{ ok: true }] }; }
+      held.delete(k); return { rows: [] }; }, release(e?: unknown) { released.push(Boolean(e)); } }; } };
+    const a = await acquireThreadLock(pool, "atlas:v1:abc"); expect(a?.held).toBe(true);
+    expect(await acquireThreadLock(pool, "atlas:v1:abc")).toBeNull();
+    await a!.release(); expect(a!.held).toBe(false); expect(() => a!.assertHeld()).toThrow("thread_lock_lost");
+    expect((await acquireThreadLock(pool, "atlas:v1:abc"))?.held).toBe(true);
+  });
+  it("runner does not run Atlas when the thread is busy, and discards a run whose lock or lease was lost", async () => {
+    const calls: Array<[string, Record<string, unknown>]> = []; let started = false;
+    const mk = (extra: Partial<Parameters<typeof runWorkflowJobs>[0]>) => ({ db: { async rpc(n: string, a: Record<string, unknown> = {}) { calls.push([n, a]);
+      if (n === "claim_workflow_jobs_for_kinds") return { data: [{ id: JOB, family_id: FAMILY, workflow_kind: "core1.atlas", lease_token: TOKEN, checkpoint_ref: null }], error: null };
+      return { data: n === "wake_ready_interrupted_jobs" ? 0 : true, error: null }; } } as RpcDb, workerId: "w",
+      atlasFor: () => ({ start: async () => { started = true; return { next: [], tasks: [] } as never; }, resume: async () => ({ next: [], tasks: [] }) as never }), ...extra });
+    const busy = await runWorkflowJobs(mk({ lockThread: async () => null }));
+    expect(started).toBe(false); expect(busy.failed).toBe(1); expect(calls.at(-1)![1]).toMatchObject({ p_state: "failed", p_error_code: "thread_busy" });
+    calls.length = 0;
+    const lostLock = { held: true, assertHeld() { throw new RuntimeError("thread_lock_lost"); }, release: async () => undefined };
+    const r = await runWorkflowJobs(mk({ lockThread: async () => lostLock }));
+    expect(r.completed).toBe(0); expect(calls.some(c => c[0] === "finish_workflow_job" && c[1].p_state === "completed")).toBe(false);
+    calls.length = 0;
+    const lostLease: ReturnType<typeof startLeaseHeartbeat> = { lost: true, assertLive() { throw new RuntimeError("stale_lease"); }, stop() {} };
+    const l = await runWorkflowJobs(mk({ heartbeat: () => lostLease }));
+    expect(l.leaseLost).toBe(1); expect(calls.some(c => c[0] === "finish_workflow_job")).toBe(false);
+  });
+});
+
+describe("configuration contract", () => {
+  const pair = generateKeyPairSync("ed25519");
+  const pem = (k: { export(o: object): string | Buffer }, type: string) => String(k.export({ type, format: "pem" }));
+  const good = () => ({ WEBHOOK_ENCRYPTION_KEY: KEY, DATABASE_URL: "postgres://u:p@h/db", SIGNING_KEY_ID: "k1",
+    SIGNING_PRIVATE_KEY: pem(pair.privateKey, "pkcs8"), SIGNING_PUBLIC_KEY: pem(pair.publicKey, "spki") });
+  it("accepts the documented names in PEM, escaped-newline and base64 DER forms", () => {
+    expect(loadAtlasConfig(good()).ok).toBe(true);
+    expect(loadAtlasConfig({ ...good(), SIGNING_PRIVATE_KEY: good().SIGNING_PRIVATE_KEY.replace(/\n/g, "\\n") }).ok).toBe(true);
+    const der = (k: { export(o: object): string | Buffer }, t: string) => (k.export({ type: t, format: "der" }) as Buffer).toString("base64");
+    expect(loadAtlasConfig({ ...good(), SIGNING_PRIVATE_KEY: der(pair.privateKey, "pkcs8"), SIGNING_PUBLIC_KEY: der(pair.publicKey, "spki") }).ok).toBe(true);
+  });
+  it("reports names only, never values, for missing, malformed or mismatched settings", () => {
+    const other = generateKeyPairSync("ed25519");
+    const r1 = loadAtlasConfig({}); expect(r1).toMatchObject({ ok: false });
+    expect(JSON.stringify(r1)).toContain("SIGNING_PRIVATE_KEY:missing");
+    const r2 = loadAtlasConfig({ ...good(), SIGNING_PUBLIC_KEY: pem(other.publicKey, "spki") });
+    expect(r2).toEqual({ ok: false, problems: ["SIGNING_KEYS:mismatch"] });
+    const r3 = loadAtlasConfig({ ...good(), SIGNING_PRIVATE_KEY: "SECRET-VALUE-garbage", WEBHOOK_ENCRYPTION_KEY: "short" });
+    expect(JSON.stringify(r3)).not.toContain("SECRET-VALUE"); expect(JSON.stringify(r3)).toContain("WEBHOOK_ENCRYPTION_KEY:invalid");
+    const rsa = generateKeyPairSync("rsa", { modulusLength: 2048 });
+    expect(JSON.stringify(loadAtlasConfig({ ...good(), SIGNING_PRIVATE_KEY: pem(rsa.privateKey, "pkcs8") }))).toContain("SIGNING_PRIVATE_KEY:invalid");
   });
 });

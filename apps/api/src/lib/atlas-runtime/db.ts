@@ -12,7 +12,7 @@ export class RuntimeError extends Error {
 export async function call<T = unknown>(db: RpcDb, name: string, args: Record<string, unknown>, code: string): Promise<T> {
   let result: RpcResult;
   try { result = await db.rpc(name, args); } catch { throw new RuntimeError(code); }
-  if (result.error) throw new RuntimeError(result.error.code === "40001" ? "stale_lease" : code);
+  if (result.error) throw new RuntimeError(result.error.code === "SJ001" ? "stale_lease" : result.error.code === "40001" ? "stale_snapshot" : code);
   return result.data as T;
 }
 

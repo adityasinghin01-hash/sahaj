@@ -10,6 +10,8 @@ export interface UnderstandingInput {
   eventType: string;
   /** Message text for the injected port only. Never logged, checkpointed, or returned. */
   text: string | null;
+  /** Consented call content (Sarvam transcript and final variables). Same handling as `text`. */
+  content?: { transcript?: unknown; variables?: unknown } | null;
 }
 export interface StructuredUnderstandingPort { understand(input: UnderstandingInput): Promise<StructuredUnderstanding> }
 
@@ -35,13 +37,41 @@ export function extractText(eventType: string, payload: unknown): string | null 
   return typeof body === "string" && body.length <= 4096 ? body : null;
 }
 
+export type ContentExtraction =
+  | { kind: "content"; text: string | null; content: UnderstandingInput["content"] }
+  /** The event carries no usable content (missing consent, status only, or no payload). It must go to durable review. */
+  | { kind: "review"; reason: "consent_missing" | "no_content" };
+
+/**
+ * Pull understanding input from an already decrypted, identity-bound payload.
+ * Sarvam content is present only when ingestion proved call_transcript consent; `review_required` marks its absence.
+ * TeleCMI missed calls carry no content, so they can never be understood without an explicit nudge workflow.
+ */
+export function extractContent(eventType: string, payload: unknown): ContentExtraction {
+  if (typeof payload !== "object" || payload === null) return { kind: "review", reason: "no_content" };
+  if (eventType.startsWith("whatsapp.")) {
+    const text = extractText(eventType, payload);
+    return text === null ? { kind: "review", reason: "no_content" } : { kind: "content", text, content: null };
+  }
+  if (eventType === "sarvam.outbound" || eventType === "sarvam.inbound") {
+    const p = payload as { review_required?: unknown; interaction_transcript?: unknown; final_agent_variables?: unknown };
+    if (p.review_required === "consent_missing") return { kind: "review", reason: "consent_missing" };
+    const hasTranscript = Array.isArray(p.interaction_transcript) && p.interaction_transcript.length > 0;
+    const hasVariables = typeof p.final_agent_variables === "object" && p.final_agent_variables !== null;
+    if (!hasTranscript && !hasVariables) return { kind: "review", reason: "no_content" };
+    return { kind: "content", text: null, content: { transcript: p.interaction_transcript, variables: p.final_agent_variables } };
+  }
+  return { kind: "review", reason: "no_content" };
+}
+
 const ALLOWED: ReadonlySet<string> = new Set(["check_in", "urgent_responder", "voice_message", "medicine_refill",
   "missed_call_nudge", "send_alert", "family_report", "record_audio", "share_data", "payment", "collect_otp", "medical_diagnosis"]);
 
 export async function projectUnderstanding(
   input: UnderstandingInput, port?: StructuredUnderstandingPort,
 ): Promise<{ action: GateAction | "unknown"; certainty: "ready" | "uncertain" }> {
-  const exact = exactCommand(input.text);
+  // Exact commands apply only to a typed message; never to a call transcript.
+  const exact = input.content ? null : exactCommand(input.text);
   if (exact) return { action: exact, certainty: "ready" };
   if (!port) return { action: "unknown", certainty: "uncertain" };
   try {

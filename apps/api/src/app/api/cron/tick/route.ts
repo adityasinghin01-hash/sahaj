@@ -5,6 +5,7 @@ import { randomUUID } from "node:crypto";
 import { WebhookError } from "@/lib/webhook-security";
 import { dispatchEvents, runWorkflowJobs, type ClaimedEvent } from "@/lib/atlas-runtime/runner";
 import { createAtlasRuntime } from "@/lib/atlas-runtime/factory";
+import { loadAtlasConfig } from "@/lib/atlas-runtime/config";
 import type { RpcDb } from "@/lib/atlas-runtime/db";
 
 export const runtime = "nodejs";
@@ -22,13 +23,14 @@ export async function POST(request: Request) {
     // Routing only turns accepted input into durable work or an explicit dead letter. No care action runs here.
     const routed = await dispatchEvents(db as unknown as RpcDb, (events ?? []) as ClaimedEvent[]);
 
-    const { WEBHOOK_ENCRYPTION_KEY: key, DATABASE_URL: databaseUrl, TIMELINE_SIGNING_PRIVATE_KEY: signing, TIMELINE_KEY_ID: keyId } = process.env;
-    let workflow: Record<string, unknown> = { status: "not_configured" };
-    if (key && databaseUrl && signing && keyId) {
-      // The model/provider understanding port is deliberately not injected yet: only exact commands are understood.
-      const atlas = createAtlasRuntime({ db: db as never, workerId: randomUUID(), encryptionKeyHex: key, databaseUrl,
-        timelinePrivateKeyPem: signing.replace(/\\n/g, "\n"), timelineKeyId: keyId });
-      try { workflow = await runWorkflowJobs(atlas.deps); } finally { await atlas.close().catch(() => undefined); }
+    // Names of missing or invalid variables are reported; values never are. Events are still routed when this is incomplete.
+    const loaded = loadAtlasConfig(process.env);
+    let workflow: Record<string, unknown> = loaded.ok ? { status: "ok" } : { status: "not_configured", problems: loaded.problems };
+    if (loaded.ok) {
+      // The model/provider understanding port is deliberately not injected: only exact commands are understood and
+      // everything else pauses for durable review.
+      const atlas = createAtlasRuntime({ db: db as never, workerId: randomUUID(), config: loaded.config });
+      try { workflow = { status: "ok", ...(await runWorkflowJobs(atlas.deps)) }; } finally { await atlas.close().catch(() => undefined); }
     }
     return NextResponse.json({ ...routed, workflow, care_actions_run: 0, processing: "durable_workflow_queue" },
       { status: routed.failed > 0 ? 503 : 200 });

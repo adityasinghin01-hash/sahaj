@@ -28,7 +28,7 @@ The subject and target for a deterministic command are both the verified sender 
 
 ## Delivery proof (needs Kiro A / Codex)
 
-`outbox.status='completed'` means the dispatch worker finished, never delivery. `observe_delivery` reports `delivered` only when a `raw_events` row exists with `status='processed'`, `source` in twilio/sarvam/telecmi/whatsapp, `event_type='delivery.confirmed'`, and metadata `outbox_id`, `action_request_id`, `action`, `target_id` (the subject person id) and `outcome='delivered'` all matching the outbox. `delivery.not_sent` with `outcome='confirmed_not_sent'` maps to failed. Conflicting proofs stay pending.
+`outbox.status='completed'` means the dispatch worker finished, never delivery. `observe_delivery` reports `delivered` only when a `raw_events` row exists with `status='processed'`, `source` in twilio/sarvam/telecmi/whatsapp, `event_type='delivery.confirmed'`, and metadata `outbox_id`, `action_request_id`, `action`, and `outcome='delivered'` all matching the outbox (superseded: see "Second pass" for the current exact fields). `delivery.not_sent` with `outcome='confirmed_not_sent'` maps to failed. Conflicting proofs stay pending.
 
 Responder acceptance additionally needs an `assignments` row (`status='accepted'`, responder different from the subject, on the outbox incident of the same subject) whose `verified_by_provider_event` is a processed `responder.accepted` event with metadata `outbox_id`, `action_request_id`, `incident_id`, `responder_person_id`.
 
@@ -61,3 +61,30 @@ Responder acceptance additionally needs an `assignments` row (`status='accepted'
 ## Remaining live evidence
 
 Run the SQL test file against a disposable database; run concurrent enqueue (two connections, last quota slot); run a real PostgresSaver job through the cron route with synthetic data; verify provider ingestion emits the proof events above; verify `next start` loads Cedar WASM from the externalized package on Vercel.
+
+## Second pass (review fixes; supersedes earlier statements where they differ)
+
+Migration `20261114210000_phase3_review_fixes.sql`, source only, never executed. Needs scratch-database execution of `infra/supabase/tests/phase3_atomic_orchestration.sql` and `packages/atlas/scripts/phase3-two-session.mjs` (guarded by `SAHAJ_SCRATCH_OK=1`).
+
+* **Lock coverage.** `authz_lock` triggers now fire on INSERT, UPDATE and DELETE for answers, memberships, permissions, principals and consents. UPDATE locks both families (smaller uuid first); DELETE locks `OLD.family_id`. A trigger rejects future-dated consent in every writer.
+* **Clock.** `enqueue_authorized_command` and `ensure_action_request` read `clock_timestamp()` only after every blocking acquisition (job row, family lock, request row, permission rows by id). Lease, request expiry, permission windows and consent are rechecked with a fresh reading immediately before the mutation. `consent_current` uses `clock_timestamp()`. Stale lease is errcode `SJ001`; changed snapshot is `40001`; the TypeScript layer maps them to `stale_lease` and `stale_snapshot`.
+* **Timeline.** Replay compares family, dedupe key, event type, entity, human line and payload hash after signature verification; sequence/head/timestamp are not compared. Append goes through `append_timeline_event_fenced`, which locks the job row and requires the live lease in the same transaction (`SJ001` otherwise, never retried).
+* **Thread and lease execution.** The runner holds a PostgreSQL session advisory lock per Atlas thread on a dedicated pooled connection for the whole run (needs a direct or session-mode `DATABASE_URL`), renews the lease on a timer, and cancels at the next port call once renewal fails. Results of a run that lost its lease or lock are not recorded. All database mutations are separately fenced inside their transactions. Remaining gap: a model call already in flight cannot be aborted mid-request; it is only discarded.
+* **Urgent wake.** `workflow_jobs.interrupted_at` is stamped by trigger. An urgent job wakes only on verified acceptance, not-sent proof, a dead outbox, or a relevant `delivery.*`/`responder.accepted` event received after the interrupt. Old delivery proof alone never wakes it.
+* **Normalized evidence consumed.**
+  * `delivery.confirmed` / `delivery.not_sent`: processed, source twilio/sarvam/telecmi/whatsapp, metadata `outbox_id`, `action_request_id`, `action`, non-empty `dispatch_key`, `outcome`, and `account_id` that is an enabled `provider_identities` binding of the request's target person for that source.
+  * `responder.accepted`: referenced by `assignments.verified_by_provider_event`; metadata `outbox_id`, `action_request_id`, `action='urgent_responder'`, `incident_id`, `assignment_id`, `responder_person_id`, `person_id` (both equal the assignment person), `call_id` (a `calls` row of that person with the same provider and a non-null `external_id`), and an `account_id` bound to the responder. The incident must belong to the request's subject and the responder must differ from the subject.
+  * **ASK CODEX / Kiro A:** Kiro A's `accept_assignment_verified` currently stores the raw `twilio.gather.accepted` event as `verified_by_provider_event`. Atlas requires the normalized `responder.accepted` event (with the fields above, including `account_id`) there instead. Until a producer emits that, urgent jobs correctly stay unaccepted. The delivery proof also needs `account_id` and `dispatch_key` in metadata, which current ingestion does not write.
+* **Routing.** `sarvam.inbound`, `sarvam.outbound`, `telecmi.missed_call` and `whatsapp.*` go to `core1.atlas`. Understanding reads decrypted, identity-bound content: Sarvam `interaction_transcript` / `final_agent_variables` go only to the injected port (never exact-command matching); `review_required=consent_missing`, status-only and missed-call events pause for durable review; with no port, consented transcripts also pause. Only `twilio.call_status` and the proof events remain completed-as-fact. Status-only Sarvam events therefore create review jobs until a dedicated status workflow exists (Phase 4).
+* **Configuration (names only; values never read here).** `loadAtlasConfig` requires `WEBHOOK_ENCRYPTION_KEY` (64 hex), `DATABASE_URL` (direct/session, verify-full), `SIGNING_PRIVATE_KEY`, `SIGNING_PUBLIC_KEY`, `SIGNING_KEY_ID`. Keys are Ed25519 as PEM (literal `\n` allowed) or base64 DER (PKCS#8 / SPKI) and must be a matching pair. The earlier `TIMELINE_*` names are gone. The tick reports problem names (for example `SIGNING_PRIVATE_KEY:missing`), never values, and still routes events.
+* **Media.** Unchanged: fixed Cedar `MEDIA_READ_POLICY`, consent history and expiry from live rows, authorize before stat and again before signing, URL lifetime at most 60 seconds.
+* **`apps/api/next.config.ts`** (externalizes `@cedar-policy/cedar-wasm`) was authorized for this checkpoint. It still needs independent build and Vercel tracing review.
+
+### Phase 4 / cross-lane dependencies (not implemented here)
+
+1. Incident creation: no code creates `incidents` or `assignments`, so `urgent_responder` is refused (`incident_required`). Needs a tested service RPC that creates the incident, offers the assignment and passes `incident_id` to enqueue.
+2. Setup: `atlas_principals` rows and `permissions` rows (principal, subject, targets, limits, window) have no creation path. Without them every job pauses for review. A review caused by missing setup is not auto-woken.
+3. Model/provider understanding port: none exists. Non-exact input always pauses for review. Targets other than the verified sender are unsupported.
+4. Producers for the normalized proof events above.
+5. Status-only provider events need their own workflow kind instead of review jobs.
+6. Medicine refill needs vendor/item/amount rows on the request; `ensure_action_request` has no path to set them.

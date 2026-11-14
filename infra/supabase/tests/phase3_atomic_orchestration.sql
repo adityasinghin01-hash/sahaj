@@ -15,6 +15,9 @@ insert into auth.users(id) values ('a3000000-0000-4000-8000-000000000002'),('a30
 insert into public.family_memberships(family_id,user_id,person_id,role) values
  ('b3000000-0000-4000-8000-000000000001','a3000000-0000-4000-8000-000000000002','c3000000-0000-4000-8000-000000000002','child'),
  ('b3000000-0000-4000-8000-000000000001','a3000000-0000-4000-8000-000000000003','c3000000-0000-4000-8000-000000000003','child');
+insert into public.provider_identities(family_id,person_id,source,account_id,external_id_hash) values
+ ('b3000000-0000-4000-8000-000000000001','c3000000-0000-4000-8000-000000000001','twilio','acct1',repeat('a',64)),
+ ('b3000000-0000-4000-8000-000000000001','c3000000-0000-4000-8000-000000000005','twilio','acct1',repeat('b',64));
 insert into public.atlas_principals(id,family_id,label) values('a7000000-0000-4000-8000-000000000001','b3000000-0000-4000-8000-000000000001','synthetic atlas');
 insert into public.consents(id,family_id,person_id,purpose,question,answer,version) values
  ('f3000000-0000-4000-8000-000000000001','b3000000-0000-4000-8000-000000000001','c3000000-0000-4000-8000-000000000001','permission_setup','Synthetic?',true,'t1');
@@ -64,13 +67,13 @@ begin
   begin perform public.ensure_action_request(fam,jb[1],lt[1],rq[1],subject,'family_report',subject::text,fp);
     raise exception 'FAIL conflicting action request accepted'; exception when unique_violation then null; end;
   begin perform public.ensure_action_request(fam,jb[1],'99000000-0000-4000-8000-0000000000ff',rq[1],subject,'check_in',subject::text,fp);
-    raise exception 'FAIL wrong lease created request'; exception when serialization_failure then null; end;
+    raise exception 'FAIL wrong lease created request'; exception when sqlstate 'SJ001' then null; end;
   rev:=sahaj_private.authorization_revision(fam,rq[1]);
   -- Stale or wrong lease, and another family's scope, cannot enqueue.
   begin perform public.enqueue_authorized_command(fam,jb[1],'99000000-0000-4000-8000-0000000000ff',rq[1],'check_in','k1','ct',h,rev);
-    raise exception 'FAIL wrong lease accepted'; exception when serialization_failure then null; end;
+    raise exception 'FAIL wrong lease accepted'; exception when sqlstate 'SJ001' then null; end;
   begin perform public.enqueue_authorized_command('b3000000-0000-4000-8000-000000000002',jb[1],lt[1],rq[1],'check_in','k1','ct',h,rev);
-    raise exception 'FAIL cross-family job accepted'; exception when serialization_failure then null; end;
+    raise exception 'FAIL cross-family job accepted'; exception when sqlstate 'SJ001' then null; end;
   res:=public.enqueue_authorized_command(fam,jb[1],lt[1],rq[1],'family_report','k0','ct',h,rev);
   if res->>'status'<>'denied' then raise exception 'FAIL action mismatch: %',res; end if;
   res:=public.enqueue_authorized_command(fam,jb[1],lt[1],rq[1],'payment','kp','ct',h,rev);
@@ -171,7 +174,7 @@ end$$;
 reset role;
 insert into public.raw_events(family_id,source,provider_event_id,event_type,status,payload_hash,metadata)
 select family_id,'twilio','proof-wrong-target','delivery.confirmed','processed',repeat('1',64),
-  jsonb_build_object('outbox_id',id,'action_request_id',action_request_id,'action','check_in','outcome','delivered','target_id','someone-else')
+  jsonb_build_object('outbox_id',id,'action_request_id',action_request_id,'action','check_in','outcome','delivered','dispatch_key','dk1','account_id','acct-other')
   from public.outbox where action_request_id='71000000-0000-4000-8000-000000000001';
 set local role service_role;
 do $$declare ob uuid;obs jsonb;begin
@@ -182,7 +185,7 @@ end$$;
 reset role;
 insert into public.raw_events(family_id,source,provider_event_id,event_type,status,payload_hash,metadata)
 select family_id,'twilio','proof-good','delivery.confirmed','processed',repeat('2',64),
-  jsonb_build_object('outbox_id',id,'action_request_id',action_request_id,'action','check_in','outcome','delivered','target_id','c3000000-0000-4000-8000-000000000001')
+  jsonb_build_object('outbox_id',id,'action_request_id',action_request_id,'action','check_in','outcome','delivered','dispatch_key','dk1','account_id','acct1')
   from public.outbox where action_request_id='71000000-0000-4000-8000-000000000001';
 set local role service_role;
 do $$declare ob uuid;obs jsonb;begin
@@ -197,7 +200,7 @@ reset role;
 update public.outbox set status='completed',attempt_count=1 where action_request_id='71000000-0000-4000-8000-000000000003';
 insert into public.raw_events(id,family_id,source,provider_event_id,event_type,status,payload_hash,metadata)
 select 'e6000000-0000-4000-8000-000000000001',family_id,'twilio','proof-urgent','delivery.confirmed','processed',repeat('3',64),
-  jsonb_build_object('outbox_id',id,'action_request_id',action_request_id,'action','urgent_responder','outcome','delivered','target_id','c3000000-0000-4000-8000-000000000001')
+  jsonb_build_object('outbox_id',id,'action_request_id',action_request_id,'action','urgent_responder','outcome','delivered','dispatch_key','dk1','account_id','acct1')
   from public.outbox where action_request_id='71000000-0000-4000-8000-000000000003';
 set local role service_role;
 do $$declare ob uuid;obs jsonb;begin
@@ -220,4 +223,44 @@ do $$declare ob uuid;obs jsonb;begin
   if (obs->>'responderAccepted')::boolean then raise exception 'FAIL foreign acceptance proof counted: %',obs; end if;
 end$$;
 reset role;
-rollback;
+
+-- Authorization lock covers DELETE: the trigger takes the family lock, so a deleting transaction would hold it.
+-- (Cross-session blocking is exercised in phase3_two_session.mjs; here we check the trigger set is complete.)
+do $$begin
+  if (select count(*) from pg_trigger t join pg_class c on c.oid=t.tgrelid
+      where t.tgname='authz_lock' and not t.tgisinternal and t.tgtype & 8 = 8 and c.relname in ('action_answers','family_memberships','permissions','atlas_principals','consents'))<>5 then
+    raise exception 'FAIL authz_lock missing DELETE coverage';
+  end if;
+end$$;
+
+-- Fenced timeline append: stale lease is SJ001 and writes nothing.
+do $$declare ev jsonb:='{"familyId":"b3000000-0000-4000-8000-000000000001","eventId":"d4000000-0000-4000-8000-000000000001","sequence":1,"dedupeKey":"fence-1","eventType":"atlas.outcome.failed","entityId":null,"humanLine":"x","previousHash":null,"occurredAt":"2026-11-14T12:00:00.000Z","keyId":"k","version":1,"payloadHash":"e33c9d06a1605b0b8afbfddc7e7d6bf03e941d1ffd21093dfa5ae2fac40befc1"}';
+begin
+  set local role service_role;
+  begin
+    perform public.append_timeline_event_fenced('d3000000-0000-4000-8000-000000000001','99000000-0000-4000-8000-0000000000ff',ev,'{"synthetic":true}',repeat('0',64),repeat('A',86)||'==');
+    raise exception 'FAIL fenced append accepted wrong lease';
+  exception when sqlstate 'SJ001' then null; end;
+  reset role;
+  if exists(select 1 from public.timeline_events where dedupe_key='fence-1') then raise exception 'FAIL stale append wrote'; end if;
+end$$;
+
+-- Wake only on new urgent evidence: the old delivery proof must not wake an interrupted urgent job again.
+reset role;
+update public.workflow_jobs set state='interrupted',lease_token=null,lease_until=null,interrupt_ref='delivery_pending:abc' where id='d3000000-0000-4000-8000-000000000003';
+do $$begin
+  if (select interrupted_at from public.workflow_jobs where id='d3000000-0000-4000-8000-000000000003') is null then raise exception 'FAIL interrupted_at not stamped'; end if;
+end$$;
+set local role service_role;
+do $$begin
+  if public.wake_ready_interrupted_jobs(20)<>0 then raise exception 'FAIL old delivery proof woke urgent job'; end if;
+end$$;
+reset role;
+insert into public.raw_events(family_id,source,provider_event_id,event_type,status,payload_hash,metadata,received_at)
+select family_id,'twilio','proof-urgent-new','delivery.not_sent','processed',repeat('5',64),jsonb_build_object('outbox_id',id),clock_timestamp()+interval '1 second'
+  from public.outbox where action_request_id='71000000-0000-4000-8000-000000000003';
+set local role service_role;
+do $$begin
+  if public.wake_ready_interrupted_jobs(20)<>1 then raise exception 'FAIL new relevant evidence did not wake'; end if;
+end$$;
+reset role;rollback;

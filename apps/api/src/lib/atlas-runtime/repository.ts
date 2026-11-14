@@ -3,10 +3,11 @@ import type { AtlasJob, AtlasPorts, DeliveryObservation, EnqueueResult, JobScope
 import { evaluateGate, requestFingerprint, type GateAction, type GateApproval, type GateConsent, type GateDecision, type GateInput, type GateRequest, type SetupPermission } from "@sahaj/gate";
 import { decryptWebhook, encryptWebhook } from "../webhook-security";
 import { call, RuntimeError, stableUuid, UUID, type JobLease, type RpcDb } from "./db";
-import { extractText, projectUnderstanding, type StructuredUnderstandingPort } from "./understanding";
+import { alwaysLive, type LeaseGuard } from "./lease-guard";
+import { extractContent, projectUnderstanding, type StructuredUnderstandingPort } from "./understanding";
 
 export interface TimelineAppender {
-  (input: { familyId: string; eventType: string; entityId: string | null; humanLine: string; payload: unknown; dedupeKey: string }): Promise<unknown>;
+  (input: { familyId: string; eventType: string; entityId: string | null; humanLine: string; payload: unknown; dedupeKey: string; fence: { jobId: string; token: string } }): Promise<unknown>;
 }
 export interface AtlasRepositoryDeps {
   db: RpcDb;
@@ -15,6 +16,8 @@ export interface AtlasRepositoryDeps {
   encryptionKeyHex: string;
   appendTimeline: TimelineAppender;
   understanding?: StructuredUnderstandingPort;
+  /** Heartbeat view of the lease; every port call throws once it is lost. Defaults to always live (tests only). */
+  guard?: LeaseGuard;
 }
 
 const HUMAN_LINE = {
@@ -40,7 +43,9 @@ interface Snapshot {
 /** Production AtlasPorts over service-only RPCs. One instance is bound to one claimed job lease. */
 export function createAtlasPorts(deps: AtlasRepositoryDeps): AtlasPorts {
   const { db, lease } = deps;
+  const guard = deps.guard ?? alwaysLive;
   const own = (scope: JobScope) => {
+    guard.assertLive();
     if (scope.familyId !== lease.familyId || scope.jobId !== lease.jobId) throw new RuntimeError("scope_mismatch");
   };
   const gateRequestFor = (job: AtlasJob, action: GateAction): GateRequest => ({ id: job.requestId, familyId: job.familyId, action, targetId: job.targetId });
@@ -115,7 +120,11 @@ export function createAtlasPorts(deps: AtlasRepositoryDeps): AtlasPorts {
 
     async understand(job): Promise<Understanding> {
       const raw = await loadRaw(job);
-      const result = await projectUnderstanding({ eventType: raw.eventType, text: extractText(raw.eventType, raw.payload) }, deps.understanding);
+      // Missing consent, status-only or empty events go to durable review. They are never successful processing.
+      const extracted = extractContent(raw.eventType, raw.payload);
+      if (extracted.kind === "review") return { action: "unknown", certainty: "uncertain" };
+      const result = await projectUnderstanding({ eventType: raw.eventType, text: extracted.text, content: extracted.content }, deps.understanding);
+      guard.assertLive();
       if (result.certainty === "ready" && GATE_ACTIONS.has(result.action)) {
         // Idempotent. Subject and target come from the verified identity, never from model output.
         // A null id means the family has no active principal: stay uncertain so the job pauses for review.
@@ -172,12 +181,10 @@ export function createAtlasPorts(deps: AtlasRepositoryDeps): AtlasPorts {
 
     async appendSignedOutcome(entry) {
       own(entry);
-      // Fence before signing: a worker that lost its lease must not append.
-      const ok = await call<boolean>(db, "renew_workflow_lease", { p_job_id: lease.jobId, p_lease_token: lease.token, p_lease_seconds: 120 }, "lease_check_failed");
-      if (ok !== true) throw new RuntimeError("stale_lease");
+      // The append itself is fenced inside its database transaction (append_timeline_event_fenced).
       await deps.appendTimeline({ familyId: entry.familyId, eventType: `atlas.outcome.${entry.status}`, entityId: entry.jobId,
         humanLine: HUMAN_LINE[entry.status], payload: { jobId: entry.jobId, eventId: entry.eventId, status: entry.status },
-        dedupeKey: entry.idempotencyKey });
+        dedupeKey: entry.idempotencyKey, fence: { jobId: lease.jobId, token: lease.token } });
     },
 
     async withJobLock<T>(scope: JobScope, work: () => Promise<T>): Promise<T> {

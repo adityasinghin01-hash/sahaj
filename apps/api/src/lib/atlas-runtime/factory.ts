@@ -1,35 +1,40 @@
-import { createPrivateKey, createPublicKey } from "node:crypto";
-import { createAtlas } from "@sahaj/atlas";
+import { createAtlas, atlasThreadId } from "@sahaj/atlas";
 import { createPostgresCheckpointer } from "@sahaj/atlas/postgres";
+import type { AtlasConfig } from "./config";
+import { startLeaseHeartbeat } from "./lease-guard";
 import { createAtlasPorts } from "./repository";
-import { createTimelineWriter, supabaseTimelineStore, type TimelineReadDb } from "./timeline-writer";
 import type { AtlasLike, ClaimedJob, RunnerDeps } from "./runner";
+import { acquireThreadLock, type PgPoolLike } from "./thread-lock";
+import { createTimelineWriter, supabaseTimelineStore, type TimelineReadDb } from "./timeline-writer";
 import type { StructuredUnderstandingPort } from "./understanding";
 
-export interface AtlasRuntimeConfig {
+export interface AtlasRuntimeOptions {
   db: TimelineReadDb;
   workerId: string;
-  encryptionKeyHex: string;
-  /** Restricted checkpoint-role URL (verify-full TLS is enforced by the checkpointer). */
-  databaseUrl: string;
-  timelinePrivateKeyPem: string;
-  timelineKeyId: string;
+  config: AtlasConfig;
+  /** Model/provider understanding. Absent means every non-exact input pauses for durable review. */
   understanding?: StructuredUnderstandingPort;
   now?: () => Date;
 }
 
-/** Wires real PostgresSaver + service RPC ports. The caller must `close()` after the tick. */
-export function createAtlasRuntime(config: AtlasRuntimeConfig): { deps: RunnerDeps; close(): Promise<void> } {
+/**
+ * Wires real PostgresSaver, service RPC ports, lease heartbeat and a durable per-thread advisory lock.
+ * The checkpoint connection must be direct or session-mode (advisory locks are session scoped). Call `close()` after the tick.
+ */
+export function createAtlasRuntime(options: AtlasRuntimeOptions): { deps: RunnerDeps; close(): Promise<void> } {
+  const { config, db } = options;
   const saver = createPostgresCheckpointer(config.databaseUrl);
-  const privateKey = createPrivateKey(config.timelinePrivateKeyPem);
-  const writer = createTimelineWriter({ store: supabaseTimelineStore(config.db), privateKey, publicKey: createPublicKey(privateKey),
-    keyId: config.timelineKeyId, now: config.now ?? (() => new Date()) });
+  const pool = (saver as unknown as { pool: PgPoolLike }).pool;
+  const writer = createTimelineWriter({ store: supabaseTimelineStore(db), privateKey: config.privateKey, publicKey: config.publicKey,
+    keyId: config.keyId, now: options.now ?? (() => new Date()) });
   return {
     deps: {
-      db: config.db, workerId: config.workerId,
-      atlasFor(job: ClaimedJob): AtlasLike {
-        const ports = createAtlasPorts({ db: config.db, lease: { familyId: job.family_id, jobId: job.id, token: job.lease_token },
-          encryptionKeyHex: config.encryptionKeyHex, appendTimeline: writer, understanding: config.understanding });
+      db, workerId: options.workerId,
+      heartbeat: job => startLeaseHeartbeat(db, { familyId: job.family_id, jobId: job.id, token: job.lease_token }),
+      lockThread: job => acquireThreadLock(pool, atlasThreadId({ familyId: job.family_id, jobId: job.id })),
+      atlasFor(job: ClaimedJob, guard): AtlasLike {
+        const ports = createAtlasPorts({ db, lease: { familyId: job.family_id, jobId: job.id, token: job.lease_token },
+          encryptionKeyHex: config.encryptionKeyHex, appendTimeline: writer, understanding: options.understanding, guard });
         return createAtlas(ports, saver) as unknown as AtlasLike;
       },
     },
