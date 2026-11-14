@@ -1,0 +1,11 @@
+{
+  "_note": "Shield phone->server signing vector. All strings UTF-8. device_secret = hex(HMAC-SHA256(key=pairing_secret, msg=device_id)). sig = hex(HMAC-SHA256(key=device_secret as its 64-char lowercase hex string, msg=ts + \".\" + body bytes exactly as sent)). Hex is lowercase. Computed with openssl.",
+  "pairing_secret": "sahaj-test-pairing-secret-0123456789abcdef",
+  "device_id": "3f1c2b9e-7a4d-4e21-9b6f-0c8d5e2a1b47",
+  "device_secret": "5d1f08f09258046470900d12523f9db5230cafa18017de6dddf44f8121e65fa4",
+  "device_secret_sha256": "9e853cdb5aaceab8d6b90b6ef8e872a797371cbe7424cbd06c49c45be2afad41",
+  "ts": "1763112577000",
+  "body": "{\"idempotency_key\":\"evt-0001-abcdef\",\"family_id\":\"fam_1\",\"parent_id\":\"maa_1\",\"device_id\":\"3f1c2b9e-7a4d-4e21-9b6f-0c8d5e2a1b47\",\"channel\":\"device\",\"kind\":\"sms\",\"occurred_at\":\"2025-11-14T09:29:37.000Z\",\"masked_text\":\"आपका KYC बंद होगा, OTP <NUM> बताइए\",\"sender_type\":\"mobile_10\",\"link_domains\":[\"kyc-update.in\"],\"matched_rules\":[\"P2\"],\"local_level\":\"red\",\"context\":{}}",
+  "body_utf8_hex": "7b226964656d706f74656e63795f6b6579223a226576742d303030312d616263646566222c2266616d696c795f6964223a2266616d5f31222c22706172656e745f6964223a226d61615f31222c226465766963655f6964223a2233663163326239652d376134642d346532312d396236662d306338643565326131623437222c226368616e6e656c223a22646576696365222c226b696e64223a22736d73222c226f636375727265645f6174223a22323032352d31312d31345430393a32393a33372e3030305a222c226d61736b65645f74657874223a22e0a486e0a4aae0a495e0a4be204b594320e0a4ace0a482e0a4a620e0a4b9e0a58be0a497e0a4be2c204f5450203c4e554d3e20e0a4ace0a4a4e0a4bee0a487e0a48f222c2273656e6465725f74797065223a226d6f62696c655f3130222c226c696e6b5f646f6d61696e73223a5b226b79632d7570646174652e696e225d2c226d6174636865645f72756c6573223a5b225032225d2c226c6f63616c5f6c6576656c223a22726564222c22636f6e74657874223a7b7d7d",
+  "sig": "4cf811682771bf8b0cfc8db8bc76e5ebd5af82885d8da12c6e03a76a406120ec"
+}
