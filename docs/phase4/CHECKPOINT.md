@@ -58,6 +58,7 @@
 ---
 
 ## Checkpoint 3 & 4: Authenticated Commands Library, API Routes & Adversarial Acceptance
+- **Commit SHA:** `0f83239`
 - **Status:** Completed & Tested
 - **Key Deliverables:**
   - Library `apps/api/src/lib/core1`:
