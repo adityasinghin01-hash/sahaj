@@ -6,7 +6,7 @@ import {
   normaliseTemplate,
   numberFingerprint,
   registrableDomain,
-} from "../../src/warnings";
+} from "../../src/warnings/fingerprint";
 import { sha256Hex } from "../../src/tools/check_code_word";
 
 describe("normalisation", () => {
