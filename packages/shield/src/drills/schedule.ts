@@ -17,6 +17,27 @@ export interface WeeklyDrillPlanResult {
   helper_planned: number;
   experience_started: number;
   experience_refused: Record<string, number>;
+  parent_gone?: number;
+}
+
+function isForeignKeyViolation(err: unknown): boolean {
+  if (!err || typeof err !== "object") return false;
+  const rec = err as { code?: unknown; message?: unknown; cause?: unknown };
+  if (rec.code === "23503") return true;
+  if (
+    rec.code === "23514" &&
+    typeof rec.message === "string" &&
+    /Invalid (?:experience )?drill parent scope/i.test(rec.message)
+  ) {
+    return true;
+  }
+  if (typeof rec.message === "string" && rec.message === "Parent not found") {
+    return true;
+  }
+  if (rec.cause && typeof rec.cause === "object") {
+    return isForeignKeyViolation(rec.cause);
+  }
+  return false;
 }
 
 export interface DrillScheduleStore {
@@ -143,36 +164,50 @@ export async function planWeeklyDrills(
   const parents = await deps.schedule.listParents();
   let helper_planned = 0;
   let experience_started = 0;
+  let parent_gone = 0;
   const experience_refused: Record<string, number> = {};
 
   for (const parent of parents) {
     const ctx: DrillContext = { familyId: parent.familyId, parentId: parent.parentId };
-    const picked = await deps.pickDrill({ ...ctx, now });
-    if (picked) {
-      await deps.schedule.saveCheckinVariables?.({
-        ...ctx,
-        variables: picked.checkin_variables,
-        now,
-      });
-      await deps.sign?.({
-        familyId: ctx.familyId,
-        parentId: ctx.parentId,
-        type: "shield.drill.helper.planned",
-        line: "Weekly helper drill planned for next check-in.",
-        data: { parent_id: ctx.parentId, drill_id: picked.drill_id },
-      });
-      helper_planned += 1;
-    }
-
-    if (await deps.schedule.hasExperienceEligibility(ctx)) {
-      const started = await deps.startExperienceDrill(ctx);
-      if (started.ok) {
-        experience_started += 1;
-      } else {
-        experience_refused[started.reason] = (experience_refused[started.reason] ?? 0) + 1;
+    try {
+      const picked = await deps.pickDrill({ ...ctx, now });
+      if (picked) {
+        await deps.schedule.saveCheckinVariables?.({
+          ...ctx,
+          variables: picked.checkin_variables,
+          now,
+        });
+        await deps.sign?.({
+          familyId: ctx.familyId,
+          parentId: ctx.parentId,
+          type: "shield.drill.helper.planned",
+          line: "Weekly helper drill planned for next check-in.",
+          data: { parent_id: ctx.parentId, drill_id: picked.drill_id },
+        });
+        helper_planned += 1;
       }
+
+      if (await deps.schedule.hasExperienceEligibility(ctx)) {
+        const started = await deps.startExperienceDrill(ctx);
+        if (started.ok) {
+          experience_started += 1;
+        } else {
+          experience_refused[started.reason] = (experience_refused[started.reason] ?? 0) + 1;
+        }
+      }
+    } catch (err) {
+      if (isForeignKeyViolation(err)) {
+        parent_gone += 1;
+        continue;
+      }
+      throw err;
     }
   }
 
-  return { helper_planned, experience_started, experience_refused };
+  return {
+    helper_planned,
+    experience_started,
+    experience_refused,
+    ...(parent_gone > 0 ? { parent_gone } : {}),
+  };
 }
