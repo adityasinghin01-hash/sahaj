@@ -430,7 +430,15 @@ describe('Core 1 Two-Way Voice Notify (Smartphone Push vs Keypad Twilio)', () =>
             idempotencyKey: key,
             expiresAt: Date.now() + 60_000,
           }),
-          resolveDestination: async () => '+919999900001',
+          // Shaped like Phase 2's createContactResolver: the dispatcher only dispatches through resolveIdentity.
+          resolveDestination: Object.assign(async () => '+919000000001', {
+            resolveIdentity: async () => ({
+              e164: '+919000000001',
+              identityId: '44444444-4444-4444-8444-000000000004',
+              accountId: ACCOUNT_SID,
+              identityHash: 'a'.repeat(64),
+            }),
+          }),
           transport: async (url, init) => {
             twilioRequests.push({ url, body: String(init.body ?? '') });
             return new Response(JSON.stringify({ sid: CALL_SID }), {

@@ -13,8 +13,9 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 import type { ActionAuthorization, FetchTransport } from '@sahaj/adapters';
 import { dispatchOutbound, type DispatchDeps } from '@/lib/provider-dispatch/dispatch';
 import { dispatchStore } from '@/lib/provider-dispatch/supabase-store';
+import { createContactResolver, type ContactDb } from '@/lib/provider-dispatch/contacts';
 import type { DispatchStore } from '@/lib/provider-dispatch/types';
-import { decryptWebhook, encryptWebhook } from '@/lib/webhook-security';
+import { encryptWebhook } from '@/lib/webhook-security';
 import { createSupabaseVoiceTimelinePort, type VoiceTimelinePort } from './voice-auth';
 
 export interface VoiceNotifyInput {
@@ -151,6 +152,7 @@ function resolveTwilioConfigFromEnv() {
 export function createSupabaseVoiceNotifyDeps(db: SupabaseClient): VoiceNotifyDeps {
   const encryptionKeyHex = process.env.WEBHOOK_ENCRYPTION_KEY?.trim();
   const identitySecret = process.env.IDENTITY_HASH_SECRET?.trim();
+  const contactEncryptionKey = process.env.CONTACT_ENCRYPTION_KEY?.trim();
   const twilioEnv = resolveTwilioConfigFromEnv();
   const store = dispatchStore(db as unknown as Parameters<typeof dispatchStore>[0]);
 
@@ -247,7 +249,7 @@ export function createSupabaseVoiceNotifyDeps(db: SupabaseClient): VoiceNotifyDe
   };
 
   let dispatch: VoiceNotifyDeps['dispatch'] | undefined;
-  if (twilioEnv && identitySecret) {
+  if (twilioEnv && identitySecret && contactEncryptionKey) {
     dispatch = {
       store,
       deps: {
@@ -273,29 +275,13 @@ export function createSupabaseVoiceNotifyDeps(db: SupabaseClient): VoiceNotifyDe
             expiresAt: Date.now() + 120_000,
           };
         },
-        async resolveDestination(familyId, personId, provider) {
-          if (!encryptionKeyHex) return null;
-          const { data } = await db
-            .from('provider_identities')
-            .select('contact_ciphertext')
-            .eq('family_id', familyId)
-            .eq('person_id', personId)
-            .eq('provider', provider)
-            .maybeSingle();
-          const cipher = (data as { contact_ciphertext?: string } | null)?.contact_ciphertext;
-          if (!cipher) return null;
-          try {
-            const plain = decryptWebhook(
-              cipher,
-              encryptionKeyHex,
-              `provider_identity:${familyId}:${personId}`,
-            );
-            const parsed = JSON.parse(plain.toString('utf8')) as { phone?: string };
-            return typeof parsed.phone === 'string' ? parsed.phone : null;
-          } catch {
-            return null;
-          }
-        },
+        // Phase 2 contact registry (provider_identities, binding_kind='contact', versioned AAD, identity hash).
+        // The dispatcher only dispatches through `resolveIdentity`, which binds the exact registry row into the claim.
+        resolveDestination: createContactResolver(db as unknown as ContactDb, {
+          encryptionKeyHex: contactEncryptionKey,
+          identitySecret,
+          accounts: { twilio: twilioEnv.twilio.accountSid },
+        }),
       },
     };
   }
