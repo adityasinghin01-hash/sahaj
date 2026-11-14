@@ -109,3 +109,33 @@ describe("P8 pause (step 2.1): Maa chose not to call a flagged number → Riya i
     expect(r.verdict.level).toBe("green");
   });
 });
+
+describe("Phase 3 P6/P7 reach the live server path (runtime bridge)", () => {
+  it("P6: phone flags an unsaved call as far longer than her normal → yellow", () => {
+    const r = evaluateRules(ev({ kind: "call_state", caller_type: "mobile_10", context: { long_vs_normal: true, call_started_at: "2026-11-14T12:30:00.000Z" } }), []);
+    expect(r.verdict.level).toBe("yellow");
+    expect(r.verdict.checks_fired).toContain("pattern.P6");
+  });
+
+  it("P6: duration alone (25 min) on an unsaved call → P6", () => {
+    const r = evaluateRules(ev({ kind: "call_state", caller_type: "mobile_10", context: { duration_ms: 1_500_000 } }), []);
+    expect(r.verdict.checks_fired).toContain("pattern.P6");
+  });
+
+  it("P6 fires once, not twice, when both the flag and duration are sent", () => {
+    const r = evaluateRules(ev({ kind: "call_state", caller_type: "mobile_10", context: { long_vs_normal: true, duration_ms: 1_500_000 } }), []);
+    expect(r.verdict.checks_fired.filter(id => id === "pattern.P6")).toHaveLength(1);
+    expect(r.verdict.reasons.filter(reason => reason.rule_id === "pattern.P6")).toHaveLength(1);
+  });
+
+  it("P7: Maa says 'bank se bola tha' about a 10-digit mobile caller → yellow", () => {
+    const r = evaluateRules(ev({ kind: "voice_report", caller_type: "mobile_10", context: { claimed_bank: true } }), []);
+    expect(r.verdict.level).toBe("yellow");
+    expect(r.verdict.checks_fired).toContain("pattern.P7");
+  });
+
+  it("P7 negative: bank claim from a 1600-series number is not P7", () => {
+    const r = evaluateRules(ev({ kind: "voice_report", caller_type: "series_1600", context: { claimed_bank: true } }), []);
+    expect(r.verdict.checks_fired).not.toContain("pattern.P7");
+  });
+});
