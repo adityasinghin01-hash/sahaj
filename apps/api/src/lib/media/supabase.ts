@@ -3,7 +3,7 @@ import type {
   AuthPort, CallContentRow, CallRow, ConsentRow, MediaBucket, MediaDeps, MediaRepository, Membership,
   ObjectInfo, StorageSigner, VoiceContentRow, VoicePostRow,
 } from "./contracts";
-import { denyAllAuthorizer } from "./authorization";
+import { cedarMediaAuthorizer } from "./cedar-authorizer";
 import { isBucket, isUuid } from "./paths";
 /** Page size for consent history queries. A full page is treated as possibly truncated and denies. */
 export const CONSENT_HISTORY_LIMIT = 200;
@@ -115,5 +115,6 @@ export function defaultMediaDeps(): MediaDeps {
   const url = process.env.SUPABASE_URL, key = process.env.SUPABASE_SERVICE_ROLE_KEY;
   if (!url || !key) throw new Error("database_not_configured");
   const db = createClient(url, key, { auth: { persistSession: false, autoRefreshToken: false } });
-  return { auth: supabaseAuth(db), repo: supabaseRepository(db), storage: supabaseStorage(db), authorizeMedia: denyAllAuthorizer, now: () => new Date() };
+  return { auth: supabaseAuth(db), repo: supabaseRepository(db), storage: supabaseStorage(db),
+    authorizeMedia: cedarMediaAuthorizer, now: () => new Date() };
 }

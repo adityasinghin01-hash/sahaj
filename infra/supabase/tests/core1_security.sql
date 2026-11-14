@@ -138,8 +138,12 @@ begin
   select * into claimed from public.claim_raw_events('synthetic-evidence-worker',100,60) where id=evidence.id;
   if not public.finish_raw_event(evidence.id,claimed.lease_token,true) then raise exception 'FAIL evidence processing';end if;
   if public.reconcile_outbox(o.id,evidence.id,'confirmed_not_sent') then raise exception 'FAIL mismatched evidence outcome accepted';end if;
-  if not public.reconcile_outbox(o.id,evidence.id,'delivered') then raise exception 'FAIL reconciliation';end if;
-  if (select status from public.outbox where id=o.id)<>'completed' then raise exception 'FAIL reconciliation state';end if;
+  if to_regprocedure('public.record_delivery_proof(uuid,uuid,text)') is null then
+    if not public.reconcile_outbox(o.id,evidence.id,'delivered') then raise exception 'FAIL reconciliation';end if;
+    if (select status from public.outbox where id=o.id)<>'completed' then raise exception 'FAIL reconciliation state';end if;
+  elsif public.reconcile_outbox(o.id,evidence.id,'delivered') then
+    raise exception 'FAIL generic evidence bypassed normalized proof';
+  end if;
   select * into jc from public.claim_workflow_jobs('synthetic-workflow-worker',100,120) where id=job;
   if jc.lease_token is null then raise exception 'FAIL workflow claim';end if;
   if not public.finish_workflow_job(job,jc.lease_token,'interrupted','synthetic-checkpoint','synthetic-interrupt') then raise exception 'FAIL durable interrupt';end if;
@@ -149,6 +153,52 @@ begin
   select * into jc from public.claim_workflow_jobs('synthetic-workflow-worker',100,120) where id=job;
   if jc.resume_payload_ciphertext is distinct from 'ciphertext-resume-fixture' then raise exception 'FAIL durable resume payload';end if;
   if not public.finish_workflow_job(job,jc.lease_token,'completed','synthetic-final-checkpoint') then raise exception 'FAIL workflow completion';end if;
+end$$;
+
+-- Joined successor to the generic Phase 1 reconciliation fixture: real authorization,
+-- contact claim, callback normalization and both reconcilers. All triggers remain active.
+do $$declare fam uuid:='b1000000-0000-4000-8000-000000000001';person uuid:='c1000000-0000-4000-8000-000000000002';
+  principal uuid;consent uuid;identity uuid;job uuid;job_lease uuid;request uuid:=gen_random_uuid();
+  raw public.raw_events;claimed public.raw_events;ob uuid;outbox_lease uuid;k text;result jsonb;proof uuid;
+begin
+  if to_regprocedure('public.claim_dispatch_contact(uuid,uuid,text,text,text,uuid,uuid,uuid,uuid,text,text)') is null then return;end if;
+  insert into public.atlas_principals(family_id,label) values(fam,'Synthetic reconciliation') returning id into principal;
+  insert into public.consents(family_id,person_id,purpose,question,answer,version)
+    values(fam,person,'permission_setup','Synthetic permission?',true,'v1') returning id into consent;
+  insert into public.permissions(family_id,person_id,principal_id,action,decision,expires_at,consent_id,
+    valid_from,period_start,period_end,max_uses,target_ids)
+    values(fam,person,principal,'family_report','allow',now()+interval '1 day',consent,
+      now()-interval '1 hour',now()-interval '1 hour',now()+interval '1 day',1,array[person::text]);
+  perform public.register_contact_identity(fam,person,'whatsapp','synthetic-account',repeat('8',64),
+    'v1.'||repeat('a',16)||'.'||repeat('b',22)||'.'||repeat('c',16));
+  select id into identity from public.provider_identities where family_id=fam and person_id=person
+    and source='whatsapp' and account_id='synthetic-account' and binding_kind='contact';
+  raw:=public.ingest_raw_event('synthetic-security','reconcile-workflow','checkin.completed',fam,'{}',repeat('8',64),'synthetic-ct');
+  select * into claimed from public.claim_raw_events('synthetic-reconciliation',100,120) where id=raw.id;
+  job:=public.dispatch_raw_event(raw.id,claimed.lease_token,'core1.atlas','synthetic-reconciliation');
+  select j.lease_token into job_lease from public.claim_workflow_jobs('synthetic-reconciliation',100,120) j where j.id=job;
+  perform public.ensure_action_request(fam,job,job_lease,request,person,'family_report',person::text,repeat('9',64));
+  result:=public.enqueue_authorized_command(fam,job,job_lease,request,'family_report','synthetic-normalized-reconcile','ct',
+    repeat('9',64),sahaj_private.authorization_revision(fam,request));
+  if result->>'status'<>'enqueued' then raise exception 'FAIL normalized enqueue: %',result;end if;
+  ob:=(result->>'outbox_id')::uuid;
+  select o.lease_token into outbox_lease from public.claim_outbox('synthetic-reconciliation',100,120) o where o.id=ob;
+  k:='dispatch:'||ob||':a1';
+  if public.claim_dispatch_contact(fam,person,k,'whatsapp','whatsapp.send_text',ob,outbox_lease,null,
+    identity,'synthetic-account',repeat('8',64))<>'claimed' then raise exception 'FAIL normalized claim';end if;
+  if not public.mark_dispatch_unknown(fam,k,'delivery_unknown','wamid.synthetic-reconciliation') then raise exception 'FAIL unknown dispatch';end if;
+  if not public.bind_dispatch_identity(fam,k,'synthetic-account',repeat('7',64),true) then raise exception 'FAIL callback identity';end if;
+  update public.outbox set lease_until=now()-interval '1 second' where id=ob;
+  perform public.claim_outbox('synthetic-reconciliation',100,120);
+  raw:=public.ingest_raw_event('whatsapp','synthetic-delivered-callback','whatsapp.status',fam,
+    jsonb_build_object('status','delivered','provider_ref','wamid.synthetic-reconciliation','person_id',person),repeat('6',64),null);
+  select * into claimed from public.claim_raw_events('synthetic-reconciliation',100,120) where id=raw.id;
+  if not public.finish_raw_event(raw.id,claimed.lease_token,true) then raise exception 'FAIL callback processing';end if;
+  result:=public.record_delivery_proof(fam,raw.id,'delivered');proof:=(result->>'proof_event_id')::uuid;
+  if public.reconcile_outbox(ob,proof,'delivered') then raise exception 'FAIL outbox accepted before ledger reconciliation';end if;
+  if not public.reconcile_dispatch(fam,k,proof,'delivered') then raise exception 'FAIL normalized ledger reconciliation';end if;
+  if not public.reconcile_outbox(ob,proof,'delivered') then raise exception 'FAIL normalized outbox reconciliation';end if;
+  if (select status from public.outbox where id=ob)<>'completed' then raise exception 'FAIL normalized reconciliation state';end if;
 end$$;
 reset role;
 do $$begin
