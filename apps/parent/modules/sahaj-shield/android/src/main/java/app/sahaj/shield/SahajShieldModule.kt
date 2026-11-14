@@ -82,6 +82,19 @@ class SahajShieldModule : Module() {
 
     Function("getStatus") { status() }
 
+    // Non-sensitive display choices only. Device credentials remain in SecureStore.
+    Function("getUiPreferences") {
+      val prefs = context.getSharedPreferences("sahaj_ui", Context.MODE_PRIVATE)
+      mapOf("lang" to (prefs.getString("lang", "en") ?: "en"), "size" to (prefs.getString("size", "large") ?: "large"))
+    }
+    Function("setUiPreferences") { lang: String, size: String ->
+      if (lang !in setOf("en", "hi") || size !in setOf("large", "xlarge")) {
+        throw CodedException("E_BAD_PREFERENCE", "Unsupported display preference", null)
+      }
+      context.getSharedPreferences("sahaj_ui", Context.MODE_PRIVATE).edit()
+        .putString("lang", lang).putString("size", size).apply()
+    }
+
     AsyncFunction("requestSmsPermission") { promise: Promise ->
       ask(promise, Manifest.permission.RECEIVE_SMS, Manifest.permission.READ_SMS)
     }

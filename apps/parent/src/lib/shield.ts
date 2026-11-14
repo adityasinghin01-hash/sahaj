@@ -1,0 +1,65 @@
+// Guarded access to the native Shield module. Shield is Android-only: on web (and iOS) the module
+// has no methods, so every call here checks the platform and never throws into a screen.
+import { Platform } from 'react-native';
+
+import SahajShield, {
+  type CallRedirectionResult,
+  type LocalVerdictEvent,
+  type ShieldFeature,
+  type ShieldFeatures,
+  type ShieldPairing,
+  type ShieldStatus,
+} from '../../modules/sahaj-shield';
+
+export { SHIELD_FEATURES } from '../../modules/sahaj-shield';
+export type { LocalVerdictEvent, ShieldFeature, ShieldFeatures, ShieldStatus };
+
+export const shieldAvailable = Platform.OS === 'android';
+
+function safe<T>(fn: () => T, fallback: T): T {
+  if (!shieldAvailable) return fallback;
+  try {
+    return fn();
+  } catch {
+    return fallback;
+  }
+}
+
+async function safeAsync<T>(fn: () => Promise<T>, fallback: T): Promise<T> {
+  if (!shieldAvailable) return fallback;
+  try {
+    return await fn();
+  } catch {
+    return fallback;
+  }
+}
+
+export const shield = {
+  getUiPreferences: () => safe(() => SahajShield.getUiPreferences(), { lang: 'en', size: 'large' }),
+  setUiPreferences: (lang: 'en' | 'hi', size: 'large' | 'xlarge') =>
+    safe(() => SahajShield.setUiPreferences(lang, size), undefined),
+  getStatus: (): ShieldStatus | null => safe(() => SahajShield.getStatus(), null),
+  getFeatures: (): ShieldFeatures | null => safe(() => SahajShield.getFeatures(), null),
+  setFeature: (name: ShieldFeature, on: boolean): ShieldFeatures | null =>
+    safe(() => SahajShield.setFeature(name, on), null),
+  requestSms: () => safeAsync(() => SahajShield.requestSmsPermission(), false),
+  requestPhone: () => safeAsync(() => SahajShield.requestPhonePermissions(), false),
+  requestOverlay: () => safeAsync(() => SahajShield.requestOverlayPermission(), false),
+  requestCallScreening: () => safeAsync(() => SahajShield.requestCallScreeningRole(), false),
+  requestCallRedirection: () =>
+    safeAsync<CallRedirectionResult | 'unavailable'>(() => SahajShield.requestCallRedirectionRole(), 'unavailable'),
+  openBattery: () => safe(() => SahajShield.openBatteryOptimizationSettings(), 'none'),
+  openAutostart: () => safe(() => SahajShield.openAutostartSettings(), 'none'),
+  setPairing: (p: ShieldPairing) => safeAsync(() => SahajShield.setPairing(p), false),
+  testRedScreen: () => safe(() => SahajShield.testRedScreen(), false),
+  /** Subscribes to verdicts; returns an unsubscribe function (no-op off Android). */
+  onVerdict(cb: (v: LocalVerdictEvent) => void): () => void {
+    if (!shieldAvailable) return () => {};
+    try {
+      const sub = SahajShield.addListener('onVerdict', cb);
+      return () => sub.remove();
+    } catch {
+      return () => {};
+    }
+  },
+};

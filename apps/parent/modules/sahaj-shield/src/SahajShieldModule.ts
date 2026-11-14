@@ -11,6 +11,8 @@ import type {
 
 declare class SahajShieldModule extends NativeModule<SahajShieldModuleEvents> {
   getStatus(): ShieldStatus;
+  getUiPreferences(): { lang: string; size: string };
+  setUiPreferences(lang: 'en' | 'hi', size: 'large' | 'xlarge'): void;
   requestSmsPermission(): Promise<boolean>;
   /** READ_PHONE_STATE + READ_CONTACTS + CALL_PHONE (+ POST_NOTIFICATIONS on Android 13+). */
   requestPhonePermissions(): Promise<boolean>;
