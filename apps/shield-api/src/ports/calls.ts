@@ -102,7 +102,8 @@ export function createCallsPort(
           body: JSON.stringify({
             app_config: {
               app_id: agent,
-              app_version: Number(env.SARVAM_AGENT_VERSION ?? "1"),
+              // Each agent has its own committed versions: SARVAM_AGENT_VERSION_<PURPOSE> wins over the shared one.
+              app_version: Number(env[`SARVAM_AGENT_VERSION_${purpose}`] ?? env.SARVAM_AGENT_VERSION ?? "1"),
               connection_config: {
                 connection_id: env.SARVAM_CONNECTION_ID,
                 agent_phone_number: env.SARVAM_AGENT_PHONE_NUMBER,

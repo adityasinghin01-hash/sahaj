@@ -314,6 +314,17 @@ server_env() {
       # TeleCMI missed-call ingestion needs an app id + virtual number. Without real ones the lab uses synthetic values
       # (not a dialable number); joined-smoke.mjs posts a synthetic CDR with the same values.
       export TELECMI_APP_ID="${TELECMI_APP_ID:-900001}" TELECMI_VIRTUAL_NUMBER="${TELECMI_VIRTUAL_NUMBER:-910000000099}"
+      # K-SARVAMCALL: every apps/api outbound call goes through Sarvam (the free Twilio trial cannot run our TwiML).
+      # Twilio stays available only with an explicit CALL_PROVIDER=twilio; otherwise no TWILIO_* reaches apps/api.
+      export CALL_PROVIDER="${CALL_PROVIDER:-sarvam}"
+      if [[ "$CALL_PROVIDER" != "twilio" ]]; then
+        for name in $(compgen -v | grep '^TWILIO_' || true); do unset "$name"; done
+      fi
+      # Sarvam post-call events for apps/api-placed calls come back to apps/api (/api/sarvam/post-call/<SARVAM_HOOK_SECRET>,
+      # routed by the door). Derived from the tunnel origin in SARVAM_WEBHOOK_URL when not set explicitly.
+      if [[ -z "${SARVAM_OUTBOUND_WEBHOOK_URL:-}" && -n "${SARVAM_WEBHOOK_URL:-}" && -n "${SARVAM_HOOK_SECRET:-}" ]]; then
+        export SARVAM_OUTBOUND_WEBHOOK_URL="${SARVAM_WEBHOOK_URL%%/api/*}/api/sarvam/post-call/${SARVAM_HOOK_SECRET}"
+      fi
       # The device pairing secret is shared with shield-api: Maa's paired-device routes (/api/core1/maa/**) verify with it.
       unset DEV_ADMIN_TOKEN SMS_GATEWAY_SECRET SARVAM_WEBHOOK_SECRET ATLAS_DB_PASSWORD
       ;;

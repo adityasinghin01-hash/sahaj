@@ -48,6 +48,14 @@ export function parseEnvelope(body: unknown) {
   if (!family || !parent) return null;
   const input = object(body.input) ? { ...body.input } : object(body.arguments) ? { ...body.arguments } : { ...body };
   for (const key of ['call_id', 'turn_id']) if (input[key] === undefined && value(key)) input[key] = value(key);
+  // Responder decisions: the saved ids the server sent as agent variables may come back in the variables/context
+  // envelope instead of the tool body. They are still checked against the stored dispatch binding in SQL.
+  for (const key of ['incident_id', 'assignment_id', 'responder_person_id']) if (input[key] === undefined && value(key)) input[key] = value(key);
+  // Sarvam may echo its own call/attempt id; it must then equal the provider reference we stored for that call.
+  if (input.provider_call_ref === undefined) {
+    const ref = value('provider_call_ref') ?? value('sarvam_call_id') ?? value('attempt_id');
+    if (ref !== undefined) input.provider_call_ref = ref;
+  }
   return { ctx: { familyId: uuid(family), parentId: uuid(parent) }, input, body };
 }
 
@@ -78,9 +86,14 @@ export function validateToolInput(tool: ToolName, raw: Record<string, unknown>):
       if (raw.vendor_id !== undefined) out.vendor_id = uuid(raw.vendor_id); break;
     case 'accept_incident':
     case 'decline_incident':
+      // `call_id` is OUR calls.id (agent variable @call_id). The proof is derived server-side from that call's stored
+      // dispatch binding; a client-supplied raw_event_id is no longer needed and is ignored when sent.
       out.call_id = uuid(raw.call_id); out.responder_person_id = uuid(raw.responder_person_id);
       out.incident_id = uuid(raw.incident_id); out.assignment_id = uuid(raw.assignment_id);
-      out.raw_event_id = uuid(raw.raw_event_id);
+      if (raw.provider_call_ref !== undefined) {
+        if (typeof raw.provider_call_ref !== 'string' || !/^[A-Za-z0-9_.:-]{1,128}$/.test(raw.provider_call_ref)) throw new InvalidInput();
+        out.provider_call_ref = raw.provider_call_ref;
+      }
       if (tool === 'accept_incident') out.promise_minutes = integer(raw.promise_minutes, 1, 180);
       break;
     case 'check_status': break;
@@ -121,13 +134,15 @@ function spoken(tool: ToolName, result: ToolResult): string {
     case 'mark_private': return 'Theek hai, is call ki niji baat Riya ke saath nahi baantungi.';
     case 'cancel_permission': return 'Theek hai, woh ijazat band kar di hai.';
     case 'medicine_count': return result.refill_proposed ? 'Goliyon ki ginti likh li. Dawa mangwane ki ijazat parivar se pooch rahi hoon.' : 'Theek hai, goliyon ki ginti likh li hai.';
-    case 'accept_incident': return 'Shukriya, aapka jawab Riya ko bhej rahi hoon.';
-    case 'decline_incident': return 'Koi baat nahi, agle vyakti se pooch rahi hoon.';
+    case 'accept_incident': return 'Shukriya, aapka jawab Riya ko bhej diya hai.';
+    case 'decline_incident': return result.status === 'escalated'
+      ? 'Koi baat nahi. Main Riya ko bata rahi hoon.'
+      : 'Koi baat nahi, agle vyakti se pooch rahi hoon.';
   }
 }
 function publicResult(result: ToolResult): Record<string, unknown> {
   const safe: Record<string, unknown> = {};
-  const statuses = ['saved', 'queued', 'none', 'open', 'offered', 'accepted', 'reopened', 'escalated', 'checking', 'unknown_person', ...Object.keys(CHILD_LINES)];
+  const statuses = ['saved', 'queued', 'none', 'open', 'offered', 'accepted', 'declined', 'reopened', 'escalated', 'checking', 'unknown_person', ...Object.keys(CHILD_LINES)];
   if (result.status && statuses.includes(result.status)) safe.status = result.status;
   if (typeof result.remaining_count === 'number' && Number.isInteger(result.remaining_count) && result.remaining_count >= 0 && result.remaining_count < 1000) safe.remaining_count = result.remaining_count;
   if (typeof result.refill_proposed === 'boolean') safe.refill_proposed = result.refill_proposed;
@@ -146,8 +161,10 @@ export function createSarvamHandler(getPorts: () => SarvamPorts, env: Readonly<R
       envelope = parseEnvelope(JSON.parse((await readCommandBody(request)).toString('utf8')));
       if (!envelope) return response(400, 'missing_context');
       input = validateToolInput(name as ToolName, envelope.input);
+      // Responder decisions are idempotent per call id (one decision per call); SQL refuses a different second decision.
       const candidate = request.headers.get('idempotency-key') ?? envelope.body.idempotency_key ??
-        (input.call_id && input.turn_id ? `${input.call_id}:${input.turn_id}` : undefined);
+        (input.call_id && input.turn_id ? `${input.call_id}:${input.turn_id}`
+          : (name === 'accept_incident' || name === 'decline_incident') && input.call_id ? `responder-decision:${input.call_id}` : undefined);
       if (candidate !== undefined && (typeof candidate !== 'string' || candidate.length < 8 || candidate.length > 200 || /[\r\n]/.test(candidate))) throw new InvalidInput();
       // Sarvam's dashboard tools cannot always send a per-invocation id. Without one, derive a stable key from the
       // exact request + a 2-minute window: a retried tool call dedupes, a genuinely new request later still runs.

@@ -6,6 +6,9 @@ import {
   type GatewayResult, type TwilioConfig,
 } from "./gateway";
 import { gatherStore, providerStore } from "./store";
+import { serviceDatabase } from "../database";
+import { sarvamAgentAliases, sarvamContactAccount } from "../core1/sarvam-calls";
+import { createSupabaseSarvamHeardPort, recordSarvamVoiceHeard } from "../core1/sarvam-heard";
 
 export const LIMITS = { sarvam: 524288, telecmi: 16384, twilio: 65536 } as const;
 
@@ -19,13 +22,33 @@ type Params = { params: Promise<{ secret: string }> };
 export async function sarvamPostCall(request: Request, { params }: Params) {
   const { secret } = await params;
   if (!safeTokenEquals(secret, process.env.SARVAM_HOOK_SECRET)) return notFound();
-  const { SARVAM_APP_ID: appId, SARVAM_DEPLOYMENT_ID: deploymentId } = process.env;
-  const agentDigits = configuredDigits(process.env.SARVAM_AGENT_NUMBER);
+  const { SARVAM_DEPLOYMENT_ID: deploymentId } = process.env;
+  // Contact account: SARVAM_APP_ID, else SARVAM_AGENT_ID_CHECKIN (the account the lab registers contacts under).
+  const appId = sarvamContactAccount(process.env);
+  const agentDigits = configuredDigits(process.env.SARVAM_AGENT_NUMBER ?? process.env.SARVAM_AGENT_PHONE_NUMBER);
   if (!appId || !agentDigits) return notConfigured();
   try {
     const raw = await readWebhookBody(request, LIMITS.sarvam);
-    return send(await handleSarvam(raw, { appId, agentDigits, deploymentId: deploymentId || undefined, consentVersion: process.env.CALL_CONSENT_VERSION || undefined, recordingRetrieval: process.env.SARVAM_RECORDING_RETRIEVAL === "true" }, providerStore));
+    const result = await handleSarvam(raw, { appId, agentDigits, deploymentId: deploymentId || undefined, consentVersion: process.env.CALL_CONSENT_VERSION || undefined, recordingRetrieval: process.env.SARVAM_RECORDING_RETRIEVAL === "true", outboundAgentIds: sarvamAgentAliases(process.env) }, providerStore);
+    if (result.status === 200) await projectVoiceHeard(raw);
+    return send(result);
   } catch (error) { return send(toResult(error)); }
+}
+
+/** After a verified outbound post-call event: a keypad voice-note call that connected >= 10 s marks that note heard. */
+async function projectVoiceHeard(raw: Buffer): Promise<void> {
+  try {
+    const body = JSON.parse(raw.toString("utf8")) as Record<string, unknown>;
+    if (typeof body.attempt_id !== "string") return;
+    await recordSarvamVoiceHeard(createSupabaseSarvamHeardPort(serviceDatabase()), {
+      attemptId: body.attempt_id,
+      status: typeof body.status === "string" ? body.status : null,
+      durationSeconds: typeof body.duration === "number" ? body.duration : null,
+    });
+  } catch {
+    // The event itself is stored; a failed projection leaves the note "not heard", never a false "heard".
+    console.error("[sarvam-post-call] voice heard projection failed");
+  }
 }
 
 export async function missedCall(request: Request, { params }: Params) {

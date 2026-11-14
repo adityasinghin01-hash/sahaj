@@ -219,8 +219,8 @@ export function handleResponderResponse(params: HandleResponderResponseParams): 
     // Verify all binding attributes strictly
     const isBound =
       proof.normalizedProof === true &&
-      proof.verifiedBy === 'twilio_signature' &&
-      proof.source === 'twilio' &&
+      ((proof.verifiedBy === 'twilio_signature' && proof.source === 'twilio') ||
+        (proof.verifiedBy === 'sarvam_call_binding' && proof.source === 'sarvam' && proof.providerAction === 'sarvam.outbound_call')) &&
       proof.action === 'urgent_responder' &&
       proof.familyId === incident.familyId &&
       proof.familyId === currentAssignment.familyId &&

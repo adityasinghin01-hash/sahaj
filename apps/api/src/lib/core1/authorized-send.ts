@@ -3,7 +3,9 @@ import { evaluateGate, requestFingerprint, type GateApproval, type GateConsent, 
 import { call, stableUuid, type RpcDb } from '../atlas-runtime/db';
 import { encryptWebhook } from '../webhook-security';
 
-export type CareSendKind = 'core2.sos_alert' | 'core2.watch_escalation' | 'core2.watch_checkin' | 'core2.reassurance' | 'core2.device_handover' | 'gentle_news.circle_offer' | 'core1.refill_notice';
+export type CareSendKind = 'core2.sos_alert' | 'core2.watch_escalation' | 'core2.watch_checkin' | 'core2.reassurance' | 'core2.device_handover' | 'gentle_news.circle_offer' | 'core1.refill_notice' | 'gentle_news.maa_call';
+/** 'twilio' / 'sarvam' are keypad phone calls; 'expo' is app push. */
+export type SendChannel = 'expo' | 'twilio' | 'sarvam';
 export const careSendAction = (kind: string): GateRequest['action'] => kind === 'core2.reassurance' ? 'share_data' : 'send_alert';
 
 export interface AuthorizedSendInput {
@@ -14,8 +16,10 @@ export interface AuthorizedSendInput {
   details?: Record<string, unknown>;
   sourceId: string;
   dedupeKey: string;
+  /** Provider for a phone-call channel (keypad). Chosen by the server (CALL_PROVIDER); omitted = 'twilio' (SQL default). */
+  callProvider?: 'twilio' | 'sarvam';
 }
-export interface AuthorizedSendResult { id: string; duplicate: boolean; channel: 'expo' | 'twilio' }
+export interface AuthorizedSendResult { id: string; duplicate: boolean; channel: SendChannel }
 interface Snapshot {
   found: boolean; now: string; revision: string; actorActive: boolean; block: string | null;
   request: { actorId: string; fingerprint: string; consumed: boolean; expired: boolean; hasDenial: boolean; status: string };
@@ -37,10 +41,11 @@ export async function enqueueAuthorizedSend(db: RpcDb, encryptionKeyHex: string 
   const request: GateRequest = { id: requestId, familyId: input.familyId,
     action, targetId: input.recipientId,
     ...(['voice_message', 'share_data'].includes(action) ? { consentSubjectId: input.subjectId } : {}) };
-  const prepared = await call<{ lease: string; channel: 'expo' | 'twilio' }>(db, care ? 'prepare_care_send' : 'prepare_authorized_send', {
+  const prepared = await call<{ lease: string; channel: SendChannel }>(db, care ? 'prepare_care_send' : 'prepare_authorized_send', {
     p_family_id: input.familyId, p_job_id: jobId, p_request_id: requestId, p_event_id: eventId,
     p_subject_id: input.subjectId, p_recipient_id: input.recipientId, p_kind: input.kind, p_source_id: input.sourceId,
     p_fingerprint: requestFingerprint(request), ...(care ? { p_details: input.details } : {}),
+    ...(input.callProvider === 'sarvam' ? { p_call_provider: 'sarvam' } : {}),
   }, 'send_prepare_failed');
   // The prepare RPC opens a one-shot workflow job (state 'processing', 2 min lease) only to fence the enqueue. No runner
   // claims these kinds, so close it here once the enqueue is decided; otherwise it stays 'processing' forever.

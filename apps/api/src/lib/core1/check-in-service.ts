@@ -37,6 +37,7 @@ import {
   type DispatchOutcome,
 } from '../provider-dispatch';
 import { createContactResolver } from '../provider-dispatch/contacts';
+import { createSarvamCallRuntime } from './sarvam-calls';
 import { dispatchStore } from '../provider-dispatch/supabase-store';
 import { encryptWebhook } from '../webhook-security';
 import { canonicalJson } from '../timeline';
@@ -81,12 +82,19 @@ export const DEFAULT_RETRY_POLICY: CheckInRetryPolicy = {
   retryIntervalMinutes: 15,
 };
 
+const UUID_V = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
 export interface SarvamAgentVariables {
   family_id: string;
   parent_id: string;
   address_form: string;
   call_id?: string;
   attempt_number?: string;
+  /** The schedule this call is for (reschedule tool). */
+  schedule_id?: string;
+  /** Only when Maa has exactly one tracked medicine (medicine_count tool); never guessed. */
+  medicine_id?: string;
+  medicine_label?: string;
 }
 
 /**
@@ -129,6 +137,9 @@ export function withSarvamAgentVariablesTransport(
               address_form: sanitizeNoDigitsRun(variables.address_form, 60),
               ...(variables.call_id ? { call_id: variables.call_id } : {}),
               ...(variables.attempt_number ? { attempt_number: variables.attempt_number } : {}),
+              ...(variables.schedule_id ? { schedule_id: variables.schedule_id } : {}),
+              ...(variables.medicine_id ? { medicine_id: variables.medicine_id } : {}),
+              ...(variables.medicine_label ? { medicine_label: sanitizeNoDigitsRun(variables.medicine_label, 60) } : {}),
             },
           };
           return baseTransport(url, { ...init, body: JSON.stringify(parsed) });
@@ -210,6 +221,8 @@ export interface CheckInStore {
   } | null>;
   getLatestCheckInConsent(familyId: string, personId: string): Promise<CheckInConsent>;
   getScheduleById(familyId: string, scheduleId: string): Promise<CheckInScheduleRow | null>;
+  /** Maa's only tracked medicine (id + label), or null when she has none or several. */
+  getSoleMedicine?(familyId: string, personId: string): Promise<{ id: string; label: string } | null>;
   findPersonCheckInSchedule(familyId: string, personId: string): Promise<CheckInScheduleRow | null>;
   upsertSchedule(params: {
     id?: string;
@@ -487,7 +500,12 @@ async function dispatchSarvamCheckInCall(
     address_form: params.addressForm,
     ...(prepared.callId ? { call_id: prepared.callId } : {}),
     attempt_number: String(params.attemptNumber),
+    ...(UUID_V.test(params.scheduleId) ? { schedule_id: params.scheduleId } : {}),
   };
+  try {
+    const med = await deps.store.getSoleMedicine?.(params.familyId, params.personId);
+    if (med && UUID_V.test(med.id)) { agentVariables.medicine_id = med.id; agentVariables.medicine_label = med.label; }
+  } catch { /* medicine context is optional: the tool transfers when it is missing */ }
 
   if (prepared.status === 'denied' || !prepared.outboxId) {
     return {
@@ -1248,6 +1266,18 @@ export function createSupabaseCheckInStore(db: SupabaseClientLike): CheckInStore
       return { hasConsent: false, revokedAt: String(row.created_at) };
     },
 
+    async getSoleMedicine(familyId, personId) {
+      const { data, error } = await db
+        .from('medicines')
+        .select('id,label')
+        .eq('family_id', familyId)
+        .eq('person_id', personId)
+        .limit(2);
+      if (error || !Array.isArray(data) || data.length !== 1) return null;
+      const r = data[0] as Record<string, unknown>;
+      return typeof r.id === 'string' && typeof r.label === 'string' ? { id: r.id, label: r.label } : null;
+    },
+
     async getScheduleById(familyId, scheduleId) {
       const { data } = await db
         .from('schedules')
@@ -1633,11 +1663,15 @@ export function createSupabaseCheckInDispatchRuntime(
   env: Record<string, string | undefined> = process.env,
   transport: FetchTransport = globalThis.fetch as FetchTransport,
 ): CheckInDispatchRuntime | null {
+  // The live phones are registered by the Shield writer (WEBHOOK_ENCRYPTION_KEY envelope); the shared Sarvam runtime reads
+  // both registry envelopes and the per-role agent version. Fall back to the Phase 2-only resolver below.
+  const shared = createSarvamCallRuntime(db, env, 'CHECKIN', transport);
+  if (shared) return { deps: shared.deps };
   const {
     SARVAM_API_KEY: apiKey,
     SARVAM_ORG_ID: orgId,
     SARVAM_WORKSPACE_ID: workspaceId,
-    SARVAM_APP_ID: appId,
+    SARVAM_APP_ID: appIdRaw,
     SARVAM_APP_VERSION: appVersionRaw,
     SARVAM_CONNECTION_ID: connectionId,
     SARVAM_AGENT_NUMBER: agentPhoneNumber,
@@ -1646,7 +1680,10 @@ export function createSupabaseCheckInDispatchRuntime(
     IDENTITY_HASH_SECRET: identitySecret,
   } = env;
 
-  const appVersion = Number(appVersionRaw ?? '1');
+  // The check-in agent: SARVAM_APP_ID / SARVAM_APP_VERSION, else the per-role names the lab and docs use.
+  const appId = appIdRaw?.trim() || env.SARVAM_AGENT_ID_CHECKIN?.trim();
+  const appVersionText = env.SARVAM_AGENT_VERSION_CHECKIN?.trim() || appVersionRaw?.trim() || env.SARVAM_AGENT_VERSION?.trim() || '1';
+  const appVersion = /^[1-9]\d{0,5}$/.test(appVersionText) ? Number(appVersionText) : NaN;
   if (
     !apiKey ||
     !orgId ||

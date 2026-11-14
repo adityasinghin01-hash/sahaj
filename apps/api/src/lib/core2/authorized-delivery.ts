@@ -1,14 +1,16 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { dispatchOutbound } from '../provider-dispatch/dispatch';
+import { SARVAM_AI_INTRODUCTION, buildSarvamAgentVariables, callProvider, voiceNoteLine, withSarvamAgentTransport } from '../core1/sarvam-calls';
 import { stableUuid } from '../atlas-runtime/db';
-import { enqueueAuthorizedSend, type AuthorizedSendInput, type CareSendKind } from '../core1/authorized-send';
+import { enqueueAuthorizedSend, type AuthorizedSendInput, type CareSendKind, type SendChannel } from '../core1/authorized-send';
 import { createSupabaseVoiceNotifyDeps, type VoiceNotifyDeps } from '../core1/voice-notify';
 import { canonicalJson } from '../timeline';
 import type { CareDeliveryInput, Core2TimelinePort, Core2TimelineAppendInput } from './contracts';
 
 const KINDS = new Set<string>(['core2.sos_alert','core2.watch_escalation','core2.watch_checkin',
-  'core2.reassurance','core2.device_handover','gentle_news.circle_offer','core1.refill_notice']);
+  'core2.reassurance','core2.device_handover','gentle_news.circle_offer','core1.refill_notice','gentle_news.maa_call']);
 export function careNoticeBody(kind: string, details: Record<string, unknown>): string {
+  if (kind === 'gentle_news.maa_call') return String(details.statusLabel || 'Parivar aapse baat karna chahta hai. Riya jald aapse judengi.');
   if (kind === 'core2.reassurance') return `Parivar ka sandesh: ${String(details.statusLabel || 'Naya status update aaya hai.')}`;
   if (kind === 'core1.refill_notice') return `Gupta Medical ko order bhej diya — ₹${Number(details.amountMinor) / 100}`;
   if (kind === 'gentle_news.circle_offer') return "Kripya Maa ke paas jaakar baithiye. Parivar ko apne pahunchne ki soochna dein.";
@@ -38,7 +40,7 @@ async function appendCareTimeline(db: SupabaseClient, timeline: Core2TimelinePor
 
 /** Source contains only routing facts and a bounded calm status, never notes/location/phone numbers. */
 export async function prepareCareDelivery(db: SupabaseClient, timeline: Core2TimelinePort, input: CareDeliveryInput,
-  encryptionKey = process.env.WEBHOOK_ENCRYPTION_KEY): Promise<{ send: AuthorizedSendInput; id: string; duplicate: boolean; channel: 'expo' | 'twilio' }> {
+  encryptionKey = process.env.WEBHOOK_ENCRYPTION_KEY, provider = callProvider(process.env)): Promise<{ send: AuthorizedSendInput; id: string; duplicate: boolean; channel: SendChannel }> {
   if (!KINDS.has(input.outboxKind)) throw new Error('unsupported_care_send');
   const sourceId = stableUuid(['care-source', input.familyId, input.dedupeKey]);
   const rawStatus = typeof input.payload.status_label === 'string' ? input.payload.status_label : '';
@@ -53,15 +55,17 @@ export async function prepareCareDelivery(db: SupabaseClient, timeline: Core2Tim
     humanLine: 'Care notification requested; recipient authorization is checked separately.', payload });
   // SQL compares the exact signed payload to these details, including on replay.
   const send: AuthorizedSendInput = { familyId: input.familyId, subjectId: input.actorPersonId,
-    recipientId: input.targetPersonId, kind: input.outboxKind as CareSendKind, sourceId, dedupeKey: input.dedupeKey, details };
+    recipientId: input.targetPersonId, kind: input.outboxKind as CareSendKind, sourceId, dedupeKey: input.dedupeKey, details,
+    ...(provider === 'sarvam' ? { callProvider: 'sarvam' as const } : {}) };
   const result = await enqueueAuthorizedSend(db, encryptionKey, send);
   return { send, id: result.id, duplicate: result.duplicate, channel: result.channel };
 }
 
 export async function dispatchCareDelivery(deps: VoiceNotifyDeps, send: AuthorizedSendInput, id: string,
-  channel: 'expo' | 'twilio'): Promise<void> {
+  channel: SendChannel): Promise<void> {
   if (channel === 'expo' && deps.pushEnabled === false) return;
   if (channel === 'twilio' && (!deps.dispatch || !deps.keypadBaseUrl)) return;
+  if (channel === 'sarvam' && !deps.sarvam) return;
   const claim = await deps.repo.claim(send.familyId, id);
   if (!claim) return;
   if (channel === 'expo') {
@@ -76,6 +80,24 @@ export async function dispatchCareDelivery(deps: VoiceNotifyDeps, send: Authoriz
     } catch {
       await deps.repo.updateOutboxStatus(id, claim.lease, 'delivery_unknown', 'push_delivery_unknown');
     }
+    return;
+  }
+  if (channel === 'sarvam') {
+    // Keypad notice through the Sarvam CALLBACK agent: the same calm text the TwiML notice would say, masked.
+    const sarvam = deps.sarvam!;
+    if (!claim.callId) throw new Error('care_call_binding_missing');
+    const voicePostId = typeof send.details?.voicePostId === 'string' ? send.details.voicePostId : undefined;
+    const line = voicePostId ? voiceNoteLine('Riya', null) : careNoticeBody(send.kind, send.details ?? {});
+    const variables = buildSarvamAgentVariables({
+      purpose: send.kind === 'gentle_news.maa_call' ? 'gentle_news' : voicePostId ? 'voice_message' : 'care_notice',
+      introduction: SARVAM_AI_INTRODUCTION, callback_reason: send.kind.replace(/\./g, '_'), line, callback_line: line,
+      family_id: send.familyId, parent_id: send.recipientId, call_id: claim.callId,
+      incident_id: typeof send.details?.incidentId === 'string' ? send.details.incidentId : undefined, voice_post_id: voicePostId,
+    });
+    await dispatchOutbound({ ...sarvam.deps, transport: withSarvamAgentTransport(sarvam.deps.transport, { agentId: sarvam.agentId, variables }) }, {
+      familyId: send.familyId, personId: send.recipientId, outboxId: id, outboxLease: claim.lease,
+      attempt: claim.attempt, callId: claim.callId, payload: { action: 'sarvam.outbound_call', language: 'Hindi' },
+    });
     return;
   }
   if (!claim.callId || !deps.dispatch) throw new Error('care_call_binding_missing');

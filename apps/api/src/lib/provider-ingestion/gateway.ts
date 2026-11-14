@@ -72,6 +72,11 @@ async function consentFor(store: ProviderStore, call: CallRow | null, who: Ident
 
 export interface SarvamConfig {
   appId: string; agentDigits: string; deploymentId?: string; consentVersion?: string;
+  /**
+   * K-SARVAMCALL: agent ids (responder, callback, ...) that place OUTBOUND calls under the contact account `appId`. Their
+   * post-call events are matched against attempts stored under `appId`. Inbound events still need exactly `appId`.
+   */
+  outboundAgentIds?: readonly string[];
   /** Off by default. When true, an effective exact-call recording consent queues one retrieval request per interaction. */
   recordingRetrieval?: boolean;
 }
@@ -125,7 +130,8 @@ export async function handleSarvam(raw: Buffer, cfg: SarvamConfig, getStore: () 
   const outboundEvent = typeof body.attempt_id === "string";
   const e = outboundEvent ? parseSarvamOutbound(body) : parseSarvamInbound(body);
   const content = sarvamContent(body);
-  if (e.appId !== cfg.appId || e.agentDigits !== cfg.agentDigits) reject("wrong_provider_account", 403);
+  const aliasOutbound = "attemptId" in e && e.appId !== cfg.appId && (cfg.outboundAgentIds ?? []).includes(e.appId);
+  if ((e.appId !== cfg.appId && !aliasOutbound) || e.agentDigits !== cfg.agentDigits) reject("wrong_provider_account", 403);
   if (!("attemptId" in e)) {
     if (!cfg.deploymentId) reject("provider_account_not_configured", 503);
     if (e.deploymentId !== cfg.deploymentId) reject("wrong_provider_account", 403);
@@ -133,7 +139,7 @@ export async function handleSarvam(raw: Buffer, cfg: SarvamConfig, getStore: () 
   const store = getStore();
   let who: Identity | null;
   let callRef: string;
-  if ("attemptId" in e) { who = await store.findSarvamAttempt(e.appId, e.attemptId); callRef = e.attemptId; if (!who) reject("unknown_attempt", 403); }
+  if ("attemptId" in e) { who = await store.findSarvamAttempt(cfg.appId, e.attemptId); callRef = e.attemptId; if (!who) reject("unknown_attempt", 403); }
   else { who = await store.resolveContact("sarvam", e.appId, e.callerDigits); callRef = e.interactionId; if (!who) reject("unregistered_sender", 403); }
   const identity = who!;
   const consent = Object.keys(content).length

@@ -15,13 +15,14 @@ import type { Core1ServicePorts, FamilyMembership } from '../types';
 import { createCommandPorts, type CommandDeps } from './commands';
 import type { ToolContext, ToolName, ToolResult } from './handler';
 import { maskDigits } from '../../../../../../packages/shield/src/tools/mask';
+import { applySarvamResponderDecision, createProductionUrgentHelpDeps, type UrgentHelpServiceDeps } from '../urgent-help-service';
 
 type Database = ReturnType<typeof serviceDatabase>;
 type Sql = ReturnType<typeof getDbPools>['auxSql'];
 // Each command holds one advisory-lock connection while the existing services
 // use the same ten-connection pool. Leave room for those dependent queries.
 let commandsInFlight = 0;
-export interface ProductionOverrides { db?: Database; sql?: Sql; now?: () => Date }
+export interface ProductionOverrides { db?: Database; sql?: Sql; now?: () => Date; urgent?: UrgentHelpServiceDeps }
 
 /** A tool token is a server-to-server credential, never a Supabase user JWT.
  * Only call this after authenticating Sarvam and resolving the live parent.
@@ -69,6 +70,8 @@ export function createProductionSarvamDeps(env: Record<string, string | undefine
   const timeline = createSupabaseCore1TimelinePort(db, signingKey,
     env.TIMELINE_SIGNING_KEY_ID ?? env.SIGNING_KEY_ID ?? 'core1-default', now);
   const keyHex = env.WEBHOOK_ENCRYPTION_KEY ?? '';
+  let urgent: UrgentHelpServiceDeps | undefined;
+  const urgentDeps = () => (urgent ??= overrides.urgent ?? createProductionUrgentHelpDeps(env));
   const idFor = (ctx: ToolContext, kind: string, key: string) => stableCore1Uuid(['sarvam', ctx.familyId, ctx.parentId, kind, key]);
   const checkCall = async (ctx: ToolContext, callId: string) => {
     requireRow(await sql`select id from public.calls where family_id=${ctx.familyId} and person_id=${ctx.parentId} and id=${callId} and provider='sarvam'`);
@@ -239,22 +242,19 @@ export function createProductionSarvamDeps(env: Record<string, string | undefine
       const result = await executeRefillProposalCommand(request, deps);
       if (!result.ok) throw new Error('refill_not_proposed');
     },
-    async responderCommand(tool, ctx, input, key) {
-      // A bearer token plus "haan" must never fabricate acceptance evidence.
-      // Require the existing normalized provider proof and its exact call binding.
-      const accepted = tool === 'accept_incident';
-      requireRow(await sql`select e.id from public.raw_events e
-        join public.assignments a on a.family_id=e.family_id and a.id=${String(input.assignment_id)}
-        join public.incidents i on i.family_id=a.family_id and i.id=a.incident_id
-        join public.calls c on c.family_id=a.family_id and c.id=${String(input.call_id)} and c.person_id=a.person_id
-        where e.family_id=${ctx.familyId} and e.id=${String(input.raw_event_id)} and e.normalized_proof and e.status='processed'
-        and e.event_type=${accepted ? 'responder.accepted' : 'responder.declined'}
-        and e.metadata->>'call_id'=${String(input.call_id)} and e.metadata->>'assignment_id'=a.id::text
-        and a.person_id=${String(input.responder_person_id)} and a.incident_id=${String(input.incident_id)} and i.person_id=${ctx.parentId}`);
-      const ports = await trustedCommandPorts(db, ctx, String(input.responder_person_id));
-      await executeCore1Command(commandRequest(ctx, { subjectPersonId: ctx.parentId, severity: 'urgent',
-        incidentId: input.incident_id, assignmentId: input.assignment_id, rawEventId: input.raw_event_id,
-        action: accepted ? 'accept' : 'decline', ...(accepted ? { promiseMinutes: input.promise_minutes } : {}) }, `sarvam-responder:${key}`), ports, 'urgent_help');
+    async responderCommand(tool, ctx, input) {
+      // A bearer token plus "haan" must never fabricate acceptance evidence. The urgent-help service asks SQL to prove the
+      // named call is one WE dispatched through Sarvam for exactly this assignment + responder while it is still offered,
+      // writes the normalized proof, then runs the existing verified accept (timeline + Riya push) or decline/advance.
+      const result = await applySarvamResponderDecision(urgentDeps(), {
+        familyId: ctx.familyId, parentId: ctx.parentId, callId: String(input.call_id),
+        incidentId: String(input.incident_id), assignmentId: String(input.assignment_id),
+        responderPersonId: String(input.responder_person_id),
+        decision: tool === 'accept_incident' ? 'accept' : 'decline',
+        ...(tool === 'accept_incident' ? { promiseMinutes: Number(input.promise_minutes) } : {}),
+        ...(typeof input.provider_call_ref === 'string' ? { providerCallRef: input.provider_call_ref } : {}),
+      });
+      return { status: result.status };
     },
     async audit(tool: ToolName, ctx, key) {
       await timeline.append({ familyId: ctx.familyId, eventType: `core1.sarvam.${tool}`, entityId: ctx.parentId,
