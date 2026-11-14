@@ -192,3 +192,62 @@ export function evaluateGate(input: GateInput): GateDecision {
     return deny('invalid_input');
   }
 }
+
+/** Fixed policy for reading private media. All facts are proven by the media service from live rows beforehand. */
+export const MEDIA_READ_POLICY = `
+permit(principal, action, resource)
+when {
+  principal.active && principal.familyId == resource.familyId && context.familyId == resource.familyId &&
+  context.actionName == resource.actionName &&
+  resource.consentPurpose == resource.expectedPurpose &&
+  context.now >= resource.consentGrantedAt && context.now < resource.objectExpiresAt &&
+  ((resource.actionName == "read_voice_media" &&
+      (principal.role == "parent" || principal.role == "child") &&
+      (principal.personId == resource.senderId || principal.personId == resource.recipientId) &&
+      resource.consentPersonId == resource.senderId) ||
+   (resource.actionName == "read_call_recording" &&
+      principal.role == "parent" && principal.personId == resource.subjectPersonId &&
+      resource.consentPersonId == resource.subjectPersonId && resource.consentCallId == resource.subjectId))
+};
+`;
+
+export interface MediaReadInput {
+  action: 'read_voice_media' | 'read_call_recording';
+  familyId: string;
+  reader: { personId: string; role: 'parent' | 'child' | 'circle'; active: boolean };
+  /** voice_post: sender/recipient. call: personId is the recorded person. */
+  subject: { id: string; senderId?: string; recipientId?: string; personId?: string };
+  consent: { personId: string; purpose: string; callId: string | null; grantedAt: string };
+  objectExpiresAt: string;
+  now: string;
+}
+
+/** Real Cedar decision for media reads. Anything malformed, missing or erroring is deny. */
+export function evaluateMediaRead(input: MediaReadInput): 'allow' | 'deny' {
+  try {
+    const { reader, subject, consent } = input;
+    const now = time(input.now), granted = time(consent.grantedAt), expires = time(input.objectExpiresAt);
+    if (!['read_voice_media', 'read_call_recording'].includes(input.action) || !text(input.familyId) || !text(reader.personId) ||
+      !['parent', 'child', 'circle'].includes(reader.role) || typeof reader.active !== 'boolean' || !text(subject.id) ||
+      !text(consent.personId) || !text(consent.purpose) || ![now, granted, expires].every(Number.isFinite)) return 'deny';
+    const voice = input.action === 'read_voice_media';
+    if (voice ? !text(subject.senderId) || !text(subject.recipientId) : !text(subject.personId)) return 'deny';
+    const principal = { type: 'SAHAJ::Reader', id: reader.personId };
+    const resource = { type: 'SAHAJ::MediaObject', id: subject.id };
+    const result = isAuthorized({
+      principal, action: { type: 'SAHAJ::Action', id: input.action }, resource,
+      context: { familyId: input.familyId, actionName: input.action, now },
+      policies: { staticPolicies: MEDIA_READ_POLICY },
+      entities: [
+        { uid: principal, attrs: { active: reader.active, familyId: input.familyId, personId: reader.personId, role: reader.role }, parents: [] },
+        { uid: resource, attrs: { familyId: input.familyId, actionName: input.action, senderId: subject.senderId ?? '', recipientId: subject.recipientId ?? '',
+          subjectPersonId: subject.personId ?? '', subjectId: subject.id, consentPersonId: consent.personId, consentPurpose: consent.purpose,
+          consentCallId: consent.callId ?? '', consentGrantedAt: granted, objectExpiresAt: expires,
+          expectedPurpose: voice ? `voice_share:${subject.recipientId}` : 'call_recording' }, parents: [] },
+      ],
+    });
+    return result.type === 'success' && result.response.diagnostics.errors.length === 0 && result.response.decision === 'allow' ? 'allow' : 'deny';
+  } catch {
+    return 'deny';
+  }
+}

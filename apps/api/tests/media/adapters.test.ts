@@ -141,7 +141,7 @@ describe("default production wiring", () => {
     vi.stubEnv("SUPABASE_URL", ""); vi.stubEnv("SUPABASE_SERVICE_ROLE_KEY", "");
     expect(() => defaultMediaDeps()).toThrow();
   });
-  it("denies every media authorization until a real adapter is configured", async () => {
+  it("denies every media authorization for an empty or malformed context", async () => {
     vi.stubEnv("SUPABASE_URL", "https://project.invalid"); vi.stubEnv("SUPABASE_SERVICE_ROLE_KEY", "synthetic-not-a-key");
     const deps = defaultMediaDeps();
     const ctx = { action: "read_voice_media", familyId: F } as never;
