@@ -4,7 +4,7 @@ export {
   normalise,
   normaliseNumber,
   normaliseTemplate,
-  registrableDomain,
+  registrableDomain as indicatorRegistrableDomain,
   FINGERPRINT_RE,
   MIN_TEMPLATE_CHARS,
   type IndicatorKind,
