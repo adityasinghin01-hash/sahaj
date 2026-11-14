@@ -28,15 +28,15 @@ describe("successful retrieval", () => {
     expect(s.store.puts[0]!.refHash).toMatch(/^[0-9a-f]{64}$/);
     expect(logs.log).not.toHaveBeenCalled(); expect(logs.warn).not.toHaveBeenCalled(); expect(logs.error).not.toHaveBeenCalled();
   });
-  it("retention is clamped to 1..365 days", async () => {
-    for (const [days, expected] of [[0, 1], [9999, 365], [30, 30]] as const) {
+  it("retention is clamped to 1..365 days and never outlives the consent that allowed it", async () => {
+    const grantExpiry = Date.parse("2026-11-14T10:00:00.000Z") + 365 * 86_400_000; // consent() fixture + shared 365-day maximum age
+    for (const [days, expected] of [[0, NOW.getTime() + 86_400_000], [9999, grantExpiry], [30, NOW.getTime() + 30 * 86_400_000]] as const) {
       const s = setup(audioResponse());
       s.deps.retentionDays = days;
       await processRecordingEvent(s.deps, eventRow());
-      expect(s.store.puts[0]!.expiresAt.getTime()).toBe(NOW.getTime() + expected * 86_400_000);
+      expect(s.store.puts[0]!.expiresAt.getTime()).toBe(Math.min(expected, grantExpiry));
     }
-  });
-  it("replaying the same recording is idempotent and does not fetch or write again", async () => {
+  });  it("replaying the same recording is idempotent and does not fetch or write again", async () => {
     const s = setup(); s.store.slotValue = "same";
     expect(await processRecordingEvent(s.deps, eventRow())).toEqual({ status: "already_stored" });
     expect(s.t.calls).toHaveLength(0); expect(s.storage.puts).toBe(0); expect(s.store.puts).toHaveLength(0);
@@ -236,5 +236,38 @@ describe("what the worker never does", () => {
     const out = await processRecordingEvent(s.deps, eventRow());
     expect(Object.keys(out)).toEqual(["status"]);
     expect(CALL_SID).toBeTruthy(); expect(PERSON).toBeTruthy(); expect(NOW).toBeTruthy();
+  });
+});
+
+describe("shared consent maximum age (same 365-day policy as the Phase 3 gate)", () => {
+  const MAX = 365 * 86_400_000;
+  const at = (ms: number) => new Date(ms).toISOString();
+  const run = async (createdAt: string) => {
+    const s = setup(audioResponse()); s.store.consents = [consent({ createdAt })];
+    return { s, out: await processRecordingEvent(s.deps, eventRow()) };
+  };
+  it("a grant one millisecond inside the age is effective; exactly 365 days old is not (strict)", async () => {
+    expect((await run(at(NOW.getTime() - MAX + 1))).out.status).toBe("stored");
+    const edge = await run(at(NOW.getTime() - MAX));
+    expect(edge.out).toEqual({ status: "rejected", code: "consent_not_effective" }); expect(edge.s.t.calls).toHaveLength(0);
+  });
+  it("an older grant is refused before any fetch or storage, and the stored retention ends exactly when the grant does", async () => {
+    const old = await run(at(NOW.getTime() - MAX - 86_400_000));
+    expect(old.out).toEqual({ status: "rejected", code: "consent_not_effective" }); expect(old.s.storage.puts).toBe(0);
+    const young = await run(at(NOW.getTime() - MAX + 2 * 86_400_000));
+    expect(young.s.store.puts[0]!.expiresAt.getTime()).toBe(NOW.getTime() + 2 * 86_400_000);
+  });
+  it("a future-dated grant never counts", async () => {
+    const f = await run(at(NOW.getTime() + 60_000));
+    expect(f.out).toEqual({ status: "rejected", code: "consent_not_effective" }); expect(f.s.t.calls).toHaveLength(0);
+  });
+  it("an old refusal still blocks (refusals never age out) and wrong purpose or wrong call never grants", async () => {
+    const s = setup(audioResponse());
+    s.store.consents = [consent(), consent({ id: "r1", callId: null, answer: false, createdAt: at(NOW.getTime() - 2 * MAX) })];
+    expect((await processRecordingEvent(s.deps, eventRow())).status).toBe("stored"); // refusal OLDER than the yes does not block
+    for (const bad of [consent({ purpose: "call_transcript" }), consent({ purpose: "voice_share:x" }), consent({ callId: "66666666-6666-4666-8666-666666666666" })]) {
+      const t = setup(audioResponse()); t.store.consents = [bad];
+      expect(await processRecordingEvent(t.deps, eventRow())).toEqual({ status: "rejected", code: "consent_not_effective" }); expect(t.t.calls).toHaveLength(0);
+    }
   });
 });

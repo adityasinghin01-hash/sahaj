@@ -1,5 +1,6 @@
 import { createHmac, timingSafeEqual } from "node:crypto";
 import { WebhookError } from "../webhook-security";
+import { consentWithinPolicy } from "./consent-policy";
 import {
   isRecord, parseSarvamInbound, parseSarvamOutbound, parseTeleCmiMissed, parseTwilioGather, parseTwilioRecording, parseTwilioStatus, phoneDigits,
 } from "./parsers";
@@ -43,7 +44,11 @@ export interface ProviderStore {
  * - the newest call-independent REFUSAL at or after that answer overrides it (ties go to refusal). Call-independent\n *   affirmations are ignored: they never restore consent a refusal ended.
  * Returns the consent row id, or null when collection is not proven.
  */
-export function effectiveConsent(rows: ConsentRow[], want: { familyId: string; personId: string; callId: string; purpose: ConsentPurpose; version: string }): string | null {
+export function effectiveConsent(rows: ConsentRow[], want: { familyId: string; personId: string; callId: string; purpose: ConsentPurpose; version: string }, nowMs = Date.now()): string | null {
+  return effectiveConsentRow(rows, want, nowMs)?.id ?? null;
+}
+/** Same decision as effectiveConsent, returning the row so callers can derive the grant's own expiry. */
+export function effectiveConsentRow(rows: ConsentRow[], want: { familyId: string; personId: string; callId: string; purpose: ConsentPurpose; version: string }, nowMs = Date.now()): ConsentRow | null {
   if (!want.version) return null;
   const at = (r: ConsentRow) => Date.parse(r.createdAt);
   const mine = rows.filter((r) => r.familyId === want.familyId && r.personId === want.personId && r.purpose === want.purpose);
@@ -51,12 +56,13 @@ export function effectiveConsent(rows: ConsentRow[], want: { familyId: string; p
   const newest = (list: ConsentRow[]) => [...list].sort((a, b) => at(a) - at(b) || Number(b.answer) - Number(a.answer)).at(-1);
   const call = newest(mine.filter((r) => r.callId === want.callId));
   if (!call || !call.answer || call.version !== want.version) return null;
+  // Shared policy: not in the future and strictly younger than the maximum age (see consent-policy.ts).
+  if (!consentWithinPolicy(call.createdAt, nowMs)) return null;
   // Only refusals matter here: a later global yes must never restore a consent that a refusal ended.
   const refusal = newest(mine.filter((r) => r.callId === null && !r.answer));
   if (refusal && at(refusal) >= at(call)) return null;
-  return call.id;
+  return call;
 }
-
 async function consentFor(store: ProviderStore, call: CallRow | null, who: Identity, purpose: ConsentPurpose, version: string | undefined) {
   if (!version || !call || call.familyId !== who.familyId || call.personId !== who.personId) return null;
   const rows = await store.findConsents(call.familyId, call.personId, call.callId, purpose);

@@ -30,7 +30,7 @@ describe("dispatch happy path", () => {
       const out = await dispatchOutbound(deps(store, t.transport), twilioCmd({ aiDisclosureAttested: attest }));
       expect(out.status).toBe("dispatched");
       expect(store.calls.get(CALL)).toMatchObject({ external: CALL_SID, ai: attest === true });
-      expect(store.identities.size).toBe(0);
+      expect([...store.identities.keys()]).toEqual([expect.stringMatching(/^AC[a-f0-9]{32}\|[0-9a-f]{64}$/)]); // account comes from server config
     }
   });
   it("whatsapp text needs no call and sends the resolved destination", async () => {

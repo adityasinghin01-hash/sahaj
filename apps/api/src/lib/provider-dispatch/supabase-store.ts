@@ -24,6 +24,22 @@ export function dispatchStore(db: RpcClient = serviceDatabase() as unknown as Rp
     return data;
   };
   return {
+    async claimOutbox(workerId, limit, leaseSeconds) {
+      const data = await call("claim_outbox", { p_worker_id: workerId, p_limit: limit, p_lease_seconds: leaseSeconds });
+      if (!Array.isArray(data)) throw new DispatchError("dispatch_store_unavailable");
+      return data.flatMap((r: Record<string, unknown>) => (typeof r.id === "string" && typeof r.family_id === "string" && Number.isSafeInteger(r.attempt_count) && typeof r.lease_token === "string"
+        ? [{ id: r.id, familyId: r.family_id, attempt: r.attempt_count as number, lease: r.lease_token }] : []));
+    },
+    async getBinding(familyId, outboxId) {
+      const d = await call("get_dispatch_binding", { p_family_id: familyId, p_outbox_id: outboxId }) as Record<string, unknown> | null;
+      if (!d || typeof d.person_id !== "string" || typeof d.provider !== "string" || typeof d.action !== "string") return null;
+      return {
+        familyId, outboxId, personId: d.person_id, provider: d.provider as never, action: d.action as never,
+        callId: typeof d.call_id === "string" ? d.call_id : undefined, incidentId: typeof d.incident_id === "string" ? d.incident_id : undefined,
+        assignmentId: typeof d.assignment_id === "string" ? d.assignment_id : undefined,
+        actionRequestId: typeof d.action_request_id === "string" ? d.action_request_id : null, outboxAction: typeof d.outbox_action === "string" ? d.outbox_action : null,
+      };
+    },
     async bindOutbox(i) {
       return (await call("bind_outbox_dispatch", {
         p_family_id: i.familyId, p_outbox_id: i.outboxId, p_person_id: i.personId, p_provider: i.provider, p_action: i.action,

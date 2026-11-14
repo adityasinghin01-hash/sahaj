@@ -3,7 +3,8 @@ import {
   AdapterError, fetchTwilioRecording, getSarvamRecording, MAX_TWILIO_RECORDING_BYTES, verifySarvamAttemptInteraction, type FetchTransport,
 } from "@sahaj/adapters";
 import { decryptWebhook } from "../webhook-security";
-import { effectiveConsent } from "../provider-ingestion/gateway";
+import { effectiveConsentRow } from "../provider-ingestion/gateway";
+import { consentExpiresAtMs } from "../provider-ingestion/consent-policy";
 import { validateObjectPath } from "../media/paths";
 import { RecordingError, type RawEventRow, type RecordingOutcome, type RecordingStorage, type RecordingStore } from "./types";
 
@@ -144,18 +145,18 @@ export async function processRecordingEvent(deps: RecordingWorkerDeps, row: RawE
     cleanupPath = path; // from here an object at this deterministic path can only be ours and unreferenced
     if (slot === "other") return (await cleanup()) ? { status: "ignored_additional" } : { status: "retry", code: "cleanup_failed" };
 
-    const consentNow = async (): Promise<string | null> => {
+    const now = (deps.now ?? (() => new Date()))();
+    const consentNow = async (): Promise<{ id: string; createdAt: string } | null> => {
       if (!call.aiDisclosed) return null;
       const rows = await deps.store.findConsents(row.familyId, personId, callId);
-      const effective = effectiveConsent(rows, { familyId: row.familyId, personId, callId, purpose: "call_recording", version: deps.consentVersion });
+      const effective = effectiveConsentRow(rows, { familyId: row.familyId, personId, callId, purpose: "call_recording", version: deps.consentVersion }, now.getTime());
       // The consent the event points at must still be a yes on this exact call, so a forged or substituted id is refused.
       const linked = rows.some((r) => r.id === eventConsentId && r.familyId === row.familyId && r.personId === personId && r.callId === callId && r.answer);
-      return effective && linked ? effective : null;
+      return effective && linked ? { id: effective.id, createdAt: effective.createdAt } : null;
     };
     if (!(await consentNow())) return reject("consent_not_effective");
 
     const limit = Math.min(deps.maxBytes ?? MAX_TWILIO_RECORDING_BYTES, MAX_TWILIO_RECORDING_BYTES);
-    const now = (deps.now ?? (() => new Date()))();
     let audio: Uint8Array;
     try {
       audio = await plan.fetch(limit, now);
@@ -174,15 +175,17 @@ export async function processRecordingEvent(deps: RecordingWorkerDeps, row: RawE
     if (audio.length === 0 || audio.length > limit || !isWav(audio)) return reject("media_invalid");
 
     // Consent may have been withdrawn while the bytes were in flight. Discard them without writing.
-    const consentId = await consentNow();
-    if (!consentId) return reject("consent_not_effective");
+    const grant = await consentNow();
+    if (!grant) return reject("consent_not_effective");
 
     try { await deps.storage.put(path, audio, "audio/wav"); } catch { return { status: "retry", code: "storage_unavailable" }; }
     // 'exists' means an earlier attempt already wrote the same recording: continue to the metadata write.
 
     const days = Math.min(Math.max(Math.trunc(deps.retentionDays ?? 90), 1), 365);
     try {
-      const result = await deps.store.put({ familyId: row.familyId, callId, consentId, objectPath: path, expiresAt: new Date(now.getTime() + days * 86_400_000), refHash: plan.refHash });
+      // Retention never outlives the grant: capped at the consent's own maximum age (SQL applies the same cap).
+      const expiresAt = new Date(Math.min(now.getTime() + days * 86_400_000, consentExpiresAtMs(grant.createdAt)));
+      const result = await deps.store.put({ familyId: row.familyId, callId, consentId: grant.id, objectPath: path, expiresAt, refHash: plan.refHash });
       if (result === "ignored_additional") return (await cleanup()) ? { status: "ignored_additional" } : { status: "retry", code: "cleanup_failed" };
       if (result === "purged") return reject("recording_purged");
       return { status: result };

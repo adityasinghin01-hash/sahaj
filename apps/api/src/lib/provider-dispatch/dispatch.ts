@@ -109,10 +109,11 @@ export async function dispatchOutbound(deps: DispatchDeps, cmd: DispatchCommand)
   const ledger = new BoundLedger({
     store: deps.store, familyId: cmd.familyId,
     aiDisclosed: action === "sarvam.outbound_call" || (action === "twilio.create_call" && cmd.aiDisclosureAttested === true),
-    identity: (ref) => action === "sarvam.outbound_call"
-      ? { accountId: deps.providers.sarvam!.appId, identityHash: identityHash("sarvam", deps.providers.sarvam!.appId, ref, deps.identitySecret) }
-      : {},
-  }, async (k, p, a) => (await deps.store.claim({
+    // The bound provider account always comes from server configuration, never from a callback or the command.
+    identity: (ref) => {
+      const account = provider === "sarvam" ? deps.providers.sarvam!.appId : provider === "twilio" ? deps.providers.twilio!.accountSid : deps.providers.whatsapp!.phoneNumberId;
+      return { accountId: account, identityHash: identityHash(provider, account, ref, deps.identitySecret) };
+    },  }, async (k, p, a) => (await deps.store.claim({
     familyId: cmd.familyId, personId: cmd.personId, key: k, provider: p as never, action: a as DispatchAction,
     outboxId: cmd.outboxId, outboxLease: cmd.outboxLease, callId: cmd.callId,
   })) === "claimed");

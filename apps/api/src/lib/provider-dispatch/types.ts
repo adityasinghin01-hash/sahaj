@@ -50,11 +50,17 @@ export interface BindInput {
   callId?: string; incidentId?: string; assignmentId?: string;
 }
 export interface DeliveryProof { proofEventId: string; dispatchKey: string; outboxId: string; outcome: ReconcileOutcome }
+/** One row returned by claim_outbox. Only the fields the runner needs. */
+export interface ClaimedOutbox { id: string; familyId: string; attempt: number; lease: string }
+export interface StoredBinding extends BindInput { actionRequestId: string | null; outboxAction: string | null }
 export interface CompleteInput {
   familyId: string; key: string; providerRef: string; accountId?: string; identityHash?: string; aiDisclosed: boolean;
 }
 /** Service-role persistence. Every method maps to one atomic SQL function in the phase2 migration. */
 export interface DispatchStore {
+  /** Phase 2 runner: claim ready outbox rows (existing claim_outbox, which also expires abandoned leases into delivery_unknown). */
+  claimOutbox(workerId: string, limit: number, leaseSeconds: number): Promise<ClaimedOutbox[]>;
+  getBinding(familyId: string, outboxId: string): Promise<StoredBinding | null>;
   /** Immutable target/provider/action/call binding of an outbox row. Called by the enqueue transaction owner. */
   bindOutbox(input: BindInput): Promise<boolean>;
   claim(input: ClaimInput): Promise<"claimed" | "duplicate">;

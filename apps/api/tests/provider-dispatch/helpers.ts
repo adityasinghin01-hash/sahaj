@@ -2,7 +2,7 @@ import { vi } from "vitest";
 import type { ActionAuthorization, FetchTransport } from "@sahaj/adapters";
 import { identityHash } from "../../src/lib/webhook-security";
 import {
-  DispatchError, dispatchKey, type BindInput, type ClaimInput, type CompleteInput, type DeliveryProof, type DispatchCommand, type DispatchDeps,
+  DispatchError, dispatchKey, type BindInput, type ClaimedOutbox, type ClaimInput, type StoredBinding, type CompleteInput, type DeliveryProof, type DispatchCommand, type DispatchDeps,
   type DispatchStore, type ReconcileOutcome,
 } from "../../src/lib/provider-dispatch";
 
@@ -37,6 +37,12 @@ export class FakeStore implements DispatchStore {
   /** immutable outbox bindings (SQL: dispatch_bindings). autoBind models the enqueue transaction having bound the row. */
   bindings = new Map<string, BindInput>();
   autoBind = true;
+  queue: ClaimedOutbox[] = [];
+  async claimOutbox(_w: string, limit: number) { return this.queue.splice(0, limit); }
+  async getBinding(familyId: string, outboxId: string): Promise<StoredBinding | null> {
+    const b = this.bindings.get(outboxId);
+    return b && b.familyId === familyId ? { ...b, actionRequestId: null, outboxAction: "check_in" } : null;
+  }
   /** raw provider callbacks already durably processed: id -> {provider, family, call, status} */
   rawEvents = new Map<string, { familyId: string; provider: string; callId: string; status: string }>();
   proofs = new Map<string, { familyId: string; key: string; outcome: ReconcileOutcome; outboxId: string; source: string }>();
@@ -83,7 +89,7 @@ export class FakeStore implements DispatchStore {
     if (!r.callId) return;
     const c = this.calls.get(r.callId)!;
     c.external = ref; c.ai = c.ai || !!ai;
-    if (r.action === "sarvam.outbound_call") {
+    {
       const key = `${accountId}|${hash}`;
       const have = this.identities.get(key);
       if (have && (have.familyId !== r.familyId || have.personId !== r.personId)) throw new DispatchError("dispatch_conflict");

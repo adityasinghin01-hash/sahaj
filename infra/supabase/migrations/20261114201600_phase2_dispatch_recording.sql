@@ -25,19 +25,26 @@ end$$;
 revoke all on function sahaj_private.consents_before_insert() from public,anon,authenticated,service_role;
 create trigger consents_serialize before insert on public.consents for each row execute function sahaj_private.consents_before_insert();
 
+-- SHARED CONSENT POLICY (identical to Phase 3's sahaj_private.consent_max_age): a consent has no expiry column, so the
+-- only finite validity is this maximum age. Phase 3 (gate, enqueue) and Phase 2 (recording write, purge) must read the SAME
+-- function. `create or replace` keeps the order of 20261114201500 (which creates it) and this file irrelevant.
+create or replace function sahaj_private.consent_max_age() returns interval language sql immutable set search_path='' as $$ select interval '365 days' $$;
+revoke all on function sahaj_private.consent_max_age() from public,anon,authenticated;
+grant execute on function sahaj_private.consent_max_age() to service_role;
+
 -- Effective call_recording consent for one call: the newest row among that call's rows and global refusals;
--- equal timestamps resolve to refusal; global yes rows never count. Returns the consent id, or null.
+-- equal timestamps resolve to refusal; global yes rows never count. A yes counts only while it is not in the future and is
+-- younger than consent_max_age() (strict, like Phase 3). Returns zero rows when there is no effective consent.
 create function sahaj_private.call_recording_consent(p_family_id uuid,p_call_id uuid,p_person_id uuid)
-returns uuid language sql stable security definer set search_path='' as $$
-  select r.id from (
-    select x.id,x.answer,x.version from public.consents x
-    where x.family_id=p_family_id and x.person_id=p_person_id and x.purpose='call_recording' and x.created_at<=now()
+returns table(id uuid,granted_at timestamptz) language sql stable security definer set search_path='' as $$
+  select r.id,r.created_at from (
+    select x.id,x.answer,x.version,x.created_at from public.consents x
+    where x.family_id=p_family_id and x.person_id=p_person_id and x.purpose='call_recording' and x.created_at<=clock_timestamp()
       and (x.call_id=p_call_id or (x.call_id is null and x.answer=false))
     order by x.created_at desc,x.answer asc limit 1
-  ) r where r.answer is true and length(r.version)>0
+  ) r where r.answer is true and length(r.version)>0 and r.created_at>clock_timestamp()-sahaj_private.consent_max_age()
 $$;
 revoke all on function sahaj_private.call_recording_consent(uuid,uuid,uuid) from public,anon,authenticated,service_role;
-
 ------------------------------------------------------------------ proof marker on raw_events
 -- Only the proof-writer functions below may create normalized proof. Provider callbacks stay raw.
 alter table public.raw_events add column normalized_proof boolean not null default false;
@@ -113,13 +120,30 @@ alter table public.dispatch_bindings enable row level security;
 revoke all on public.dispatch_ledger,public.dispatch_bindings from public,anon,authenticated,service_role;
 grant select on public.dispatch_ledger,public.dispatch_bindings to service_role;
 
+------------------------------------------------------------------ shared derivation helpers
+-- The care/domain action of an outbox row (Phase 3 column `outbox.action`, e.g. check_in, urgent_responder). Read through
+-- to_jsonb so this file still loads on a database that has not yet received that column (then the value is null and every proof fails closed).
+create function sahaj_private.outbox_action(p_outbox_id uuid) returns text language sql stable security definer set search_path='' as $$
+  select nullif(to_jsonb(o)->>'action','') from public.outbox o where o.id=p_outbox_id
+$$;
+-- The provider account bound at dispatch time for exactly this recipient and provider reference. Never callback data.
+create function sahaj_private.dispatch_account(p_family_id uuid,p_person_id uuid,p_provider text,p_ref text) returns text
+language sql stable security definer set search_path='' as $$
+  select pi.account_id from public.provider_identities pi
+  where pi.family_id=p_family_id and pi.person_id=p_person_id and pi.source=p_provider and pi.attempt_id=p_ref
+    and pi.binding_kind in ('attempt','call','message') and pi.enabled and pi.revoked_at is null
+  order by pi.created_at limit 1
+$$;
+revoke all on function sahaj_private.outbox_action(uuid),sahaj_private.dispatch_account(uuid,uuid,text,text) from public,anon,authenticated;
+grant execute on function sahaj_private.outbox_action(uuid),sahaj_private.dispatch_account(uuid,uuid,text,text) to service_role;
+
 ------------------------------------------------------------------ binding writer (called by the enqueue transaction)
 -- The trusted enqueue path (Phase 3 atomic enqueue) records WHO may be contacted, by WHICH provider action, for WHICH call,
 -- once, when the outbox row is created. A valid outbox lease alone never authorizes another target.
 create function public.bind_outbox_dispatch(p_family_id uuid,p_outbox_id uuid,p_person_id uuid,p_provider text,p_action text,
   p_call_id uuid default null,p_incident_id uuid default null,p_assignment_id uuid default null)
 returns boolean language plpgsql security definer set search_path='' as $$
-declare o public.outbox;b public.dispatch_bindings;a public.assignments;n integer;inc uuid := p_incident_id;
+declare o public.outbox;b public.dispatch_bindings;a public.assignments;n integer;inc uuid := p_incident_id;ob_inc uuid;
 begin
   if p_family_id is null or p_outbox_id is null or p_person_id is null or p_provider is null or p_action is null
     or p_provider not in ('sarvam','twilio','whatsapp','telecmi') or split_part(p_action,'.',1)<>p_provider then
@@ -127,9 +151,13 @@ begin
   end if;
   select * into o from public.outbox where id=p_outbox_id and family_id=p_family_id;
   if o.id is null then raise exception 'unknown_outbox' using errcode='42501'; end if;
+  -- The outbox row (Phase 3 incident_id) is authoritative for the incident; a different one is refused.
+  ob_inc := nullif(to_jsonb(o)->>'incident_id','')::uuid;
+  if ob_inc is not null and p_incident_id is not null and ob_inc<>p_incident_id then raise exception 'incident_mismatch' using errcode='42501'; end if;
+  inc := coalesce(p_incident_id,ob_inc);
   if p_assignment_id is not null then
     select * into a from public.assignments where id=p_assignment_id and family_id=p_family_id;
-    if a.id is null or a.person_id<>p_person_id or (p_incident_id is not null and a.incident_id<>p_incident_id) then
+    if a.id is null or a.person_id<>p_person_id or (inc is not null and a.incident_id<>inc) then
       raise exception 'assignment_mismatch' using errcode='42501';
     end if;
     inc := a.incident_id;
@@ -197,33 +225,35 @@ create function sahaj_private.bind_dispatch(p_l public.dispatch_ledger,p_provide
   p_identity_hash text,p_ai_disclosed boolean) returns void language plpgsql security definer set search_path='' as $$
 declare c public.calls;
 begin
-  if p_l.call_id is null then
-    if p_l.action in ('sarvam.outbound_call','twilio.create_call') then raise exception 'call_required' using errcode='22023'; end if;
-    return;
-  end if;
-  select * into c from public.calls where id=p_l.call_id and family_id=p_l.family_id and person_id=p_l.person_id for update;
-  if c.id is null then raise exception 'call_identity_mismatch' using errcode='42501'; end if;
-  if c.external_id is not null and (c.external_id<>p_provider_ref or c.provider<>p_l.provider) then
-    raise exception 'call_already_bound' using errcode='23505';
-  end if;
-  update public.calls set provider=p_l.provider,external_id=p_provider_ref,
-    ai_disclosed_at=case when p_ai_disclosed then coalesce(ai_disclosed_at,now()) else ai_disclosed_at end
-    where id=c.id;
-  if p_l.action='sarvam.outbound_call' then
-    if p_account_id is null or p_identity_hash is null or p_identity_hash !~ '^[0-9a-f]{64}$' or p_account_id !~ '^[A-Za-z0-9_.-]{1,128}$' then
-      raise exception 'identity_binding_required' using errcode='22023';
+  if p_l.call_id is null and p_l.action in ('sarvam.outbound_call','twilio.create_call') then raise exception 'call_required' using errcode='22023'; end if;
+  if p_l.call_id is not null then
+    select * into c from public.calls where id=p_l.call_id and family_id=p_l.family_id and person_id=p_l.person_id for update;
+    if c.id is null then raise exception 'call_identity_mismatch' using errcode='42501'; end if;
+    if c.external_id is not null and (c.external_id<>p_provider_ref or c.provider<>p_l.provider) then
+      raise exception 'call_already_bound' using errcode='23505';
     end if;
-    insert into public.provider_identities(family_id,person_id,source,account_id,external_id_hash,binding_kind,agent_id,attempt_id)
-      values(p_l.family_id,p_l.person_id,'sarvam',p_account_id,p_identity_hash,'attempt',p_account_id,p_provider_ref)
-      on conflict(source,account_id,external_id_hash,binding_kind) do nothing;
-    if not exists(select 1 from public.provider_identities i where i.source='sarvam' and i.account_id=p_account_id
-      and i.external_id_hash=p_identity_hash and i.binding_kind='attempt' and i.family_id=p_l.family_id
-      and i.person_id=p_l.person_id and i.attempt_id=p_provider_ref and i.agent_id=p_account_id
-      and i.enabled and i.revoked_at is null) then
-      raise exception 'identity_conflict' using errcode='23505';
-    end if;
+    update public.calls set provider=p_l.provider,external_id=p_provider_ref,
+      ai_disclosed_at=case when p_ai_disclosed then coalesce(ai_disclosed_at,now()) else ai_disclosed_at end
+      where id=c.id;
   end if;
-end$$;
+  -- Every dispatched provider operation leaves a verified account binding for the recipient: the provider account (from
+  -- server configuration, never from a callback) plus the provider reference. Sarvam keeps its webhook-matching 'attempt'
+  -- shape; Twilio and WhatsApp bind 'call' / 'message'. Proof normalization reads account_id from this row.
+  if p_account_id is null or p_identity_hash is null or p_identity_hash !~ '^[0-9a-f]{64}$' or p_account_id !~ '^[A-Za-z0-9_.-]{1,128}$' then
+    raise exception 'identity_binding_required' using errcode='22023';
+  end if;
+  insert into public.provider_identities(family_id,person_id,source,account_id,external_id_hash,binding_kind,agent_id,attempt_id)
+    values(p_l.family_id,p_l.person_id,p_l.provider,p_account_id,p_identity_hash,
+      case p_l.provider when 'sarvam' then 'attempt' when 'twilio' then 'call' else 'message' end,
+      case when p_l.provider='sarvam' then p_account_id end,p_provider_ref)
+    on conflict(source,account_id,external_id_hash,binding_kind) do nothing;
+  if not exists(select 1 from public.provider_identities i where i.source=p_l.provider and i.account_id=p_account_id
+    and i.external_id_hash=p_identity_hash and i.binding_kind=case p_l.provider when 'sarvam' then 'attempt' when 'twilio' then 'call' else 'message' end
+    and i.family_id=p_l.family_id and i.person_id=p_l.person_id and i.attempt_id=p_provider_ref
+    and i.agent_id is not distinct from case when p_l.provider='sarvam' then p_account_id end
+    and i.enabled and i.revoked_at is null) then
+    raise exception 'identity_conflict' using errcode='23505';
+  end if;end$$;
 
 create function public.complete_dispatch(p_family_id uuid,p_key text,p_provider_ref text,p_account_id text default null,
   p_identity_hash text default null,p_ai_disclosed boolean default false)
@@ -300,7 +330,7 @@ end$$;
 create function public.record_delivery_proof(p_family_id uuid,p_source_event_id uuid,p_outcome text)
 returns jsonb language plpgsql security definer set search_path='' as $$
 declare e public.raw_events;l public.dispatch_ledger;b public.dispatch_bindings;c public.calls;ref text;st text;
-  meta jsonb;pid uuid;pevent text;other text;
+  meta jsonb;pid uuid;pevent text;other text;oaction text;acct text;
 begin
   if p_outcome is null or p_outcome not in ('delivered','confirmed_not_sent') then raise exception 'invalid_outcome' using errcode='22023'; end if;
   select * into e from public.raw_events where id=p_source_event_id and family_id=p_family_id;
@@ -327,12 +357,17 @@ begin
   if b.outbox_id is null or b.person_id<>l.person_id or (e.metadata->>'person_id' is not null and e.metadata->>'person_id'<>l.person_id::text) then
     raise exception 'binding_mismatch' using errcode='42501';
   end if;
+  oaction := sahaj_private.outbox_action(l.outbox_id);
+  acct := sahaj_private.dispatch_account(p_family_id,l.person_id,l.provider,l.provider_ref);
+  if oaction is null then raise exception 'outbox_action_missing' using errcode='42501'; end if;
+  if acct is null then raise exception 'account_not_bound' using errcode='42501'; end if;
   other := case when p_outcome='delivered' then 'confirmed_not_sent' else 'delivered' end;
   if exists(select 1 from public.raw_events x where x.source=e.source and x.provider_event_id='delivery:'||l.idempotency_key||':'||other) then
     raise exception 'contradictory_proof' using errcode='23505';
   end if;
   meta := jsonb_build_object('normalized',true,'outcome',p_outcome,'outbox_id',l.outbox_id,'action_request_id',b.action_request_id,
-    'action',l.action,'dispatch_key',l.idempotency_key,'provider_ref',l.provider_ref,'person_id',l.person_id,'source_event_id',e.id);
+    'action',oaction,'provider_action',l.action,'account_id',acct,'dispatch_key',l.idempotency_key,'provider_ref',l.provider_ref,'person_id',l.person_id,
+    'source_event_id',e.id);
   pevent := 'delivery:'||l.idempotency_key||':'||p_outcome;
   perform set_config('sahaj.proof_writer','1',true);
   insert into public.raw_events(family_id,source,provider_event_id,event_type,metadata,status,payload_hash,processed_at,normalized_proof)
@@ -361,7 +396,9 @@ begin
       and exists(select 1 from public.raw_events e where e.id=p_provider_event_id and e.family_id=l.family_id and e.status='processed'
         and e.normalized_proof and e.source=l.provider and e.metadata->>'dispatch_key'=l.idempotency_key
         and e.metadata->>'outcome'=p_outcome and e.metadata->>'outbox_id'=l.outbox_id::text
-        and e.metadata->>'provider_ref'=l.provider_ref and e.metadata->>'action'=l.action
+        and e.metadata->>'provider_ref'=l.provider_ref and e.metadata->>'provider_action'=l.action
+        and e.metadata->>'action' is not distinct from sahaj_private.outbox_action(l.outbox_id)
+        and e.metadata->>'account_id' is not distinct from sahaj_private.dispatch_account(l.family_id,l.person_id,l.provider,l.provider_ref)
         and e.metadata->>'action_request_id' is not distinct from b.action_request_id::text
         and ((p_outcome='delivered' and e.event_type='delivery.confirmed') or (p_outcome='confirmed_not_sent' and e.event_type='delivery.not_sent')));
   get diagnostics n=row_count;
@@ -389,6 +426,7 @@ begin
       where e.id=p_provider_event_id and e.family_id=o.family_id and e.status='processed' and e.normalized_proof
         and e.metadata->>'outbox_id'=o.id::text and e.metadata->>'outcome'=p_outcome
         and e.metadata->>'action_request_id' is not distinct from o.action_request_id::text
+        and e.metadata->>'action' is not distinct from sahaj_private.outbox_action(o.id)
         and ((p_outcome='delivered' and e.event_type='delivery.confirmed' and l.status='delivered')
           or (p_outcome='confirmed_not_sent' and e.event_type='delivery.not_sent' and l.status='not_sent')));
   get diagnostics changed=row_count;
@@ -402,7 +440,7 @@ end$$;
 create function sahaj_private.derive_responder_binding(p_family_id uuid,p_call_id uuid)
 returns jsonb language plpgsql stable security definer set search_path='' as $$
 declare c public.calls;l public.dispatch_ledger;b public.dispatch_bindings;a public.assignments;i public.incidents;
-  o public.outbox;ar public.action_requests;
+  o public.outbox;ar public.action_requests;acct text;
 begin
   select * into c from public.calls where id=p_call_id and family_id=p_family_id and provider='twilio';
   if c.id is null or c.external_id is null then return null; end if;
@@ -417,9 +455,14 @@ begin
   select * into o from public.outbox where id=b.outbox_id and family_id=p_family_id;
   select * into ar from public.action_requests where id=b.action_request_id and family_id=p_family_id;
   if a.id is null or i.id is null or o.id is null or ar.id is null or a.incident_id<>i.id or a.person_id<>c.person_id
-    or o.action_request_id is distinct from ar.id or ar.action<>'urgent_responder' then return null; end if;
-  return jsonb_build_object('incident_id',i.id,'assignment_id',a.id,'responder_person_id',a.person_id,'person_id',i.person_id,
-    'call_id',c.id,'outbox_id',o.id,'action_request_id',ar.id,'action','urgent_responder');
+    or o.action_request_id is distinct from ar.id or ar.action<>'urgent_responder'
+    or sahaj_private.outbox_action(o.id) is distinct from 'urgent_responder' or a.person_id=i.person_id then return null; end if;
+  acct := sahaj_private.dispatch_account(p_family_id,a.person_id,'twilio',c.external_id);
+  if acct is null then return null; end if;
+  -- person_id is the OFFERED RESPONDER (the person who pressed 1); the incident's subject is carried separately.
+  return jsonb_build_object('incident_id',i.id,'assignment_id',a.id,'responder_person_id',a.person_id,'person_id',a.person_id,
+    'subject_person_id',i.person_id,'call_id',c.id,'outbox_id',o.id,'action_request_id',ar.id,'action','urgent_responder',
+    'provider_action',l.action,'account_id',acct,'dispatch_key',l.idempotency_key);
 end$$;
 revoke all on function sahaj_private.derive_responder_binding(uuid,uuid) from public,anon,authenticated,service_role;
 
@@ -509,7 +552,7 @@ $$;
 create function public.put_call_recording(p_family_id uuid,p_call_id uuid,p_consent_id uuid,p_object_path text,
   p_expires_at timestamptz,p_recording_ref_hash text)
 returns text language plpgsql security definer set search_path='' as $$
-declare c public.calls;k public.consents;eff uuid;existing sahaj_private.call_content;n integer;
+declare c public.calls;k public.consents;eff uuid;eff_at timestamptz;existing sahaj_private.call_content;n integer;exp timestamptz;
 begin
   if p_family_id is null or p_call_id is null or p_consent_id is null or p_recording_ref_hash is null
     or p_recording_ref_hash !~ '^[0-9a-f]{64}$' or p_expires_at is null
@@ -523,15 +566,18 @@ begin
   select * into c from public.calls where id=p_call_id and family_id=p_family_id for update;
   select * into k from public.consents where id=p_consent_id and family_id=p_family_id;
   if k.id is null or k.person_id<>c.person_id or k.call_id is distinct from p_call_id or k.purpose<>'call_recording'
-    or k.answer is not true or length(k.version)=0 or k.created_at>now() then
+    or k.answer is not true or length(k.version)=0 or k.created_at>clock_timestamp()
+    or k.created_at<=clock_timestamp()-sahaj_private.consent_max_age() then
     raise exception 'consent_not_effective' using errcode='42501';
   end if;
-  eff := sahaj_private.call_recording_consent(p_family_id,p_call_id,c.person_id);
+  select e.id,e.granted_at into eff,eff_at from sahaj_private.call_recording_consent(p_family_id,p_call_id,c.person_id) e;
   if eff is null then raise exception 'consent_not_effective' using errcode='42501'; end if;
+  -- No stored recording may outlive the authorization that allowed it: retention is capped at the consent's own expiry.
+  exp := least(p_expires_at,eff_at+sahaj_private.consent_max_age());
   select * into existing from sahaj_private.call_content where family_id=p_family_id and call_id=p_call_id for update;
   if existing.call_id is null then
     insert into sahaj_private.call_content(family_id,call_id,consent_id,recording_object_path,expires_at,recording_ref_hash)
-      values(p_family_id,p_call_id,eff,p_object_path,p_expires_at,p_recording_ref_hash)
+      values(p_family_id,p_call_id,eff,p_object_path,exp,p_recording_ref_hash)
       on conflict(family_id,call_id) do nothing;
     get diagnostics n=row_count;
     if n=1 then return 'stored'; end if;
@@ -546,7 +592,7 @@ begin
     raise exception 'consent_row_mismatch' using errcode='42501';
   end if;
   update sahaj_private.call_content set recording_object_path=p_object_path,recording_ref_hash=p_recording_ref_hash,
-    expires_at=least(expires_at,p_expires_at) where family_id=p_family_id and call_id=p_call_id;
+    expires_at=least(expires_at,exp) where family_id=p_family_id and call_id=p_call_id;
   return 'stored';
 end$$;
 
@@ -563,7 +609,7 @@ begin
       case when c.expires_at<=t then 'retention' else 'consent' end
     from sahaj_private.call_content c join public.calls k on k.family_id=c.family_id and k.id=c.call_id
     where c.recording_object_path is not null and c.purged_at is null
-      and (c.expires_at<=t or sahaj_private.call_recording_consent(c.family_id,c.call_id,k.person_id) is null)
+      and (c.expires_at<=t or not exists(select 1 from sahaj_private.call_recording_consent(c.family_id,c.call_id,k.person_id)))
     order by c.expires_at limit p_limit;
 end$$;
 
@@ -580,7 +626,7 @@ begin
   perform 1 from public.calls where id=p_call_id and family_id=p_family_id for update;
   update sahaj_private.call_content c set recording_object_path=null,purged_at=now()
     where c.family_id=p_family_id and c.call_id=p_call_id and c.recording_object_path=p_object_path and c.purged_at is null
-      and (c.expires_at<=t or sahaj_private.call_recording_consent(p_family_id,p_call_id,k.person_id) is null);
+      and (c.expires_at<=t or not exists(select 1 from sahaj_private.call_recording_consent(p_family_id,p_call_id,k.person_id)));
   get diagnostics n=row_count;
   return n=1;
 end$$;
@@ -607,3 +653,14 @@ grant execute on function public.bind_outbox_dispatch(uuid,uuid,uuid,text,text,u
   public.get_call_recording_slot(uuid,uuid,text),public.put_call_recording(uuid,uuid,uuid,text,timestamptz,text),
   public.list_recording_purge_candidates(integer,timestamptz),public.finish_recording_purge(uuid,uuid,text,timestamptz)
   to service_role;
+
+-- Read side for the dispatch runner: the immutable binding of a claimed outbox row, nothing else.
+create function public.get_dispatch_binding(p_family_id uuid,p_outbox_id uuid) returns jsonb
+language sql stable security definer set search_path='' as $$
+  select jsonb_build_object('outbox_id',b.outbox_id,'family_id',b.family_id,'person_id',b.person_id,'provider',b.provider,'action',b.action,
+    'call_id',b.call_id,'incident_id',b.incident_id,'assignment_id',b.assignment_id,'action_request_id',b.action_request_id,
+    'outbox_action',sahaj_private.outbox_action(b.outbox_id))
+  from public.dispatch_bindings b where b.family_id=p_family_id and b.outbox_id=p_outbox_id
+$$;
+revoke all on function public.get_dispatch_binding(uuid,uuid) from public,anon,authenticated;
+grant execute on function public.get_dispatch_binding(uuid,uuid) to service_role;
