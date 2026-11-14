@@ -16,6 +16,25 @@ if (!shieldKotlinSrc.isDirectory()) {
   throw new GradleException("sahaj-shield: rules engine sources not found at ${shieldKotlinSrc}")
 }
 
+// Optional recordings live outside res/ so README.txt is never compiled as an Android resource.
+def warningClipNames = (1..8).collect { "shield_line_${it}.mp3" } + ['shield_line_9a.mp3', 'shield_line_9b.mp3']
+def warningClipDirectory = new File(projectDir, '../warning-clips')
+def warningClipResources = layout.buildDirectory.dir('generated/res/shieldWarningClips')
+def stageShieldWarningClips = tasks.register('stageShieldWarningClips') {
+  inputs.files(fileTree(dir: warningClipDirectory, includes: warningClipNames))
+  outputs.dir(warningClipResources)
+  doLast {
+    def output = warningClipResources.get().asFile
+    // Run even with zero MP3 inputs, so removed recordings cannot survive as stale resources.
+    project.delete(output)
+    output.mkdirs()
+    project.copy {
+      from(warningClipDirectory) { include(warningClipNames) }
+      into(new File(output, 'raw'))
+    }
+  }
+}
+
 android {
   namespace "app.sahaj.shield"
   defaultConfig {
@@ -24,6 +43,7 @@ android {
   }
   sourceSets {
     main {
+      res.srcDir warningClipResources
       java.srcDirs += shieldKotlinSrc
     }
   }
@@ -52,3 +72,6 @@ dependencies {
   // JVM unit tests cover app.sahaj.shield.core and app.sahaj.shield.rules (no Android classes there).
   testImplementation 'junit:junit:4.13.2'
 }
+
+// The generated resource folder must be populated before resource merging starts.
+tasks.named('preBuild').configure { dependsOn(stageShieldWarningClips) }

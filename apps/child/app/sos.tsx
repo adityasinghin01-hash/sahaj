@@ -1,3 +1,5 @@
+import { Core2Gate } from '@/components/core2/common';
+import { LiveSos } from '@/components/core2/sos';
 import { Icon } from '@/components/ui/icon';
 import {
   Btn,
@@ -28,7 +30,7 @@ const AnimatedCircle = Animated.createAnimatedComponent(Circle);
 const radius = 100;
 const circumference = 2 * Math.PI * radius;
 
-export default function SOS() {
+function DemoSOS() {
   const demo = useDemo();
   const [holding, setHolding] = React.useState(false);
   const [seconds, setSeconds] = React.useState(sos.cancelSeconds);
@@ -253,4 +255,8 @@ export default function SOS() {
       </Notice>
     </Screen>
   );
+}
+
+export default function SOS() {
+  return <Core2Gate title="sos" demo={<DemoSOS />}><LiveSos /></Core2Gate>;
 }

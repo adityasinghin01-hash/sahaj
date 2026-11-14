@@ -1,3 +1,5 @@
+import { Core2Gate } from '@/components/core2/common';
+import { LiveWatch } from '@/components/core2/watch';
 import { Icon } from '@/components/ui/icon';
 import {
   Btn,
@@ -29,7 +31,7 @@ import { ArrowDown, Check, Home, MapPin, Phone } from 'lucide-react-native';
 import * as React from 'react';
 import { View } from 'react-native';
 
-export default function Watch() {
+function DemoWatch() {
   const demo = useDemo();
   const { scene } = useLocalSearchParams<{ scene?: string }>();
   const [minutes, setMinutes] = React.useState<number | 'custom'>(30);
@@ -258,4 +260,8 @@ export default function Watch() {
       </T>
     </Screen>
   );
+}
+
+export default function Watch() {
+  return <Core2Gate title="watch" demo={<DemoWatch />}><LiveWatch /></Core2Gate>;
 }

@@ -32,12 +32,12 @@ import app.sahaj.shield.core.LocalVerdict
 import app.sahaj.shield.core.Pairing
 import app.sahaj.shield.core.Phase2Alerts
 import app.sahaj.shield.core.Warning
+import app.sahaj.shield.core.WarningAudio
 import java.util.Locale
 
 /**
  * Red screen: TYPE_APPLICATION_OVERLAY full-width card with a big Hindi line, the reason and
- * two big buttons. Vibrates, then plays res/raw/shield_warning_hi (placeholder) followed by a
- * hi-IN TextToSpeech line. During a call the overlay shows at once and the audio waits for the
+ * two big buttons. Plays the matching runtime raw recording, or hi-IN TextToSpeech if absent. During a call the overlay shows at once and the audio waits for the
  * call to end. Without overlay permission: heads-up notification + vibrate.
  */
 internal class AlertController(
@@ -49,10 +49,11 @@ internal class AlertController(
   private val main = Handler(Looper.getMainLooper())
   private var overlay: View? = null
   @Volatile private var pendingSpeech: String? = null
-  /** Phase 2 lines are spoken by TTS only (the recorded clip is line 1, which does not fit them). */
-  @Volatile private var pendingTtsOnly = false
+  @Volatile private var pendingLine: Int? = null
+  @Volatile private var pendingDrillHandled: Boolean? = null
   private var player: MediaPlayer? = null
   private var tts: TextToSpeech? = null
+  private var audioGeneration = 0
 
   override fun showRedScreen(verdict: LocalVerdict, callActive: Boolean) {
     val reason = verdict.reasons.firstOrNull()?.takeIf { it.isNotBlank() } ?: DEFAULT_REASON
@@ -71,7 +72,7 @@ internal class AlertController(
         Notifications.postRed(context, HEADLINE, reason, "$childName ko call karo", childNumber)
       }
       val speech = "$HEADLINE $reason"
-      if (callActive) { pendingSpeech = speech; pendingTtsOnly = false } else playClip(speech)
+      warningAudio(1, speech, callActive)
     }
   }
 
@@ -79,8 +80,10 @@ internal class AlertController(
   fun onCallEnded() {
     val s = pendingSpeech ?: return
     pendingSpeech = null
-    val ttsOnly = pendingTtsOnly
-    main.postDelayed({ if (ttsOnly) speak(s) else playClip(s) }, 800)
+    val line = pendingLine
+    val handled = pendingDrillHandled
+    val generation = audioGeneration
+    main.postDelayed({ if (generation == audioGeneration) playClip(line, s, handled) }, 800)
   }
 
   fun canDrawOverlays() = Build.VERSION.SDK_INT < Build.VERSION_CODES.M || Settings.canDrawOverlays(context)
@@ -99,7 +102,7 @@ internal class AlertController(
       val shown = canDrawOverlays() && runCatching { showOverlay(HEADLINE, text, childButtons(childName, childNumber)) }
         .onFailure { Log.w(ShieldRuntime.TAG, "overlay failed: ${it.javaClass.simpleName}") }.isSuccess
       if (!shown) Notifications.postRed(context, HEADLINE, text, "$childName ko call karo", childNumber)
-      if (callActive) { pendingSpeech = speech; pendingTtsOnly = true } else speak(speech)
+      warningAudio(WarningAudio.lineFor(warning), speech, callActive)
     }
   }
 
@@ -123,7 +126,7 @@ internal class AlertController(
         val token = registerPause(anyway, dont)
         Notifications.postCallPause(context, HEADLINE, Warning.P8_PAUSE.text, token)
       }
-      speak(Warning.P8_PAUSE.speech)
+      warningAudio(3, Warning.P8_PAUSE.speech, false)
     }
   }
 
@@ -222,32 +225,61 @@ internal class AlertController(
     else vib.vibrate(VIBRATION, -1)
   }
 
-  private fun playClip(speech: String) {
+  /** Native port for fixed lines and outcome-specific practice feedback. */
+  fun playWarningLine(line: Int, drillHandled: Boolean?, callActive: Boolean) {
+    val speech = WarningAudio.speech(line, drillHandled)
+    main.post { warningAudio(line, speech, callActive, drillHandled) }
+  }
+
+  private fun warningAudio(line: Int?, speech: String, callActive: Boolean, drillHandled: Boolean? = null) {
+    audioGeneration++
+    pendingSpeech = null
+    pendingLine = line
+    pendingDrillHandled = drillHandled
+    if (callActive) {
+      stopAudio()
+      pendingSpeech = speech
+    } else playClip(line, speech, drillHandled)
+  }
+
+  private fun playClip(line: Int?, speech: String, drillHandled: Boolean? = null) {
     stopAudio()
+    val choice = WarningAudio.select(line, speech, drillHandled) { name ->
+      context.resources.getIdentifier(name, "raw", context.packageName)
+    }
+    if (choice.resourceId == 0) { speak(choice.speech); return }
     val attrs = AudioAttributes.Builder()
       .setUsage(AudioAttributes.USAGE_ALARM)
       .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH)
       .build()
     val am = context.getSystemService(AudioManager::class.java)
     val mp = runCatching {
-      MediaPlayer.create(context, R.raw.shield_warning_hi, attrs, am?.generateAudioSessionId() ?: 0)
+      MediaPlayer.create(context, choice.resourceId, attrs, am?.generateAudioSessionId() ?: 0)
     }.getOrNull()
-    if (mp == null) { speak(speech); return }
+    if (mp == null) { speak(choice.speech); return }
     player = mp
-    mp.setOnCompletionListener {
-      it.release(); player = null
-      if (CLIP_IS_PLACEHOLDER) speak(speech)
+    mp.setOnCompletionListener { it.release(); if (player === it) player = null }
+    mp.setOnErrorListener { p, _, _ ->
+      p.release()
+      if (player === p) { player = null; speak(choice.speech) }
+      true
     }
-    mp.setOnErrorListener { p, _, _ -> p.release(); player = null; speak(speech); true }
-    mp.start()
+    runCatching { mp.start() }.onFailure {
+      if (player === mp) { player = null; mp.release(); speak(choice.speech) }
+    }
   }
 
-  /** TextToSpeech hi-IN fallback (and the real message while the clip is a placeholder). */
+  fun stopWarningAudio() {
+    main.post { audioGeneration++; pendingSpeech = null; stopAudio() }
+  }
+
+  /** TextToSpeech hi-IN fallback of the same warning line. */
   private fun speak(text: String) {
     tts?.shutdown()
     var engine: TextToSpeech? = null
     engine = TextToSpeech(context) { status ->
       val t = engine ?: return@TextToSpeech
+      if (tts !== t) { t.shutdown(); return@TextToSpeech }
       if (status != TextToSpeech.SUCCESS) { t.shutdown(); return@TextToSpeech }
       t.language = Locale("hi", "IN")
       t.setAudioAttributes(
@@ -259,15 +291,15 @@ internal class AlertController(
   }
 
   private fun stopAudio() {
-    player?.runCatching { stop(); release() }
+    player?.let { p -> runCatching { p.stop() }; runCatching { p.release() } }
     player = null
+    tts?.shutdown()
+    tts = null
   }
 
   companion object {
     const val HEADLINE = "रुकिए! यह धोखा हो सकता है।"
     const val DEFAULT_REASON = "किसी को OTP, PIN या पैसे मत दीजिए।"
-    /** Flip to false once a real recorded Hindi clip replaces res/raw/shield_warning_hi.wav. */
-    const val CLIP_IS_PLACEHOLDER = true
     val VIBRATION = longArrayOf(0, 600, 250, 600, 250, 900)
   }
 }

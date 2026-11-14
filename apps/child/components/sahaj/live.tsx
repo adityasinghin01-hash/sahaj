@@ -1,3 +1,4 @@
+import { Core2Links } from '../core2/links';
 import * as React from 'react';
 import { AlarmSettings } from './alarm-settings';
 import { Linking, Platform, Share, Switch, View } from 'react-native';
@@ -122,12 +123,8 @@ export function LiveHome() {
         ) : null}
       </Section>
       <Btn label="Open Shield" onPress={() => router.push('/shield')} />
+      <Core2Links />
       <LiveSessionBar />
-      <Section title="Core 2 · Demo">
-        <T v="small">Safety and Circle screens still use synthetic demo data.</T>
-        <Btn label="Open safety demo" kind="ghost" onPress={() => router.push('/safe')} />
-        <Btn label="Open demo controls" kind="ghost" onPress={() => router.push('/demo')} />
-      </Section>
     </Screen>
   );
 }
@@ -656,10 +653,12 @@ export function SignInScreen() {
       {error ? <Notice>{error}</Notice> : null}
       {pushStatus ? <Notice tone="sand">{pushStatus}</Notice> : null}
       <Notice tone="sand">
-        Use an access token, never a server secret. {storage === 'secure'
+        Use an access token, never a server secret.{' '}
+        {storage === 'secure'
           ? 'This phone stores your session securely.'
-          : storage === 'browser' ? 'Web sessions use browser storage.'
-          : 'Secure storage is unavailable; this session lasts until the app closes.'}
+          : storage === 'browser'
+            ? 'Web sessions use browser storage.'
+            : 'Secure storage is unavailable; this session lasts until the app closes.'}
       </Notice>
     </Screen>
   );

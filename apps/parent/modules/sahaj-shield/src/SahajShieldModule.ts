@@ -51,6 +51,8 @@ declare class SahajShieldModule extends NativeModule<SahajShieldModuleEvents> {
   /** Real installed-app scan now; resolves the number of NEW flags (0 when the switch is off). */
   runInstalledAppScan(): Promise<number>;
   testRedScreen(): boolean;
+  playWarningLine(line: number, drillHandled: boolean | null): void;
+  stopWarningAudio(): void;
   /** Setup wizard: Settings → Usage access. Returns which screen opened. */
   openUsageAccessSettings(): string;
   /** Setup wizard: Settings → Notification access. Returns which screen opened. */

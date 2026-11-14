@@ -4,6 +4,8 @@ import { Platform } from 'react-native';
 export interface Session {
   url: string;
   token: string;
+  /** Required by Core 2 for accounts with multiple active families. */
+  familyId?: string;
 }
 type State = { ready: boolean; session: Session | null; storage: 'memory' | 'secure' | 'browser' };
 const KEY = 'sahaj.lab.session.v1';
@@ -62,7 +64,10 @@ export function validateLabSession(input: Session): Session {
   const token = input.token.trim();
   if (!/^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/.test(token))
     throw new Error('Paste an access token from the lab mint script.');
-  return { url: url.origin, token };
+  const familyId = input.familyId?.trim();
+  if (familyId && !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(familyId))
+    throw new Error('Enter a valid family UUID.');
+  return { url: url.origin, token, ...(familyId ? { familyId } : {}) };
 }
 export function saveSession(input: Session | null): Promise<void> {
   const session = input ? validateLabSession(input) : null;
@@ -99,11 +104,15 @@ export function useSession() {
   const snapshot = React.useSyncExternalStore(
     (fn) => {
       listeners.add(fn);
-      return () => { listeners.delete(fn); };
+      return () => {
+        listeners.delete(fn);
+      };
     },
     () => state,
     () => state
   );
-  React.useEffect(() => { void initializeSession(); }, []);
+  React.useEffect(() => {
+    void initializeSession();
+  }, []);
   return snapshot;
 }

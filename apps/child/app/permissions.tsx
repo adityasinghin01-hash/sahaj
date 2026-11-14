@@ -1,3 +1,5 @@
+import { Core2Gate } from '@/components/core2/common';
+import { LivePreferences } from '@/components/core2/reassurance';
 import { Icon } from '@/components/ui/icon';
 import { Switch } from '@/components/ui/switch';
 import { Card, Chip, Section, Screen, T, TopBar } from '@/components/sahaj/ui';
@@ -6,7 +8,7 @@ import { Hand, ShieldCheck } from 'lucide-react-native';
 import * as React from 'react';
 import { View } from 'react-native';
 
-export default function Permissions() {
+function DemoPermissions() {
   const demo = useDemo();
   return (
     <Screen>
@@ -69,4 +71,8 @@ export default function Permissions() {
       </Card>
     </Screen>
   );
+}
+
+export default function Permissions() {
+  return <Core2Gate title="preferences" demo={<DemoPermissions />}><LivePreferences /></Core2Gate>;
 }
