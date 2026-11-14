@@ -82,3 +82,4 @@ Then call `call_transfer` to `@bridge_to`.
 3. **Vendor asks who is paying:**
    - User: "Haan bhej dunga 5 baje, 500 rupaye. Paise kaise milenge?"
    - Aasha: "Delivery par cash ya Riya ko UPI link se payment hoga." → `vendor_confirm` (`yes`, `5:00 PM`, `500`).
+

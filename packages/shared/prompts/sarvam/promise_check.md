@@ -81,3 +81,4 @@ Then call `call_transfer` to `@bridge_to`.
 3. **Emergency worsened while waiting:**
    - User: "Nahi aaye, aur mujhe bahut chakkar aa rahe hain."
    - Expected tools: `promise_result` (`arrived: false`) + `raise_urgent` → Aasha says "Pehle 112 lagaiye…".
+

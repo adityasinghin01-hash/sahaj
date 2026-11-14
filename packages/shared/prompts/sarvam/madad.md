@@ -104,3 +104,4 @@ Then call `call_transfer` to `@bridge_to`.
    - Aasha: "Kya main dawa mangwana band kar doon? Haan boliye."
    - User: "Haan."
    - Expected tools: `cancel_permission`.
+

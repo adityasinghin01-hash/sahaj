@@ -14,6 +14,16 @@
   { "id": "s13", "label": "scam", "expect": "red", "sender": "9123123123", "text": "Dear user install the SBI YONO reward app now: http://sbi-rewards.top/yono.apk" },
   { "id": "s14", "label": "scam", "expect": "red", "sender": "VM-SBIBNK-S", "text": "Your SBI account blocked. Install AnyDesk and share the OTP, urgent: onlinesbi-login.xyz/verify" },
   { "id": "s15", "label": "scam", "expect": "red", "sender": "9555566666", "text": "Delhivery parcel on hold, incomplete address. Update now: delhivery-redelivery.top/addr" },
+  { "id": "s16", "label": "scam", "expect": "red", "sender": "9820011223", "text": "घर बैठे कमाएं! रोज 3000 रुपये, वीडियो लाइक करें और प्रीपेड टास्क पूरा करें: bit.ly/task99" },
+  { "id": "s17", "label": "scam", "expect": "red", "sender": "7788990011", "text": "Telegram task job! Subscribe and earn daily, deposit to withdraw profit. Join rb.gy/earn2" },
+  { "id": "s18", "label": "scam", "expect": "red", "sender": "9112233445", "text": "मम्मी मेरा नया नंबर है, एक्सीडेंट हो गया है और अस्पताल में भर्ती हूं। जल्दी पैसे भेजो!" },
+  { "id": "s19", "label": "scam", "expect": "red", "sender": "8999001122", "text": "Papa this is my new number, my phone is damaged. I am in trouble in the hospital, send money urgently." },
+  { "id": "s20", "label": "scam", "expect": "red", "sender": "9876012345", "text": "शादी का कार्ड और निमंत्रण डाउनलोड करें, शादी कार्ड ऐप: http://shaadi-card.top/invite.apk" },
+  { "id": "s21", "label": "scam", "expect": "red", "sender": "8001122334", "text": "Please install wedding card and download invitation app for Raju's marriage: http://invite-2026.xyz/card.apk" },
+  { "id": "s22", "label": "scam", "expect": "red", "sender": "9765432100", "text": "Paytm cashback paane ke liye QR scan karein aur refund ke liye PIN darj karein" },
+  { "id": "s23", "label": "scam", "expect": "red", "sender": "9822334455", "text": "Rs 1500 cashback credited! Claim your cashback and enter UPI PIN to receive money: cutt.ly/cb88" },
+  { "id": "s24", "label": "scam", "expect": "red", "sender": "9011223344", "text": "आपका निजी वीडियो हमारे पास है। पैसे भेजो वरना वीडियो वायरल और परिवार को भेज देंगे, बदनाम कर देंगे।" },
+  { "id": "s25", "label": "scam", "expect": "red", "sender": "8800991122", "text": "We have your private video. Pay now to delete your video or we will upload on YouTube and share with your family." },
 
   { "id": "n01", "label": "normal", "expect": "green", "sender": "AX-HDFCBK-S", "text": "123456 is your OTP for login to HDFC Bank NetBanking. Do not share it with anyone. Bank never asks for OTP." },
   { "id": "n02", "label": "normal", "expect": "green", "sender": "VM-SBIBNK-S", "text": "Dear Customer, Rs.2,500.00 debited from A/c XX1234 on 12-Nov-26 trf to RAMESH. Not you? Call 1800 1234." },
@@ -29,6 +39,8 @@
   { "id": "n12", "label": "normal", "expect": "green", "sender": "QP-AIRTEL-S", "text": "Your Airtel plan of 1.5GB/day expires on 20-Nov. Recharge at airtel.in" },
   { "id": "n13", "label": "normal", "expect": "green", "sender": "9810000004", "text": "Eid Mubarak! Kal humare ghar dawat hai, zaroor aana." },
   { "id": "n14", "label": "normal", "expect": "green", "sender": "AD-PAYTMB-S", "text": "918273 is your Paytm verification code. Do not share this code with anyone." },
-  { "id": "n15", "label": "normal", "expect": "green", "sender": "9810000005", "text": "Shaadi ka invitation kal bhej dunga. Tum sab zaroor aana, 25 tarikh ko hai." }
+  { "id": "n15", "label": "normal", "expect": "green", "sender": "9810000005", "text": "Shaadi ka invitation kal bhej dunga. Tum sab zaroor aana, 25 tarikh ko hai." },
+  { "id": "n16", "label": "normal", "expect": "green", "sender": "VM-TCSHRD-S", "text": "Congratulations! Your interview for Software Engineer is scheduled tomorrow at 11 AM. No fee is charged by TCS." },
+  { "id": "n17", "label": "normal", "expect": "green", "sender": "9810000006", "text": "Namaste buaji, 18 tarikh ko Neha ki shaadi hai, parivar ke saath aashirwad dene zaroor aana." }
 ]
 

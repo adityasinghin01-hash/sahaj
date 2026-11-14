@@ -101,3 +101,4 @@ Then immediately invoke `call_transfer` to `@bridge_to` (defaults to Riya's numb
 3. **Danger mid-check-in:**
    - User: "Aasha, main abhi bathroom mein gir gayi hoon, ghutne mein bahut dard hai."
    - Expected tools: `raise_urgent`, Aasha immediately says "Pehle 112 lagaiye. Main abhi sabko bata rahi hoon."
+

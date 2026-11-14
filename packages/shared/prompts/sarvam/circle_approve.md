@@ -83,3 +83,4 @@ Then call `call_transfer` to `@bridge_to`.
 3. **Maa hesitates / unsure:**
    - User: "Pata nahi, Riya se pooch kar bataungi."
    - Expected tools: `circle_approve` (`approved: false`) → Aasha reassures Maa they will NOT be added right now and tells Riya.
+
