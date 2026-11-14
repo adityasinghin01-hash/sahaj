@@ -165,7 +165,10 @@ export function createSarvamHandler(getPorts: () => SarvamPorts, env: Readonly<R
         timer = setTimeout(() => { abandoned = true; reject(new Error('tool_deadline')); }, 4500);
       })]);
       return Response.json({ line_hi: spoken(name as ToolName, result), result: publicResult(result), transfer: false }, { headers: { 'cache-control': 'no-store' } });
-    } catch { return response(200, 'unavailable'); }
+    } catch (error) {
+      console.error(`[sarvam-tool] ${name} unavailable: ${error instanceof Error ? error.message : 'unknown'}`);
+      return response(200, 'unavailable');
+    }
     finally { if (timer) clearTimeout(timer); }
   };
 }
