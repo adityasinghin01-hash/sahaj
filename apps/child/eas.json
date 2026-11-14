@@ -8,11 +8,9 @@
       "distribution": "internal",
       "node": "22.23.2",
       "pnpm": "12.18.0",
-      "env": {
-        "EXPO_PUBLIC_SAHAJ_API_URL": ""
-      },
       "android": {
-        "buildType": "apk"
+        "buildType": "apk",
+        "credentialsSource": "local"
       }
     }
   }

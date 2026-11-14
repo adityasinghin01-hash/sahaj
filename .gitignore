@@ -14,3 +14,5 @@ ios/
 coverage/
 *.tsbuildinfo
 next-env.d.ts
+credentials.json
+**/credentials.json
