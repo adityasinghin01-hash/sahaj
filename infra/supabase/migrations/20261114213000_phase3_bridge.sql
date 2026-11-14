@@ -17,19 +17,18 @@ revoke all on function sahaj_private.dispatch_route(text) from public,anon,authe
 grant execute on function sahaj_private.dispatch_route(text) to service_role;
 
 -- ---------------------------------------------------------------- shared recording consent policy
--- record_audio uses Phase 2's effective call_recording consent function so the enqueue and the recording worker share one
--- policy: exact-call rows plus global refusals, newest wins, ties refuse, no age bound. voice_share keeps the documented
--- max age. Definer, because the Phase 2 function is not executable by service_role.
+-- record_audio uses Phase 2's call_recording_consent, which RETURNS TABLE(id uuid, granted_at timestamptz): exact-call rows
+-- plus global refusals, newest wins, ties refuse, shared consent_max_age(). No row means no effective grant (fail closed).
+-- voice_share keeps consent_current. Definer, because the Phase 2 function is not executable by service_role.
 create or replace function sahaj_private.request_consent(p_family_id uuid,p_subject uuid,p_action text,p_target text) returns timestamptz
 language plpgsql stable security definer set search_path='' as $$
-declare cid uuid;
+declare granted timestamptz;
 begin
   if p_subject is null or p_target is null then return null; end if;
   if p_action='record_audio' then
     if p_target !~ '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$' then return null; end if;
-    cid:=sahaj_private.call_recording_consent(p_family_id,p_target::uuid,p_subject);
-    if cid is null then return null; end if;
-    return (select c.created_at from public.consents c where c.id=cid and c.family_id=p_family_id);
+    select c.granted_at into granted from sahaj_private.call_recording_consent(p_family_id,p_target::uuid,p_subject) c limit 1;
+    return granted; -- null when the function returned no row
   elsif p_action='share_data' then
     return sahaj_private.consent_current(p_family_id,p_subject,'voice_share:'||p_target);
   end if;
@@ -110,37 +109,129 @@ begin
     'status',e.metadata->>'status','metadata',e.metadata,'payloadCiphertext',e.payload_ciphertext);
 end$$;
 
--- ---------------------------------------------------------------- dispatch-time authorization recheck (worker tick boundary)
--- Read-only recheck of current facts for a claimed outbox row. The dispatch worker maps `ok` to an ActionAuthorization.
+-- Current authorization facts for one outbox row at time p_at, as a refusal reason (null = authorized). Shared by the
+-- read-only recheck below and the dispatch_ledger insert trigger, so the claim itself is the authoritative check.
+create function sahaj_private.dispatch_authorization_problem(p_outbox_id uuid,p_at timestamptz) returns text
+language plpgsql stable security definer set search_path='' as $$
+declare o public.outbox;r public.action_requests;b public.dispatch_bindings;q public.permissions;granted integer;
+begin
+  select * into o from public.outbox where id=p_outbox_id;
+  if o.id is null then return 'unknown_outbox'; end if;
+  select * into r from public.action_requests where id=o.action_request_id and family_id=o.family_id;
+  select * into b from public.dispatch_bindings where outbox_id=o.id and family_id=o.family_id;
+  if r.id is null or b.outbox_id is null or r.status<>'executed' or r.consumed_at is null or r.action<>o.action then return 'request_or_binding_invalid'; end if;
+  if r.expires_at<=p_at then return 'request_expired'; end if;
+  if not sahaj_private.principal_active(o.family_id,r.principal_id) or not sahaj_private.person_in_family(o.family_id,b.person_id)
+    or not sahaj_private.person_in_family(o.family_id,r.person_id) then return 'principal_or_person_inactive'; end if;
+  select * into q from public.permissions p where p.id=o.permission_id and p.family_id=o.family_id;
+  if q.id is null or q.decision<>'allow' or q.revoked_at is not null or not (p_at>=q.valid_from and p_at<q.expires_at
+    and p_at>=q.period_start and p_at<q.period_end) then return 'permission_not_live'; end if;
+  if sahaj_private.permission_block(o.family_id,r.principal_id,r.person_id,r.action) is not null then return 'permission_blocked'; end if;
+  if q.two_person_required or r.two_person_required then
+    if exists(select 1 from public.action_answers a where a.family_id=o.family_id and a.action_request_id=r.id and not a.answer) then
+      return 'approval_refused';
+    end if;
+    -- Approvals count only while each approver's membership is still current and eligible.
+    select count(distinct a.approver_person_id) into granted from public.action_answers a
+      join public.family_memberships m on m.family_id=a.family_id and m.person_id=a.approver_person_id
+        and m.revoked_at is null and m.role in ('parent','child')
+      where a.family_id=o.family_id and a.action_request_id=r.id and a.answer
+        and a.answered_at>=r.created_at and a.answered_at<r.expires_at and a.answered_at<=p_at;
+    if granted<2 then return 'approval_no_longer_valid'; end if;
+  end if;
+  if r.action in ('record_audio','share_data') and sahaj_private.request_consent(o.family_id,r.consent_subject_id,r.action,r.target_id) is null then
+    return 'consent_required';
+  end if;
+  if o.action='urgent_responder' and (b.assignment_id is null or not exists(select 1 from public.assignments a
+      where a.id=b.assignment_id and a.family_id=o.family_id and a.status='offered' and a.expires_at>p_at)) then
+    return 'assignment_not_offered';
+  end if;
+  return null;
+end$$;
+revoke all on function sahaj_private.dispatch_authorization_problem(uuid,timestamptz) from public,anon,authenticated;
+grant execute on function sahaj_private.dispatch_authorization_problem(uuid,timestamptz) to service_role;
+
+-- Read-only recheck for the dispatch worker's authorizer (fast refusal before any ledger claim). Not authoritative on its own.
 create function public.recheck_dispatch_authorization(p_outbox_id uuid,p_lease_token uuid) returns jsonb
 language plpgsql stable security invoker set search_path='' as $$
-declare o public.outbox;r public.action_requests;b public.dispatch_bindings;t timestamptz:=clock_timestamp();
+declare o public.outbox;b public.dispatch_bindings;t timestamptz:=clock_timestamp();problem text;
 begin
   select * into o from public.outbox where id=p_outbox_id;
   if o.id is null or o.status<>'processing' or o.lease_token is distinct from p_lease_token or o.lease_until<=t then
     return jsonb_build_object('ok',false,'reason','stale_outbox_lease');
   end if;
-  select * into r from public.action_requests where id=o.action_request_id and family_id=o.family_id;
+  problem:=sahaj_private.dispatch_authorization_problem(o.id,t);
+  if problem is not null then return jsonb_build_object('ok',false,'reason',problem); end if;
   select * into b from public.dispatch_bindings where outbox_id=o.id and family_id=o.family_id;
-  if r.id is null or b.outbox_id is null or r.status<>'executed' or r.consumed_at is null or r.action<>o.action
-    or not sahaj_private.principal_active(o.family_id,r.principal_id)
-    or not sahaj_private.person_in_family(o.family_id,b.person_id) or not sahaj_private.person_in_family(o.family_id,r.person_id) then
-    return jsonb_build_object('ok',false,'reason','request_or_binding_invalid');
-  end if;
-  -- The permission that authorized this command must still be live and unrevoked (a revocation after commit stops fresh attempts).
-  if not exists(select 1 from public.permissions q where q.id=o.permission_id and q.family_id=o.family_id and q.decision='allow'
-      and q.revoked_at is null and t>=q.valid_from and t<q.expires_at) then
-    return jsonb_build_object('ok',false,'reason','permission_not_live');
-  end if;
-  if sahaj_private.permission_block(o.family_id,r.principal_id,r.person_id,r.action) is not null then
-    return jsonb_build_object('ok',false,'reason','permission_blocked');
-  end if;
-  if r.action in ('record_audio','share_data') and sahaj_private.request_consent(o.family_id,r.consent_subject_id,r.action,r.target_id) is null then
-    return jsonb_build_object('ok',false,'reason','consent_required');
-  end if;
   return jsonb_build_object('ok',true,'personId',b.person_id,'provider',b.provider,'providerAction',b.action,'callId',b.call_id,
     'domainAction',o.action,'incidentId',b.incident_id,'assignmentId',b.assignment_id);
 end$$;
+
+-- Atomic with the claim: Phase 2's claim_dispatch inserts the ledger row inside its own transaction; this trigger runs in that
+-- same transaction, takes the shared per-family authorization lock (the one every revocation writer takes), reads the clock
+-- AFTER the lock, and refuses (42501, nothing inserted, no provider call) if authorization is no longer current. A revocation
+-- therefore either commits before the claim (claim refused) or waits until the claim commits (dispatch was authorized).
+create function sahaj_private.dispatch_ledger_authorize() returns trigger language plpgsql security definer set search_path='' as $$
+declare problem text;
+begin
+  perform sahaj_private.lock_family_authorization(new.family_id);
+  problem:=sahaj_private.dispatch_authorization_problem(new.outbox_id,clock_timestamp());
+  if problem is not null then raise exception 'dispatch_not_authorized:%',problem using errcode='42501'; end if;
+  return new;
+end$$;
+revoke all on function sahaj_private.dispatch_ledger_authorize() from public,anon,authenticated,service_role;
+create trigger dispatch_ledger_authorize before insert on public.dispatch_ledger for each row execute function sahaj_private.dispatch_ledger_authorize();
+
+-- ---------------------------------------------------------------- delivery observation: acceptance is authoritative for urgent
+-- A verified Twilio Gather acceptance produces responder.accepted proof, never a delivered proof (a call cannot prove a message
+-- was heard). For urgent_responder, outbox_acceptance (normalized proof + ledger + binding + assignment + account) completes the
+-- transition by itself. Delivery proof still applies to every other action.
+create or replace function public.observe_delivery(p_family_id uuid,p_job_id uuid,p_outbox_id uuid) returns jsonb
+language plpgsql stable security invoker set search_path='' as $$
+declare o public.outbox;proof text;
+begin
+  select * into o from public.outbox where id=p_outbox_id and family_id=p_family_id and workflow_job_id=p_job_id;
+  if o.id is null then return jsonb_build_object('verified',false,'status','pending','responderAccepted',false); end if;
+  if o.action='urgent_responder' and sahaj_private.outbox_acceptance(o.id) then
+    return jsonb_build_object('verified',true,'status','delivered','responderAccepted',true);
+  end if;
+  proof:=sahaj_private.outbox_proof(o.id);
+  if proof='not_sent' or o.status='dead' then
+    return jsonb_build_object('verified',true,'status','failed','responderAccepted',false);
+  elsif proof='delivered' then
+    return jsonb_build_object('verified',true,'status','delivered','responderAccepted',false);
+  end if;
+  return jsonb_build_object('verified',false,'status','pending','responderAccepted',false);
+end$$;
+-- Wake only on new NORMALIZED evidence (raw provider callbacks and forged rows never schedule work). Same CAS as before.
+create or replace function public.wake_ready_interrupted_jobs(p_limit integer default 20) returns integer
+language plpgsql security invoker set search_path='' as $$
+declare woken integer;
+begin
+  if p_limit is null or p_limit not between 1 and 100 then raise exception 'invalid_wake_options' using errcode='22023'; end if;
+  with cand as (
+    select j.id,j.interrupt_ref from public.workflow_jobs j
+    where j.state='interrupted' and j.interrupt_ref is not null and j.workflow_kind='core1.atlas' and (
+      (j.interrupt_ref like 'delivery_pending:%' and exists(select 1 from public.outbox o
+        where o.workflow_job_id=j.id and o.family_id=j.family_id and (
+          o.status='dead' or sahaj_private.outbox_proof(o.id)='not_sent'
+          or (o.action<>'urgent_responder' and sahaj_private.outbox_proof(o.id)='delivered')
+          or (o.action='urgent_responder' and (sahaj_private.outbox_acceptance(o.id)
+            or exists(select 1 from public.raw_events e where e.family_id=o.family_id and e.status='processed' and e.normalized_proof
+              and e.event_type in ('delivery.confirmed','delivery.not_sent','responder.accepted')
+              and e.metadata->>'outbox_id'=o.id::text and j.interrupted_at is not null and e.received_at>j.interrupted_at))))))
+      or (j.interrupt_ref like 'review_required:%' and exists(select 1 from public.action_requests r
+        where r.workflow_job_id=j.id and r.family_id=j.family_id and r.consumed_at is null and r.expires_at>now()
+          and (r.status='approved' or (select count(distinct a.approver_person_id) from public.action_answers a
+            where a.family_id=r.family_id and a.action_request_id=r.id and a.answer)>=2))))
+    order by j.created_at for update skip locked limit p_limit)
+  update public.workflow_jobs j set state='pending',interrupt_ref=null,retry_at=now(),attempt_count=0
+    from cand where j.id=cand.id and j.state='interrupted' and j.interrupt_ref=cand.interrupt_ref;
+  get diagnostics woken=row_count;
+  return woken;
+end$$;
+-- Replaces the 10-argument form (adds p_assignment_id). Dropped first so no ambiguous overload exists.
+drop function public.enqueue_authorized_command(uuid,uuid,uuid,uuid,text,text,text,text,text,uuid);
 create function public.enqueue_authorized_command(p_family_id uuid,p_job_id uuid,p_lease_token uuid,p_action_request_id uuid,
   p_action text,p_dedupe_key text,p_payload_ciphertext text,p_payload_hash text,p_revision text,p_incident_id uuid default null,p_assignment_id uuid default null) returns jsonb
 language plpgsql security invoker set search_path='' as $$
@@ -270,7 +361,6 @@ begin
 end$$;
 
 -- ---------------------------------------------------------------- privileges
-drop function public.enqueue_authorized_command(uuid,uuid,uuid,uuid,text,text,text,text,text,uuid);
 revoke all on function public.load_job_event(uuid,uuid,uuid),public.recheck_dispatch_authorization(uuid,uuid),
   public.enqueue_authorized_command(uuid,uuid,uuid,uuid,text,text,text,text,text,uuid,uuid) from public,anon,authenticated;
 grant execute on function public.load_job_event(uuid,uuid,uuid),public.recheck_dispatch_authorization(uuid,uuid),

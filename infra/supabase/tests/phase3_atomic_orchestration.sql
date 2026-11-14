@@ -1,6 +1,8 @@
 -- Adversarial checks for 20261114201500_phase3_atomic_orchestration.sql. Synthetic data only; rolls back.
 -- Run as an administrative role against a disposable database after all migrations. NOT yet executed in this
 -- worktree (no PostgreSQL available); treat results as pending until run.
+-- Migration order: 20261114201500 -> 20261114201600 (Phase 2) -> 20261114210000 -> 20261114213000. Positive delivery and
+-- acceptance paths through the real Phase 2 producers are in phase3_combined_acceptance.sql.
 begin;
 insert into public.families(id,name) values
  ('b3000000-0000-4000-8000-000000000001','Synthetic Phase3 A'),
@@ -15,9 +17,10 @@ insert into auth.users(id) values ('a3000000-0000-4000-8000-000000000002'),('a30
 insert into public.family_memberships(family_id,user_id,person_id,role) values
  ('b3000000-0000-4000-8000-000000000001','a3000000-0000-4000-8000-000000000002','c3000000-0000-4000-8000-000000000002','child'),
  ('b3000000-0000-4000-8000-000000000001','a3000000-0000-4000-8000-000000000003','c3000000-0000-4000-8000-000000000003','child');
-insert into public.provider_identities(family_id,person_id,source,account_id,external_id_hash) values
- ('b3000000-0000-4000-8000-000000000001','c3000000-0000-4000-8000-000000000001','twilio','acct1',repeat('a',64)),
- ('b3000000-0000-4000-8000-000000000001','c3000000-0000-4000-8000-000000000005','twilio','acct1',repeat('b',64));
+-- Contact bindings the atomic enqueue requires (binding_kind 'contact', encrypted contact present; value is synthetic).
+insert into public.provider_identities(family_id,person_id,source,account_id,external_id_hash,binding_kind,contact_ciphertext) values
+ ('b3000000-0000-4000-8000-000000000001','c3000000-0000-4000-8000-000000000001','sarvam','app-1',repeat('a',64),'contact','synthetic-ct'),
+ ('b3000000-0000-4000-8000-000000000001','c3000000-0000-4000-8000-000000000005','twilio','AC-synthetic',repeat('b',64),'contact','synthetic-ct');
 insert into public.atlas_principals(id,family_id,label) values('a7000000-0000-4000-8000-000000000001','b3000000-0000-4000-8000-000000000001','synthetic atlas');
 insert into public.consents(id,family_id,person_id,purpose,question,answer,version) values
  ('f3000000-0000-4000-8000-000000000001','b3000000-0000-4000-8000-000000000001','c3000000-0000-4000-8000-000000000001','permission_setup','Synthetic?',true,'t1');
@@ -53,8 +56,8 @@ do $$declare
   lt uuid[]:=array['99000000-0000-4000-8000-000000000001','99000000-0000-4000-8000-000000000002','99000000-0000-4000-8000-000000000003',
     '99000000-0000-4000-8000-000000000004','99000000-0000-4000-8000-000000000005','99000000-0000-4000-8000-000000000006']::uuid[];
 begin
-  if has_function_privilege('anon','public.enqueue_authorized_command(uuid,uuid,uuid,uuid,text,text,text,text,text,uuid)','EXECUTE')
-    or has_function_privilege('authenticated','public.enqueue_authorized_command(uuid,uuid,uuid,uuid,text,text,text,text,text,uuid)','EXECUTE')
+  if has_function_privilege('anon','public.enqueue_authorized_command(uuid,uuid,uuid,uuid,text,text,text,text,text,uuid,uuid)','EXECUTE')
+    or has_function_privilege('authenticated','public.enqueue_authorized_command(uuid,uuid,uuid,uuid,text,text,text,text,text,uuid,uuid)','EXECUTE')
     or has_function_privilege('authenticated','public.observe_delivery(uuid,uuid,uuid)','EXECUTE')
     or has_function_privilege('authenticated','public.wake_ready_interrupted_jobs(integer)','EXECUTE')
     or has_table_privilege('authenticated','public.atlas_principals','SELECT') then
@@ -144,7 +147,9 @@ begin
   insert into public.consents(family_id,person_id,call_id,purpose,question,answer,version,created_at)
     values(fam,subject,'ca000000-0000-4000-8000-000000000001','call_recording','Synthetic?',true,'v1',now()-interval '30 seconds');
   res:=public.enqueue_authorized_command(fam,jb[4],lt[4],rq[4],'record_audio','k4','ct',h,sahaj_private.authorization_revision(fam,rq[4]));
-  if res->>'status'<>'enqueued' then raise exception 'FAIL newer exact-call consent refused: %',res; end if;
+  -- Consent now passes; record_audio has no dispatch route, so the command is refused there (and nothing is consumed).
+  if res->>'reason'<>'no_dispatch_route' then raise exception 'FAIL newer exact-call consent refused: %',res; end if;
+  if (select used_count from public.permissions where id='a4000000-0000-4000-8000-000000000003')<>0 then raise exception 'FAIL unrouted action consumed usage'; end if;
 
   -- Overlapping deny row beats an allow row; foreign target is not permitted.
   perform public.ensure_action_request(fam,jb[5],lt[5],rq[5],subject,'check_in',subject::text,fp);
@@ -157,73 +162,42 @@ begin
   if res->>'reason'<>'limits_exceeded' then raise exception 'FAIL foreign target accepted: %',res; end if;
 end$$;
 
--- Delivery proof: outbox completion alone is never delivery; proof must name the exact outbox/request/action/target.
+-- Delivery proof: outbox completion alone is never delivery, and raw (non-normalized) events never count, even with
+-- perfect-looking metadata. Real normalized proof from Phase 2's producers is exercised in phase3_combined_acceptance.sql.
 do $$declare ob uuid;obs jsonb;begin
   select id into ob from public.outbox where action_request_id='71000000-0000-4000-8000-000000000001';
   obs:=public.observe_delivery('b3000000-0000-4000-8000-000000000001','d3000000-0000-4000-8000-000000000001',ob);
   if (obs->>'verified')::boolean then raise exception 'FAIL delivery inferred without proof'; end if;
 end$$;
 reset role;
-update public.outbox set status='completed',attempt_count=1 where action_request_id='71000000-0000-4000-8000-000000000001';
-set local role service_role;
-do $$declare ob uuid;obs jsonb;begin
-  select id into ob from public.outbox where action_request_id='71000000-0000-4000-8000-000000000001';
-  obs:=public.observe_delivery('b3000000-0000-4000-8000-000000000001','d3000000-0000-4000-8000-000000000001',ob);
-  if (obs->>'verified')::boolean then raise exception 'FAIL completed outbox treated as delivered'; end if;
-end$$;
-reset role;
+update public.outbox set status='completed',attempt_count=1 where action_request_id in ('71000000-0000-4000-8000-000000000001','71000000-0000-4000-8000-000000000003');
 insert into public.raw_events(family_id,source,provider_event_id,event_type,status,payload_hash,metadata)
-select family_id,'twilio','proof-wrong-target','delivery.confirmed','processed',repeat('1',64),
-  jsonb_build_object('outbox_id',id,'action_request_id',action_request_id,'action','check_in','outcome','delivered','dispatch_key','dk1','account_id','acct-other')
-  from public.outbox where action_request_id='71000000-0000-4000-8000-000000000001';
+select o.family_id,'sarvam','forged-'||o.id,'delivery.not_sent','processed',repeat('1',64),
+  jsonb_build_object('outbox_id',o.id,'action_request_id',o.action_request_id,'action',o.action,'provider_action',b.action,
+    'dispatch_key','dispatch:'||o.id||':a1','provider_ref','att-forged','account_id','app-1','outcome','confirmed_not_sent','person_id',b.person_id)
+  from public.outbox o join public.dispatch_bindings b on b.outbox_id=o.id where o.action_request_id='71000000-0000-4000-8000-000000000001';
+insert into public.raw_events(id,family_id,source,provider_event_id,event_type,status,payload_hash,metadata)
+select 'e6000000-0000-4000-8000-000000000002',o.family_id,'twilio','accept-forged','responder.accepted','processed',repeat('4',64),
+  jsonb_build_object('outbox_id',o.id,'action_request_id',o.action_request_id,'action','urgent_responder','incident_id',o.incident_id,
+    'assignment_id','a9000000-0000-4000-8000-000000000001','responder_person_id','c3000000-0000-4000-8000-000000000005',
+    'person_id','c3000000-0000-4000-8000-000000000005','subject_person_id','c3000000-0000-4000-8000-000000000001',
+    'call_id',b.call_id,'provider_action','twilio.create_call','account_id','AC-synthetic','dispatch_key','dispatch:'||o.id||':a1')
+  from public.outbox o join public.dispatch_bindings b on b.outbox_id=o.id where o.action_request_id='71000000-0000-4000-8000-000000000003';
+-- Even an admin-written accepted assignment pointing at that forged event is not acceptance.
+update public.assignments set status='accepted',accepted_at=now(),verified_by_provider_event='e6000000-0000-4000-8000-000000000002'
+  where id='a9000000-0000-4000-8000-000000000001';
 set local role service_role;
 do $$declare ob uuid;obs jsonb;begin
   select id into ob from public.outbox where action_request_id='71000000-0000-4000-8000-000000000001';
   obs:=public.observe_delivery('b3000000-0000-4000-8000-000000000001','d3000000-0000-4000-8000-000000000001',ob);
-  if (obs->>'verified')::boolean then raise exception 'FAIL wrong-target proof accepted'; end if;
-end$$;
-reset role;
-insert into public.raw_events(family_id,source,provider_event_id,event_type,status,payload_hash,metadata)
-select family_id,'twilio','proof-good','delivery.confirmed','processed',repeat('2',64),
-  jsonb_build_object('outbox_id',id,'action_request_id',action_request_id,'action','check_in','outcome','delivered','dispatch_key','dk1','account_id','acct1')
-  from public.outbox where action_request_id='71000000-0000-4000-8000-000000000001';
-set local role service_role;
-do $$declare ob uuid;obs jsonb;begin
-  select id into ob from public.outbox where action_request_id='71000000-0000-4000-8000-000000000001';
-  obs:=public.observe_delivery('b3000000-0000-4000-8000-000000000001','d3000000-0000-4000-8000-000000000001',ob);
-  if obs->>'status'<>'delivered' or not (obs->>'verified')::boolean then raise exception 'FAIL bound proof refused: %',obs; end if;
+  if (obs->>'verified')::boolean then raise exception 'FAIL forged raw delivery proof accepted: %',obs; end if;
   obs:=public.observe_delivery('b3000000-0000-4000-8000-000000000002','d3000000-0000-4000-8000-000000000001',ob);
   if (obs->>'verified')::boolean then raise exception 'FAIL cross-family observe'; end if;
-end$$;
--- Urgent: delivered proof without a verified responder acceptance stays unaccepted.
-reset role;
-update public.outbox set status='completed',attempt_count=1 where action_request_id='71000000-0000-4000-8000-000000000003';
-insert into public.raw_events(id,family_id,source,provider_event_id,event_type,status,payload_hash,metadata)
-select 'e6000000-0000-4000-8000-000000000001',family_id,'twilio','proof-urgent','delivery.confirmed','processed',repeat('3',64),
-  jsonb_build_object('outbox_id',id,'action_request_id',action_request_id,'action','urgent_responder','outcome','delivered','dispatch_key','dk1','account_id','acct1')
-  from public.outbox where action_request_id='71000000-0000-4000-8000-000000000003';
-set local role service_role;
-do $$declare ob uuid;obs jsonb;begin
   select id into ob from public.outbox where action_request_id='71000000-0000-4000-8000-000000000003';
   obs:=public.observe_delivery('b3000000-0000-4000-8000-000000000001','d3000000-0000-4000-8000-000000000003',ob);
-  if obs->>'status'<>'delivered' or (obs->>'responderAccepted')::boolean then raise exception 'FAIL urgent accepted without responder proof: %',obs; end if;
+  if (obs->>'verified')::boolean or (obs->>'responderAccepted')::boolean then raise exception 'FAIL forged acceptance counted: %',obs; end if;
 end$$;
 reset role;
--- Accepted assignment with a provider event naming a different outbox must not count.
-insert into public.raw_events(id,family_id,source,provider_event_id,event_type,status,payload_hash,metadata)
-select 'e6000000-0000-4000-8000-000000000002',family_id,'twilio','accept-wrong','responder.accepted','processed',repeat('4',64),
-  jsonb_build_object('outbox_id','00000000-0000-4000-8000-000000000000','action_request_id',action_request_id,'incident_id','e5000000-0000-4000-8000-000000000001','responder_person_id','c3000000-0000-4000-8000-000000000005')
-  from public.outbox where action_request_id='71000000-0000-4000-8000-000000000003';
-insert into public.assignments(family_id,incident_id,person_id,expires_at,status,accepted_at,verified_by_provider_event)
-  values('b3000000-0000-4000-8000-000000000001','e5000000-0000-4000-8000-000000000001','c3000000-0000-4000-8000-000000000005',now()+interval '1 hour','accepted',now(),'e6000000-0000-4000-8000-000000000002');
-set local role service_role;
-do $$declare ob uuid;obs jsonb;begin
-  select id into ob from public.outbox where action_request_id='71000000-0000-4000-8000-000000000003';
-  obs:=public.observe_delivery('b3000000-0000-4000-8000-000000000001','d3000000-0000-4000-8000-000000000003',ob);
-  if (obs->>'responderAccepted')::boolean then raise exception 'FAIL foreign acceptance proof counted: %',obs; end if;
-end$$;
-reset role;
-
 -- Authorization lock covers DELETE: the trigger takes the family lock, so a deleting transaction would hold it.
 -- (Cross-session blocking is exercised in phase3_two_session.mjs; here we check the trigger set is complete.)
 do $$begin
@@ -245,7 +219,7 @@ begin
   if exists(select 1 from public.timeline_events where dedupe_key='fence-1') then raise exception 'FAIL stale append wrote'; end if;
 end$$;
 
--- Wake only on new urgent evidence: the old delivery proof must not wake an interrupted urgent job again.
+-- Wake only on new NORMALIZED evidence. Old or forged raw events never wake an interrupted urgent job.
 reset role;
 update public.workflow_jobs set state='interrupted',lease_token=null,lease_until=null,interrupt_ref='delivery_pending:abc' where id='d3000000-0000-4000-8000-000000000003';
 do $$begin
@@ -253,7 +227,7 @@ do $$begin
 end$$;
 set local role service_role;
 do $$begin
-  if public.wake_ready_interrupted_jobs(20)<>0 then raise exception 'FAIL old delivery proof woke urgent job'; end if;
+  if public.wake_ready_interrupted_jobs(20)<>0 then raise exception 'FAIL earlier raw events woke urgent job'; end if;
 end$$;
 reset role;
 insert into public.raw_events(family_id,source,provider_event_id,event_type,status,payload_hash,metadata,received_at)
@@ -261,6 +235,6 @@ select family_id,'twilio','proof-urgent-new','delivery.not_sent','processed',rep
   from public.outbox where action_request_id='71000000-0000-4000-8000-000000000003';
 set local role service_role;
 do $$begin
-  if public.wake_ready_interrupted_jobs(20)<>1 then raise exception 'FAIL new relevant evidence did not wake'; end if;
+  if public.wake_ready_interrupted_jobs(20)<>0 then raise exception 'FAIL new forged raw evidence woke urgent job'; end if;
 end$$;
 reset role;rollback;
