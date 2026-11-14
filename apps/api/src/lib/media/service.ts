@@ -57,6 +57,12 @@ export function createMediaService(deps: MediaDeps, options: MediaOptions = {}) 
     if (!info) return stop("not_found");
     if (!objectFitsBucket(bucket, info)) return stop("invalid_object");
 
+    // Narrow the check-to-sign gap: storage stat is the slow step, so decide again immediately before signing.
+    // A revocation after this point can still be honoured by an already issued URL for at most `ttl` seconds.
+    try { decision = await deps.authorizeMedia({ ...facts, object: { bucket, path, expiresAt }, now: deps.now().toISOString() }); }
+    catch { return stop("forbidden"); }
+    if (decision !== "allow") return stop("forbidden");
+
     // Lifetime is bounded by the retention deadline, measured after the slow storage call.
     const remaining = Math.floor((expiry - deps.now().getTime()) / 1000);
     const seconds = Math.min(ttl, remaining);
