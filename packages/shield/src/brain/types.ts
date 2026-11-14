@@ -68,6 +68,7 @@ export interface ShieldBrainDeps {
       Promise<{ status: "answered" | "busy" | "no_answer" | "failed" }>;
   };
   scheduler: { after(delayMs: number, name: string, payload: Record<string, unknown>): Promise<unknown> };
+  jobs?: { claim(key: string): Promise<boolean> };
   atlas: { startCircleChain(input: { verdictId: string; familyId: string; parentId: string }): Promise<unknown> };
   /** Signs AND persists this row to the family's timeline. */
   sign(row: TimelineRow): Promise<unknown>;

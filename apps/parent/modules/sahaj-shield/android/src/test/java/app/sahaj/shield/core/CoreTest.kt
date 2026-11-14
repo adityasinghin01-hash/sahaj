@@ -38,12 +38,17 @@ class MaskerTest {
       "A/c XX1234 debited Rs 5,000",
       "ओटीपी ४८२९१३ है", // Devanagari digits
       "id 1234.5678/90",
+      "(123) 456",
+      "(12) 34",
+      "98(76)54",
     )
     for (c in cases) {
       val m = Masker.mask(c)
       assertFalse("$c -> $m", Masker.hasLongDigitRun(m))
-      assertFalse("$c -> $m", Regex("""\p{Nd}(?:[\s\-.,/]*\p{Nd}){3,}""").containsMatchIn(m))
+      assertFalse("$c -> $m", Regex("""\p{Nd}(?:[\s\-.,/()]*\p{Nd}){3,}""").containsMatchIn(m))
     }
+    assertTrue(Masker.hasLongDigitRun("OTP 4 8 2 9"))
+    assertTrue(Masker.hasLongDigitRun("(123) 456"))
   }
 
   @Test fun keepsShortNumbers() {

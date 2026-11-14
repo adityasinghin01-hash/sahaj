@@ -2,10 +2,12 @@ package app.sahaj.shield.rules
 
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.boolean
 import kotlinx.serialization.json.int
 import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
+import kotlinx.serialization.json.long
 import java.util.Locale
 import java.util.regex.Pattern
 
@@ -90,6 +92,53 @@ internal data class P5Config(
     val yellowReason: ReasonText,
 )
 
+internal data class P2Config(
+    val id: String,
+    val level: Level,
+    val scamType: String,
+    val callerTypes: Set<String>,
+    val minDurationMs: Long,
+    val minDurationSeconds: Long,
+    val requireVideoOrWhatsApp: Boolean,
+    val reason: ReasonText,
+)
+
+internal data class P3Config(
+    val id: String,
+    val level: Level,
+    val scamType: String,
+    val playStoreInstallers: Set<String>,
+    val recentInstallHours: Int,
+    val reason: ReasonText,
+)
+
+internal data class P4Config(
+    val id: String,
+    val level: Level,
+    val scamType: String,
+    val packages: Set<String>,
+    val reason: ReasonText,
+)
+
+internal data class P8Config(
+    val id: String,
+    val level: Level,
+    val localOnly: Boolean,
+    val keepHours: Int,
+    val maxNumbers: Int,
+    val reason: ReasonText,
+)
+
+internal data class P9Config(
+    val id: String,
+    val level: Level,
+    val scamType: String,
+    val callerTypes: Set<String>,
+    val pollMs: Long,
+    val packages: Set<String>,
+    val reason: ReasonText,
+)
+
 internal data class ThresholdsConfig(
     val redAt: Int,
     val yellowAt: Int,
@@ -113,6 +162,11 @@ internal class ParsedRules(rulesJson: String) {
     val scriptTypes: Map<String, ScriptTypeConfig>
     val p1: P1Config
     val p5: P5Config
+    val p2: P2Config
+    val p3: P3Config
+    val p4: P4Config
+    val p8: P8Config
+    val p9: P9Config
     val thresholds: ThresholdsConfig
     val reasonsById: Map<String, ReasonText>
 
@@ -256,6 +310,53 @@ internal class ParsedRules(rulesJson: String) {
             redReason = p5Obj.reqObj("red").reqReason("reason"),
             yellowReason = p5Obj.reqObj("yellow").reqReason("reason"),
         )
+        val p2Obj = patternsObj.reqObj("P2")
+        p2 = P2Config(
+            id = p2Obj.reqStr("id"),
+            level = parseLevel(p2Obj.reqStr("level")),
+            scamType = p2Obj.reqStr("scam_type"),
+            callerTypes = p2Obj.reqStrList("caller_types").toSet(),
+            minDurationMs = p2Obj.reqLong("min_duration_ms"),
+            minDurationSeconds = p2Obj.reqLong("min_duration_seconds"),
+            requireVideoOrWhatsApp = p2Obj.reqBool("require_video_or_whatsapp"),
+            reason = p2Obj.reqReason("reason"),
+        )
+        val p3Obj = patternsObj.reqObj("P3")
+        p3 = P3Config(
+            id = p3Obj.reqStr("id"),
+            level = parseLevel(p3Obj.reqStr("level")),
+            scamType = p3Obj.reqStr("scam_type"),
+            playStoreInstallers = p3Obj.reqStrList("play_store_installers").toSet(),
+            recentInstallHours = p3Obj.reqInt("recent_install_hours"),
+            reason = p3Obj.reqReason("reason"),
+        )
+        val p4Obj = patternsObj.reqObj("P4")
+        p4 = P4Config(
+            id = p4Obj.reqStr("id"),
+            level = parseLevel(p4Obj.reqStr("level")),
+            scamType = p4Obj.reqStr("scam_type"),
+            packages = p4Obj.reqStrList("packages").toSet(),
+            reason = p4Obj.reqReason("reason"),
+        )
+        val p8Obj = patternsObj.reqObj("P8")
+        p8 = P8Config(
+            id = p8Obj.reqStr("id"),
+            level = parseLevel(p8Obj.reqStr("level")),
+            localOnly = p8Obj.reqBool("local_only"),
+            keepHours = p8Obj.reqInt("keep_hours"),
+            maxNumbers = p8Obj.reqInt("max_numbers"),
+            reason = p8Obj.reqReason("reason"),
+        )
+        val p9Obj = patternsObj.reqObj("P9")
+        p9 = P9Config(
+            id = p9Obj.reqStr("id"),
+            level = parseLevel(p9Obj.reqStr("level")),
+            scamType = p9Obj.reqStr("scam_type"),
+            callerTypes = p9Obj.reqStrList("caller_types").toSet(),
+            pollMs = p9Obj.reqLong("poll_ms"),
+            packages = p9Obj.reqStrList("packages").toSet(),
+            reason = p9Obj.reqReason("reason"),
+        )
 
         val threshObj = root.reqObj("thresholds")
         val aiRange = threshObj.reqArr("ask_ai_between")
@@ -283,6 +384,11 @@ internal class ParsedRules(rulesJson: String) {
         reasons[p1.id] = p1.reason
         reasons["${p5.id}.red"] = p5.redReason
         reasons["${p5.id}.yellow"] = p5.yellowReason
+        reasons[p2.id] = p2.reason
+        reasons[p3.id] = p3.reason
+        reasons[p4.id] = p4.reason
+        reasons[p8.id] = p8.reason
+        reasons[p9.id] = p9.reason
         reasonsById = reasons
     }
 }
@@ -304,6 +410,8 @@ private fun JsonObject.reqObj(key: String) = getValue(key).jsonObject
 private fun JsonObject.reqArr(key: String) = getValue(key).jsonArray
 private fun JsonObject.reqStr(key: String) = getValue(key).jsonPrimitive.content
 private fun JsonObject.reqInt(key: String) = getValue(key).jsonPrimitive.int
+private fun JsonObject.reqLong(key: String) = getValue(key).jsonPrimitive.long
+private fun JsonObject.reqBool(key: String) = getValue(key).jsonPrimitive.boolean
 private fun JsonObject.reqStrList(key: String) = reqArr(key).map { it.jsonPrimitive.content }
 private fun JsonObject.reqReason(key: String): ReasonText {
     val o = reqObj(key)

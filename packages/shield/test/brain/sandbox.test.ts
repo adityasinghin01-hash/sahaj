@@ -65,4 +65,11 @@ describe("sandboxed link expansion", () => {
   it.each(["file:///etc/passwd", "ftp://example.com/a", "https://user:pass@example.com/"])("refuses unsafe URL %s", async url => {
     await expect(createSandbox({ resolve: resolver, request: transport() }).unshorten(url)).rejects.toThrow();
   });
+  it("rejects IPv6 addresses with zone IDs during validation and DNS resolution", async () => {
+    expect(isPublicAddress("2606:4700:4700::1111%eth0")).toBe(false);
+    const resolve = vi.fn(async () => [{ address: "2606:4700:4700::1111%eth0", family: 6 as const }]);
+    const request = transport();
+    await expect(createSandbox({ resolve, request }).unshorten("https://example.com/")).rejects.toThrow(/non-public/i);
+    expect(request).not.toHaveBeenCalled();
+  });
 });

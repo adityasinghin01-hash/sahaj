@@ -60,3 +60,66 @@ data class TextScore(
 
 data class Span(val start: Int, val end: Int)
 
+sealed interface SignalEvent {
+    val atMs: Long
+
+    data class Sms(
+        override val atMs: Long,
+        val sender: String? = null,
+        val senderType: String? = null,
+        val senderSaved: Boolean = false,
+        val text: String,
+    ) : SignalEvent
+
+    data class Call(
+        override val atMs: Long,
+        val endedAtMs: Long? = null,
+        val number: String? = null,
+        val callerType: String? = null,
+        val savedContact: Boolean = false,
+        val direction: String? = null,
+        val video: Boolean = false,
+        val source: String? = null,
+        val whatsappCallUnsaved: Boolean = false,
+        val durationMs: Long? = null,
+        val cancelled: Boolean = false,
+    ) : SignalEvent
+
+    data class AppOpen(
+        override val atMs: Long,
+        val packageName: String? = null,
+        val onCallWithUnsaved: Boolean = false,
+        val savedContact: Boolean = false,
+        val callerType: String? = null,
+    ) : SignalEvent
+
+    data class Notification(
+        override val atMs: Long,
+        val source: String? = null,
+        val whatsappCallUnsaved: Boolean = false,
+        val callSeconds: Long? = null,
+        val attachmentApk: Boolean = false,
+        val cancelled: Boolean = false,
+        val endedAtMs: Long? = null,
+        val savedContact: Boolean = false,
+        val callerType: String? = null,
+        val text: String? = null,
+    ) : SignalEvent
+
+    data class Install(
+        override val atMs: Long,
+        val packageName: String? = null,
+        val installer: String? = null,
+        val installedHoursAgo: Double? = null,
+        val isSystem: Boolean = false,
+    ) : SignalEvent
+}
+
+data class SequenceVerdict(
+    val level: Level,
+    val scamType: String,
+    val patterns: List<String>,
+    val matchedRules: List<String>,
+    val reasons: List<String>,
+)
+

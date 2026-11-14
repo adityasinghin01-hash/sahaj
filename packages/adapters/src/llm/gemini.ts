@@ -1,6 +1,6 @@
 import { ApiError, type GoogleGenAI, ThinkingLevel } from "@google/genai";
 import { z } from "zod";
-import { ProviderError, type Provider } from "./types.js";
+import { attachUsage, ProviderError, type Provider, type TokenUsage } from "./types.js";
 
 export const GEMINI_MODEL = "gemini-3.8-flash";
 
@@ -24,7 +24,17 @@ export function createGeminiProvider(client: Pick<GoogleGenAI, "models">, model 
       if (reason && reason !== "STOP") throw new ProviderError("refusal");
       const text = response.text;
       if (!text) throw new ProviderError("validation");
-      return { kind: "text", text };
+      const output = { kind: "text" as const, text };
+      const u = response.usageMetadata;
+      if (u) {
+        const usage: TokenUsage = {
+          ...(typeof u.promptTokenCount === "number" ? { inputTokens: u.promptTokenCount } : {}),
+          ...(typeof u.candidatesTokenCount === "number" ? { outputTokens: u.candidatesTokenCount } : {}),
+          ...(typeof u.totalTokenCount === "number" ? { totalTokens: u.totalTokenCount } : {}),
+        };
+        attachUsage(output, usage);
+      }
+      return output;
     } catch (error) {
       if (error instanceof ApiError) {
         throw new ProviderError(error.status === 429 ? "rate_limit"

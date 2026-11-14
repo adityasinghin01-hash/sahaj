@@ -1,6 +1,6 @@
 import Anthropic from "@anthropic-ai/sdk";
 import { zodOutputFormat } from "@anthropic-ai/sdk/helpers/zod";
-import { ProviderError, type Provider } from "./types.js";
+import { attachUsage, ProviderError, type Provider, type TokenUsage } from "./types.js";
 
 export const CLAUDE_MODEL = "claude-opus-5-5";
 
@@ -30,7 +30,19 @@ export function createClaudeProvider(client: Anthropic): Provider {
       if (response.stop_reason === "refusal") throw new ProviderError("refusal");
       if (response.stop_reason === "max_tokens") throw new ProviderError("max_tokens");
       if (parseFailure || response.parsed_output === null) throw new ProviderError("validation");
-      return { kind: "parsed", data: response.parsed_output };
+      const output = { kind: "parsed" as const, data: response.parsed_output };
+      const u = response.usage;
+      if (u && (typeof u.input_tokens === "number" || typeof u.output_tokens === "number")) {
+        const usage: TokenUsage = {
+          ...(typeof u.input_tokens === "number" ? { inputTokens: u.input_tokens } : {}),
+          ...(typeof u.output_tokens === "number" ? { outputTokens: u.output_tokens } : {}),
+          ...(typeof u.input_tokens === "number" && typeof u.output_tokens === "number"
+            ? { totalTokens: u.input_tokens + u.output_tokens }
+            : {}),
+        };
+        attachUsage(output, usage);
+      }
+      return output;
     } catch (error) {
       if (error instanceof ProviderError) throw error;
       if (error instanceof Anthropic.APIConnectionTimeoutError || error instanceof Anthropic.RequestTimeoutError) throw new ProviderError("timeout");

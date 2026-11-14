@@ -73,9 +73,9 @@ describe("understand", () => {
     for (const provider of [claude, muse, gemini]) expect(provider).not.toHaveBeenCalled();
   });
 
-  it("rejects four digits even inside a token, and Unicode decimal digits", async () => {
+  it("rejects four digits even inside a token, separated digits, and Unicode decimal digits", async () => {
     const { router, claude } = setup();
-    for (const input of ["<URL:1234.example>", "OTP १२३४", "OTP ١٢٣٤", "OTP １２３４"]) {
+    for (const input of ["<URL:1234.example>", "OTP 4 8 2 9", "987-654-3210", "(123) 456", "OTP १२३४", "OTP ١٢٣٤", "OTP １２３４"]) {
       expect(await router.understand({ ...request, input })).toMatchObject({ reason: "input_not_masked" });
     }
     expect(claude).not.toHaveBeenCalled();

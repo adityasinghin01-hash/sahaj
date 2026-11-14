@@ -4,10 +4,12 @@ import { createClaudeProvider } from "./claude.js";
 import { createMuseProvider } from "./muse.js";
 import { createGeminiProvider } from "./gemini.js";
 import { createRouter } from "./router.js";
+import { createLangfuseTrace } from "./trace-langfuse.js";
 import { ProviderError, type Provider, type TraceOptions } from "./types.js";
 
 export * from "./types.js";
 export { createRouter, isMasked } from "./router.js";
+export { createLangfuseTrace, type LangfuseTraceClient, type LangfuseTraceOptions, type LangfuseTracePayload, type LangfuseTracer } from "./trace-langfuse.js";
 export { createClaudeProvider, CLAUDE_MODEL } from "./claude.js";
 export { createMuseProvider, MUSE_BASE_URL, MUSE_MODEL } from "./muse.js";
 export { createGeminiProvider, GEMINI_MODEL } from "./gemini.js";
@@ -17,9 +19,11 @@ export function createDefaultRouter(options: TraceOptions & {
   env?: Readonly<Record<string, string | undefined>>;
 } = {}) {
   const env = options.env ?? process.env;
+  const onTrace = options.onTrace ?? createLangfuseTrace({ env, now: options.now }).onTrace;
   const missing: Provider = async () => { throw new ProviderError("not_configured"); };
   return createRouter({
     ...options,
+    onTrace,
     claude: env.ANTHROPIC_API_KEY
       ? createClaudeProvider(new Anthropic({ apiKey: env.ANTHROPIC_API_KEY, maxRetries: 0, logLevel: "off" })) : missing,
     muse: env.MUSE_API_KEY

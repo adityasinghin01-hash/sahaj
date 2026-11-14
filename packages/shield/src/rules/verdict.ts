@@ -1,11 +1,25 @@
 import type { AlertLevel, ScamType, ShieldAction, Verdict } from "@sahaj/shared";
 import { RULES, SCRIPT_TYPE_IDS, type ReasonText } from "./config";
-import { checkP1, checkP5, toMs, type RuleCallEvent, type RuleEvent, type RuleSmsEvent, type Timestamp } from "./patterns";
+import {
+  checkP1,
+  checkP5,
+  evaluatePhase2Patterns,
+  toMs,
+  type RuleAppOpenEvent,
+  type RuleCallEvent,
+  type RuleEvent,
+  type RuleInstallEvent,
+  type RuleNotificationEvent,
+  type RuleSmsEvent,
+  type Timestamp,
+} from "./patterns";
 import { isOtp } from "./otp";
 import { clampScore, scoreText, type RuleHit } from "./score";
 import { callerRule, callerType, senderRule, senderType, type CallerType, type SenderType } from "./sender";
 
 export interface VerdictInput {
+  /** optional event kind for non-SMS Phase 2 signals */
+  kind?: "sms" | "call_in" | "call_out" | "call_state" | "app_open" | "notification" | "install" | "voice_report";
   /** message text, raw or already masked */
   text?: string;
   /** raw SMS sender (header / number) */
@@ -19,8 +33,26 @@ export interface VerdictInput {
   caller_saved?: boolean;
   /** when the message arrived / the situation is judged (default: now) */
   at?: Timestamp;
-  /** recent context: calls and SMS (e.g. last 30 min) used by P1 */
+  /** recent context: calls, SMS, and Phase 2 signals */
   events?: RuleEvent[];
+  /** Phase 2 structured fields (top-level or inside `context`) */
+  context?: Record<string, unknown>;
+  package?: string;
+  video?: boolean;
+  source?: string;
+  whatsapp_call_unsaved?: boolean;
+  call_seconds?: number;
+  duration_ms?: number;
+  ended_at?: Timestamp;
+  attachment_apk?: boolean;
+  cancelled?: boolean;
+  on_call_with_unsaved?: boolean;
+  installer?: string;
+  installed_hours_ago?: number;
+  is_system?: boolean;
+  /** Untrusted client claims: intentionally ignored and never treated as verdict evidence. */
+  local_level?: AlertLevel;
+  matched_rules?: string[];
 }
 
 export interface RuleVerdict extends Verdict {
@@ -49,8 +81,117 @@ const REASONS: Record<string, ReasonText> = (() => {
   r[RULES.patterns.P1.id] = RULES.patterns.P1.reason;
   r[`${RULES.patterns.P5.id}.red`] = RULES.patterns.P5.red.reason;
   r[`${RULES.patterns.P5.id}.yellow`] = RULES.patterns.P5.yellow.reason;
+  r[RULES.patterns.P2.id] = RULES.patterns.P2.reason;
+  r[RULES.patterns.P3.id] = RULES.patterns.P3.reason;
+  r[RULES.patterns.P4.id] = RULES.patterns.P4.reason;
+  r[RULES.patterns.P9.id] = RULES.patterns.P9.reason;
   return r;
 })();
+
+function readString(inputVal: unknown, ctx: Record<string, unknown> | undefined, key: string): string | undefined {
+  if (typeof inputVal === "string") return inputVal;
+  const v = ctx?.[key];
+  return typeof v === "string" ? v : undefined;
+}
+
+function readBoolean(inputVal: unknown, ctx: Record<string, unknown> | undefined, key: string): boolean | undefined {
+  if (typeof inputVal === "boolean") return inputVal;
+  const v = ctx?.[key];
+  return typeof v === "boolean" ? v : undefined;
+}
+
+function readNumber(inputVal: unknown, ctx: Record<string, unknown> | undefined, key: string): number | undefined {
+  if (typeof inputVal === "number" && Number.isFinite(inputVal)) return inputVal;
+  const v = ctx?.[key];
+  return typeof v === "number" && Number.isFinite(v) ? v : undefined;
+}
+
+function buildDirectPhase2Event(
+  input: VerdictInput,
+  at: Timestamp,
+  cType: CallerType | undefined,
+  text: string | undefined,
+): RuleEvent | null {
+  const ctx = input.context && typeof input.context === "object" ? input.context : undefined;
+  const pkg = readString(input.package, ctx, "package");
+  const source = readString(input.source, ctx, "source");
+  const video = readBoolean(input.video, ctx, "video");
+  const whatsappUnsaved = readBoolean(input.whatsapp_call_unsaved, ctx, "whatsapp_call_unsaved");
+  const callSeconds = readNumber(input.call_seconds, ctx, "call_seconds");
+  const durationMs = readNumber(input.duration_ms, ctx, "duration_ms");
+  const attachmentApk = readBoolean(input.attachment_apk, ctx, "attachment_apk");
+  const cancelled = readBoolean(input.cancelled, ctx, "cancelled");
+  const onCallWithUnsaved = readBoolean(input.on_call_with_unsaved, ctx, "on_call_with_unsaved");
+  const installer = readString(input.installer, ctx, "installer");
+  const installedHoursAgo = readNumber(input.installed_hours_ago, ctx, "installed_hours_ago");
+  const isSystem = readBoolean(input.is_system, ctx, "is_system");
+  const callerSaved = input.caller_saved ?? readBoolean(undefined, ctx, "saved_contact");
+
+  if (input.kind === "app_open" || (input.kind === undefined && pkg !== undefined && installer === undefined && !isSystem && installedHoursAgo === undefined)) {
+    const evt: RuleAppOpenEvent = {
+      kind: "app_open",
+      at,
+      package: pkg,
+      on_call_with_unsaved: onCallWithUnsaved,
+      saved_contact: callerSaved,
+      caller_type: cType,
+    };
+    return evt;
+  }
+  if (
+    input.kind === "notification" ||
+    (input.kind === undefined && (attachmentApk !== undefined || whatsappUnsaved !== undefined || callSeconds !== undefined))
+  ) {
+    const evt: RuleNotificationEvent = {
+      kind: "notification",
+      at,
+      source,
+      whatsapp_call_unsaved: whatsappUnsaved,
+      call_seconds: callSeconds,
+      attachment_apk: attachmentApk,
+      cancelled,
+      ended_at: input.ended_at,
+      saved_contact: callerSaved,
+      caller_type: cType,
+      text,
+    };
+    return evt;
+  }
+  if (
+    input.kind === "install" ||
+    (input.kind === undefined && (installer !== undefined || installedHoursAgo !== undefined || isSystem !== undefined))
+  ) {
+    const evt: RuleInstallEvent = {
+      kind: "install",
+      at,
+      package: pkg,
+      installer,
+      installed_hours_ago: installedHoursAgo,
+      is_system: isSystem,
+    };
+    return evt;
+  }
+  if (
+    (input.kind === "call_in" || input.kind === "call_out" || input.kind === "call_state" || input.caller !== undefined || input.caller_type !== undefined || input.caller_saved !== undefined) &&
+    (video !== undefined || durationMs !== undefined || input.ended_at !== undefined || cancelled !== undefined)
+  ) {
+    const evt: RuleCallEvent = {
+      kind: "call",
+      at,
+      ended_at: input.ended_at,
+      number: input.caller,
+      caller_type: input.caller_type,
+      saved_contact: input.caller_saved,
+      video,
+      source,
+      whatsapp_call_unsaved: whatsappUnsaved,
+      duration_ms: durationMs,
+      cancelled,
+    };
+    return evt;
+  }
+  return null;
+}
 
 function round2(n: number): number {
   return Math.round(n * 100) / 100;
@@ -129,7 +270,8 @@ export function buildVerdict(input: VerdictInput): RuleVerdict {
     }
   }
 
-  // 4. patterns, judged for the current message
+  // 4. patterns, judged for the current message and Phase 2 signals
+  // Note: input.local_level and input.matched_rules are untrusted client claims and are never used.
   const firedPatterns: string[] = [];
   let patternType: ScamType | null = null;
   if (text) {
@@ -164,6 +306,30 @@ export function buildVerdict(input: VerdictInput): RuleVerdict {
       floor = maxLevel(floor, p5);
       if (p5 === "red") forced = true;
     }
+  }
+
+  const phase2Events: RuleEvent[] = [...(input.events ?? [])];
+  const directPhase2 = buildDirectPhase2Event(input, at, cType, text);
+  if (directPhase2) phase2Events.push(directPhase2);
+
+  for (const hit of evaluatePhase2Patterns(phase2Events, at)) {
+    const cfg =
+      hit.id === "P2"
+        ? RULES.patterns.P2
+        : hit.id === "P3"
+          ? RULES.patterns.P3
+          : hit.id === "P4"
+            ? RULES.patterns.P4
+            : hit.id === "P9"
+              ? RULES.patterns.P9
+              : null;
+    if (!cfg) continue;
+    firedPatterns.push(cfg.id);
+    hits.push({ rule_id: cfg.id, weight: 0, scam_type: cfg.scam_type });
+    addReason(cfg.id);
+    floor = maxLevel(floor, cfg.level);
+    forced = true;
+    if (!patternType && cfg.scam_type !== "unknown") patternType = cfg.scam_type;
   }
 
   // 5. score → level

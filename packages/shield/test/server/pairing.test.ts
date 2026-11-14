@@ -182,5 +182,6 @@ describe("handleShieldPair", () => {
     f.deps.env.SHIELD_DEVICE_PAIRING_SECRET = "";
     expect((await pair(f, code)).res.status).toBe(500);
     expect(f.devices.size).toBe(0);
+    expect(JSON.stringify(f.log.error.mock.calls)).not.toContain("SHIELD_DEVICE_PAIRING_SECRET");
   });
 });

@@ -1,4 +1,9 @@
 {
+  "mode": "rules_only",
+  "ai_eval": {
+    "executed": false,
+    "reason": "Offline rules-only harness (no live or paid AI calls)"
+  },
   "summary": {
     "scam_caught": 30,
     "scam_total": 30,
@@ -6,41 +11,14 @@
     "scam_caught_yellow": 0,
     "false_alarms": 0,
     "normal_total": 30,
-    "sequences_right": 8,
-    "sequences_total": 10
+    "masking_violations": 0,
+    "sequences_right": 21,
+    "sequences_total": 21
   },
   "missed_scams": [],
   "false_alarm_details": [],
-  "missed_sequences": [
-    {
-      "id": "seq_09",
-      "name": "Banking app opened during active unknown call (Phase 2 P9)",
-      "expect": {
-        "level": "red",
-        "pattern": "P9"
-      },
-      "actual_level": "green",
-      "actual_patterns": [],
-      "checks_fired": [
-        "caller.mobile_10"
-      ],
-      "ok": false
-    },
-    {
-      "id": "seq_10",
-      "name": "Long unknown video call > 20 min (Phase 2 P2/P6)",
-      "expect": {
-        "level": "yellow",
-        "pattern": "P2"
-      },
-      "actual_level": "green",
-      "actual_patterns": [],
-      "checks_fired": [
-        "caller.international"
-      ],
-      "ok": false
-    }
-  ],
+  "masking_violation_details": [],
+  "missed_sequences": [],
   "messages": [
     {
       "id": "m_scam_01",
@@ -60,6 +38,7 @@
         "sender.mobile_10",
         "sender.mobile_claims_brand"
       ],
+      "masking_ok": true,
       "ok": true
     },
     {
@@ -79,6 +58,7 @@
         "signal.money_ask",
         "sender.international"
       ],
+      "masking_ok": true,
       "ok": true
     },
     {
@@ -97,6 +77,7 @@
         "script.digital_arrest",
         "sender.mobile_10"
       ],
+      "masking_ok": true,
       "ok": true
     },
     {
@@ -120,6 +101,7 @@
         "pattern.P5.red",
         "pattern.P5"
       ],
+      "masking_ok": true,
       "ok": true
     },
     {
@@ -143,6 +125,7 @@
         "pattern.P5.red",
         "pattern.P5"
       ],
+      "masking_ok": true,
       "ok": true
     },
     {
@@ -166,6 +149,7 @@
         "pattern.P5.red",
         "pattern.P5"
       ],
+      "masking_ok": true,
       "ok": true
     },
     {
@@ -189,6 +173,7 @@
         "pattern.P5.red",
         "pattern.P5"
       ],
+      "masking_ok": true,
       "ok": true
     },
     {
@@ -213,6 +198,7 @@
         "pattern.P5.red",
         "pattern.P5"
       ],
+      "masking_ok": true,
       "ok": true
     },
     {
@@ -237,6 +223,7 @@
         "pattern.P5.red",
         "pattern.P5"
       ],
+      "masking_ok": true,
       "ok": true
     },
     {
@@ -259,6 +246,7 @@
         "pattern.P5.red",
         "pattern.P5"
       ],
+      "masking_ok": true,
       "ok": true
     },
     {
@@ -281,6 +269,7 @@
         "pattern.P5.red",
         "pattern.P5"
       ],
+      "masking_ok": true,
       "ok": true
     },
     {
@@ -304,6 +293,7 @@
         "pattern.P5.red",
         "pattern.P5"
       ],
+      "masking_ok": true,
       "ok": true
     },
     {
@@ -326,6 +316,7 @@
         "pattern.P5.yellow",
         "pattern.P5"
       ],
+      "masking_ok": true,
       "ok": true
     },
     {
@@ -348,6 +339,7 @@
         "pattern.P5.yellow",
         "pattern.P5"
       ],
+      "masking_ok": true,
       "ok": true
     },
     {
@@ -372,6 +364,7 @@
         "pattern.P5.yellow",
         "pattern.P5"
       ],
+      "masking_ok": true,
       "ok": true
     },
     {
@@ -396,6 +389,7 @@
         "pattern.P5.yellow",
         "pattern.P5"
       ],
+      "masking_ok": true,
       "ok": true
     },
     {
@@ -418,6 +412,7 @@
         "pattern.P5.yellow",
         "pattern.P5"
       ],
+      "masking_ok": true,
       "ok": true
     },
     {
@@ -442,6 +437,7 @@
         "pattern.P5.yellow",
         "pattern.P5"
       ],
+      "masking_ok": true,
       "ok": true
     },
     {
@@ -463,6 +459,7 @@
         "signal.money_ask",
         "sender.mobile_10"
       ],
+      "masking_ok": true,
       "ok": true
     },
     {
@@ -484,6 +481,7 @@
         "signal.money_ask",
         "sender.mobile_10"
       ],
+      "masking_ok": true,
       "ok": true
     },
     {
@@ -505,6 +503,7 @@
         "signal.money_ask",
         "sender.mobile_10"
       ],
+      "masking_ok": true,
       "ok": true
     },
     {
@@ -526,6 +525,7 @@
         "pattern.P5.yellow",
         "pattern.P5"
       ],
+      "masking_ok": true,
       "ok": true
     },
     {
@@ -546,6 +546,7 @@
         "pattern.P5.yellow",
         "pattern.P5"
       ],
+      "masking_ok": true,
       "ok": true
     },
     {
@@ -568,6 +569,7 @@
         "pattern.P5.yellow",
         "pattern.P5"
       ],
+      "masking_ok": true,
       "ok": true
     },
     {
@@ -591,6 +593,7 @@
         "pattern.P5.red",
         "pattern.P5"
       ],
+      "masking_ok": true,
       "ok": true
     },
     {
@@ -614,6 +617,7 @@
         "pattern.P5.red",
         "pattern.P5"
       ],
+      "masking_ok": true,
       "ok": true
     },
     {
@@ -636,6 +640,7 @@
         "pattern.P5.red",
         "pattern.P5"
       ],
+      "masking_ok": true,
       "ok": true
     },
     {
@@ -655,6 +660,7 @@
         "signal.urgency",
         "sender.mobile_10"
       ],
+      "masking_ok": true,
       "ok": true
     },
     {
@@ -674,6 +680,7 @@
         "signal.money_ask",
         "sender.mobile_10"
       ],
+      "masking_ok": true,
       "ok": true
     },
     {
@@ -694,6 +701,7 @@
         "signal.money_ask",
         "sender.mobile_10"
       ],
+      "masking_ok": true,
       "ok": true
     },
     {
@@ -708,6 +716,7 @@
         "sender.business_header",
         "otp.present"
       ],
+      "masking_ok": true,
       "ok": true
     },
     {
@@ -722,6 +731,7 @@
         "sender.business_header",
         "otp.present"
       ],
+      "masking_ok": true,
       "ok": true
     },
     {
@@ -736,6 +746,7 @@
         "sender.business_header",
         "otp.present"
       ],
+      "masking_ok": true,
       "ok": true
     },
     {
@@ -750,6 +761,7 @@
         "sender.business_header",
         "otp.present"
       ],
+      "masking_ok": true,
       "ok": true
     },
     {
@@ -764,6 +776,7 @@
         "sender.business_header",
         "otp.present"
       ],
+      "masking_ok": true,
       "ok": true
     },
     {
@@ -778,6 +791,7 @@
         "sender.business_header",
         "otp.present"
       ],
+      "masking_ok": true,
       "ok": true
     },
     {
@@ -791,6 +805,7 @@
       "checks_fired": [
         "sender.business_header"
       ],
+      "masking_ok": true,
       "ok": true
     },
     {
@@ -804,6 +819,7 @@
       "checks_fired": [
         "sender.business_header"
       ],
+      "masking_ok": true,
       "ok": true
     },
     {
@@ -818,6 +834,7 @@
         "link.present",
         "sender.business_header"
       ],
+      "masking_ok": true,
       "ok": true
     },
     {
@@ -832,6 +849,7 @@
         "link.present",
         "sender.business_header"
       ],
+      "masking_ok": true,
       "ok": true
     },
     {
@@ -845,6 +863,7 @@
       "checks_fired": [
         "sender.business_header"
       ],
+      "masking_ok": true,
       "ok": true
     },
     {
@@ -858,6 +877,7 @@
       "checks_fired": [
         "sender.business_header"
       ],
+      "masking_ok": true,
       "ok": true
     },
     {
@@ -872,6 +892,7 @@
         "sender.business_header",
         "otp.present"
       ],
+      "masking_ok": true,
       "ok": true
     },
     {
@@ -886,6 +907,7 @@
         "link.present",
         "sender.business_header"
       ],
+      "masking_ok": true,
       "ok": true
     },
     {
@@ -900,6 +922,7 @@
         "link.present",
         "sender.business_header"
       ],
+      "masking_ok": true,
       "ok": true
     },
     {
@@ -914,6 +937,7 @@
         "link.present",
         "sender.business_header"
       ],
+      "masking_ok": true,
       "ok": true
     },
     {
@@ -928,6 +952,7 @@
         "link.present",
         "sender.business_header"
       ],
+      "masking_ok": true,
       "ok": true
     },
     {
@@ -941,6 +966,7 @@
       "checks_fired": [
         "sender.business_header"
       ],
+      "masking_ok": true,
       "ok": true
     },
     {
@@ -954,6 +980,7 @@
       "checks_fired": [
         "sender.mobile_10"
       ],
+      "masking_ok": true,
       "ok": true
     },
     {
@@ -967,6 +994,7 @@
       "checks_fired": [
         "sender.mobile_10"
       ],
+      "masking_ok": true,
       "ok": true
     },
     {
@@ -980,6 +1008,7 @@
       "checks_fired": [
         "sender.mobile_10"
       ],
+      "masking_ok": true,
       "ok": true
     },
     {
@@ -993,6 +1022,7 @@
       "checks_fired": [
         "sender.mobile_10"
       ],
+      "masking_ok": true,
       "ok": true
     },
     {
@@ -1006,6 +1036,7 @@
       "checks_fired": [
         "sender.mobile_10"
       ],
+      "masking_ok": true,
       "ok": true
     },
     {
@@ -1019,6 +1050,7 @@
       "checks_fired": [
         "sender.mobile_10"
       ],
+      "masking_ok": true,
       "ok": true
     },
     {
@@ -1032,6 +1064,7 @@
       "checks_fired": [
         "sender.mobile_10"
       ],
+      "masking_ok": true,
       "ok": true
     },
     {
@@ -1045,6 +1078,7 @@
       "checks_fired": [
         "sender.mobile_10"
       ],
+      "masking_ok": true,
       "ok": true
     },
     {
@@ -1058,6 +1092,7 @@
       "checks_fired": [
         "sender.mobile_10"
       ],
+      "masking_ok": true,
       "ok": true
     },
     {
@@ -1071,6 +1106,7 @@
       "checks_fired": [
         "sender.mobile_10"
       ],
+      "masking_ok": true,
       "ok": true
     },
     {
@@ -1084,6 +1120,7 @@
       "checks_fired": [
         "sender.mobile_10"
       ],
+      "masking_ok": true,
       "ok": true
     },
     {
@@ -1097,6 +1134,7 @@
       "checks_fired": [
         "sender.mobile_10"
       ],
+      "masking_ok": true,
       "ok": true
     }
   ],
@@ -1251,26 +1289,184 @@
         "level": "red",
         "pattern": "P9"
       },
+      "actual_level": "red",
+      "actual_patterns": [
+        "P9"
+      ],
+      "checks_fired": [
+        "caller.mobile_10",
+        "pattern.P9"
+      ],
+      "ok": true
+    },
+    {
+      "id": "seq_10",
+      "name": "Long unknown video call > 20 min (Phase 2 P2 red spec)",
+      "expect": {
+        "level": "red",
+        "pattern": "P2"
+      },
+      "actual_level": "red",
+      "actual_patterns": [
+        "P2"
+      ],
+      "checks_fired": [
+        "caller.international",
+        "pattern.P2"
+      ],
+      "ok": true
+    },
+    {
+      "id": "seq_11",
+      "name": "Negative: Banking app opened during saved contact call",
+      "expect": {
+        "level": "green",
+        "pattern": null
+      },
+      "actual_level": "green",
+      "actual_patterns": [],
+      "checks_fired": [],
+      "ok": true
+    },
+    {
+      "id": "seq_12",
+      "name": "Negative: Banking app opened after unknown call already ended",
+      "expect": {
+        "level": "green",
+        "pattern": null
+      },
       "actual_level": "green",
       "actual_patterns": [],
       "checks_fired": [
         "caller.mobile_10"
       ],
-      "ok": false
+      "ok": true
     },
     {
-      "id": "seq_10",
-      "name": "Long unknown video call > 20 min (Phase 2 P2/P6)",
+      "id": "seq_13",
+      "name": "Boundary: WhatsApp unknown call at 9m59s (below 10 min P2 threshold)",
       "expect": {
-        "level": "yellow",
+        "level": "green",
+        "pattern": null
+      },
+      "actual_level": "green",
+      "actual_patterns": [],
+      "checks_fired": [],
+      "ok": true
+    },
+    {
+      "id": "seq_14",
+      "name": "Negative: WhatsApp call notification cancelled/removed after 12 min",
+      "expect": {
+        "level": "green",
+        "pattern": null
+      },
+      "actual_level": "green",
+      "actual_patterns": [],
+      "checks_fired": [],
+      "ok": true
+    },
+    {
+      "id": "seq_15",
+      "name": "Boundary: WhatsApp unknown call hits 10m00s (600s P2 red)",
+      "expect": {
+        "level": "red",
         "pattern": "P2"
+      },
+      "actual_level": "red",
+      "actual_patterns": [
+        "P2"
+      ],
+      "checks_fired": [
+        "pattern.P2"
+      ],
+      "ok": true
+    },
+    {
+      "id": "seq_16",
+      "name": "Negative: Non-banking app opened during active unknown call",
+      "expect": {
+        "level": "green",
+        "pattern": null
       },
       "actual_level": "green",
       "actual_patterns": [],
       "checks_fired": [
-        "caller.international"
+        "caller.mobile_10"
       ],
-      "ok": false
+      "ok": true
+    },
+    {
+      "id": "seq_17",
+      "name": "Security: Spoofed client local_level/matched_rules rejected when no real evidence",
+      "expect": {
+        "level": "green",
+        "pattern": null
+      },
+      "actual_level": "green",
+      "actual_patterns": [],
+      "checks_fired": [],
+      "ok": true
+    },
+    {
+      "id": "seq_18",
+      "name": "WhatsApp APK attachment notification triggers P3 red",
+      "expect": {
+        "level": "red",
+        "pattern": "P3"
+      },
+      "actual_level": "red",
+      "actual_patterns": [
+        "P3"
+      ],
+      "checks_fired": [
+        "pattern.P3"
+      ],
+      "ok": true
+    },
+    {
+      "id": "seq_19",
+      "name": "Negative: Malformed or missing Phase 2 context does not trigger",
+      "expect": {
+        "level": "green",
+        "pattern": null
+      },
+      "actual_level": "green",
+      "actual_patterns": [],
+      "checks_fired": [],
+      "ok": true
+    },
+    {
+      "id": "seq_20",
+      "name": "Remote-control app installed (Phase 2 P4 red)",
+      "expect": {
+        "level": "red",
+        "pattern": "P4"
+      },
+      "actual_level": "red",
+      "actual_patterns": [
+        "P4"
+      ],
+      "checks_fired": [
+        "pattern.P4"
+      ],
+      "ok": true
+    },
+    {
+      "id": "seq_21",
+      "name": "Sideloaded non-Play-Store app installed within 24h (Phase 2 P3 red)",
+      "expect": {
+        "level": "red",
+        "pattern": "P3"
+      },
+      "actual_level": "red",
+      "actual_patterns": [
+        "P3"
+      ],
+      "checks_fired": [
+        "pattern.P3"
+      ],
+      "ok": true
     }
   ]
 }

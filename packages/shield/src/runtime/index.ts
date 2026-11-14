@@ -60,7 +60,8 @@ export function createShieldRuntime(ports: ShieldRuntimePorts | ShieldRuntimeTes
       },
       rules: { evaluate: evaluateRules }, twoLock: request => ports.router.twoLock(request),
       notify: { childCard: input => ports.push.childCard(input) }, whatsapp: ports.whatsapp,
-      calls: ports.calls, scheduler, atlas: ports.atlas, gate: ports.gate, sign,
+      calls: ports.calls, scheduler, jobs: { claim: key => track(ports.scheduler.claim(key)) },
+      atlas: ports.atlas, gate: ports.gate, sign,
       cache: ports.cache, env: ports.env, now: () => ports.clock.now().getTime(),
     };
   }

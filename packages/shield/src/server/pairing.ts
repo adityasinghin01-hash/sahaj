@@ -131,7 +131,8 @@ export async function handleShieldPair(req: Request, deps: ShieldServerDeps): Pr
     });
     return json(200, { device_id: deviceId, device_secret: deviceSecret });
   } catch (err) {
-    deps.log?.error("shield.pair.failed", { error: err instanceof Error ? err.message : String(err) });
+    const code = typeof (err as { code?: unknown })?.code === "string" ? (err as { code: string }).code : undefined;
+    deps.log?.error("shield.pair.failed", { error: err instanceof Error ? err.name : "unknown", ...(code ? { code } : {}) });
     return json(500, { error: "server_error" });
   }
 }

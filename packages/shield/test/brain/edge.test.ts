@@ -121,4 +121,30 @@ describe("failure, privacy and scheduling boundaries", () => {
     await handleScheduledJob("shield.no_reaction_check", { verdictId: "verdict-a" }, deps);
     expect(deps.atlas.startCircleChain).not.toHaveBeenCalled();
   });
+  it("masks separated digits before twoLock and masks digits emitted inside AI hindi_reason", async () => {
+    const { deps } = fixtures("green", true);
+    const provider = vi.fn(async (req: { input: string }) => {
+      expect(req.input).toBe("OTP [MASKED] bolo");
+      return { kind: "text" as const, text: JSON.stringify({ ...judgement(), hindi_reason: "Call 9876543210 aur OTP 4 8 2 9" }) };
+    });
+    const router = createRouter({ claude: provider, muse: provider, gemini: provider });
+    const result = await buildShieldGraph({ ...deps, twoLock: router.twoLock }).invoke({ event: event({ masked_text: "OTP 4 8 2 9 bolo" }) });
+    const serialized = JSON.stringify(result.decision.verdict.reasons);
+    expect(serialized).not.toContain("9876543210");
+    expect(serialized).not.toContain("4 8 2 9");
+  });
+  it("claims scheduled brain jobs so redelivered no_reaction_check and retryCallParent run once", async () => {
+    const { deps } = fixtures("red");
+    const claimed = new Set<string>();
+    const jobs = { claim: vi.fn(async (key: string) => (claimed.has(key) ? false : (claimed.add(key), true))) };
+    await buildShieldGraph({ ...deps, jobs }).invoke({ event: event({ channel: "keypad_voice" }) });
+    await handleScheduledJob("shield.no_reaction_check", { verdictId: "verdict-a" }, { ...deps, jobs });
+    await handleScheduledJob("shield.no_reaction_check", { verdictId: "verdict-a" }, { ...deps, jobs });
+    expect(deps.atlas.startCircleChain).toHaveBeenCalledOnce();
+    deps.calls.callParent.mockClear();
+    deps.calls.callParent.mockResolvedValue({ status: "busy" });
+    await handleScheduledJob("retryCallParent", { verdictId: "verdict-a", attempt: 2 }, { ...deps, jobs });
+    await handleScheduledJob("retryCallParent", { verdictId: "verdict-a", attempt: 2 }, { ...deps, jobs });
+    expect(deps.calls.callParent).toHaveBeenCalledOnce();
+  });
 });

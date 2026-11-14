@@ -5,7 +5,23 @@
   "type": "module",
   "main": "src/index.ts",
   "types": "src/index.ts",
-  "scripts": { "typecheck": "tsc --noEmit", "test": "vitest run" },
-  "dependencies": { "@anthropic-ai/sdk": "1.8.0", "@google/genai": "3.3.0", "@sahaj/shared": "workspace:*", "zod": "^4.1.0" },
-  "devDependencies": { "@types/node": "22.20.5", "typescript": "^5.9.0", "vitest": "^3.2.0" }
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "1.8.0",
+    "@google/genai": "3.3.0",
+    "@langfuse/otel": "^6.1.1",
+    "@langfuse/tracing": "^6.1.1",
+    "@opentelemetry/api": "^1.10.0",
+    "@opentelemetry/sdk-trace-node": "^2.12.0",
+    "@sahaj/shared": "workspace:*",
+    "zod": "^4.1.0"
+  },
+  "devDependencies": {
+    "@types/node": "22.20.5",
+    "typescript": "^5.9.0",
+    "vitest": "^3.2.0"
+  }
 }

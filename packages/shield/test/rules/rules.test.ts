@@ -165,3 +165,134 @@ describe("unit checks", () => {
     expect(mid.needs_ai).toBe(true);
   });
 });
+
+describe("phase 2 rules, boundaries, and spoofing defense", () => {
+  it("P9 fires red for banking/UPI package during active unknown call", () => {
+    const v = buildVerdict({
+      caller: "9800000305",
+      at: 1763114490000,
+      events: [
+        { kind: "call", at: 1763114400000, number: "9800000305", direction: "in" },
+        { kind: "app_open", at: 1763114490000, package: "com.phonepe.app" },
+      ],
+    });
+    expect(v.level).toBe("red");
+    expect(v.checks_fired).toContain("pattern.P9");
+  });
+
+  it("P9 stays green for saved contact, ended call, series_1600, or non-banking app", () => {
+    const saved = buildVerdict({
+      caller: "9800000101",
+      caller_saved: true,
+      at: 1763114490000,
+      events: [
+        { kind: "call", at: 1763114400000, number: "9800000101", saved_contact: true },
+        { kind: "app_open", at: 1763114490000, package: "com.phonepe.app" },
+      ],
+    });
+    expect(saved.level).toBe("green");
+
+    const ended = buildVerdict({
+      at: 1763114490000,
+      events: [
+        { kind: "call", at: 1763114400000, ended_at: 1763114460000, number: "9800000305" },
+        { kind: "app_open", at: 1763114490000, package: "com.phonepe.app" },
+      ],
+    });
+    expect(ended.level).toBe("green");
+
+    const bank1600 = buildVerdict({
+      at: 1763114490000,
+      events: [
+        { kind: "call", at: 1763114400000, number: "1600123456" },
+        { kind: "app_open", at: 1763114490000, package: "com.phonepe.app" },
+      ],
+    });
+    expect(bank1600.level).toBe("green");
+
+    const whatsapp = buildVerdict({
+      at: 1763114490000,
+      events: [
+        { kind: "call", at: 1763114400000, number: "9800000305" },
+        { kind: "app_open", at: 1763114490000, package: "com.whatsapp" },
+      ],
+    });
+    expect(whatsapp.level).toBe("green");
+  });
+
+  it("P2 fires red at >= 600s for unknown video / WhatsApp call and stays green below or cancelled", () => {
+    const below = buildVerdict({
+      at: 1763114999000,
+      events: [{ kind: "notification", at: 1763114999000, source: "whatsapp", whatsapp_call_unsaved: true, call_seconds: 599 }],
+    });
+    expect(below.level).toBe("green");
+
+    const cancelled = buildVerdict({
+      at: 1763115120000,
+      events: [{ kind: "notification", at: 1763115120000, source: "whatsapp", whatsapp_call_unsaved: true, call_seconds: 720, cancelled: true }],
+    });
+    expect(cancelled.level).toBe("green");
+
+    const hit = buildVerdict({
+      at: 1763115000000,
+      events: [{ kind: "notification", at: 1763115000000, source: "whatsapp", whatsapp_call_unsaved: true, call_seconds: 600 }],
+    });
+    expect(hit.level).toBe("red");
+    expect(hit.scam_type).toBe("digital_arrest");
+    expect(hit.checks_fired).toContain("pattern.P2");
+
+    const videoCall = buildVerdict({
+      caller: "+447911000202",
+      at: 1763115900000,
+      events: [{ kind: "call", at: 1763114400000, ended_at: 1763115900000, number: "+447911000202", video: true }],
+    });
+    expect(videoCall.level).toBe("red");
+    expect(videoCall.checks_fired).toContain("pattern.P2");
+  });
+
+  it("P3/P4 fire red for APK notification, sideload <= 24h, and remote-control package; reject missing/malformed", () => {
+    const apk = buildVerdict({ kind: "notification", at: 1763114400000, source: "whatsapp", attachment_apk: true });
+    expect(apk.level).toBe("red");
+    expect(apk.checks_fired).toContain("pattern.P3");
+
+    const sideload = buildVerdict({
+      kind: "install",
+      at: 1763114400000,
+      package: "com.example.card",
+      installer: "com.whatsapp",
+      installed_hours_ago: 12,
+    });
+    expect(sideload.level).toBe("red");
+    expect(sideload.checks_fired).toContain("pattern.P3");
+
+    const remote = buildVerdict({
+      kind: "install",
+      at: 1763114400000,
+      package: "com.anydesk.anydeskandroid",
+      installer: "com.android.vending",
+      installed_hours_ago: 1,
+    });
+    expect(remote.level).toBe("red");
+    expect(remote.checks_fired).toContain("pattern.P4");
+
+    const malformed = buildVerdict({
+      kind: "install",
+      at: 1763114400000,
+      context: { installer: 123, installed_hours_ago: "bad" },
+    });
+    expect(malformed.level).toBe("green");
+  });
+
+  it("ignores spoofed local_level and matched_rules when server evidence fails", () => {
+    const spoofed = buildVerdict({
+      kind: "app_open",
+      at: 1763114490000,
+      package: "com.whatsapp",
+      on_call_with_unsaved: true,
+      local_level: "red",
+      matched_rules: ["pattern.P9", "script.digital_arrest"],
+    });
+    expect(spoofed.level).toBe("green");
+    expect(spoofed.checks_fired).not.toContain("pattern.P9");
+  });
+});

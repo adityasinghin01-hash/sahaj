@@ -98,13 +98,24 @@ export async function handleScheduledJob(name: string, payload: unknown, deps: S
       await audit(deps, record, { step: name, status: "denied", action }); return;
     }
     if (name === RETRY_PARENT_JOB) {
-      await callParent(record, deps, retryPayload.parse(input).attempt);
+      const attempt = retryPayload.parse(input).attempt;
+      if (deps.jobs && !(await deps.jobs.claim(`${name}:${record.id}:${attempt}`))) {
+        await audit(deps, record, { step: name, status: "skipped", details: { reason: "duplicate", attempt } });
+        return;
+      }
+      await callParent(record, deps, attempt);
     } else {
       const reacted = await deps.db.hasChildReaction({ verdictId: record.id });
       await audit(deps, record, { step: "child_reaction_check", status: "ok", details: { reacted } });
-      if (!reacted) await effect(deps, record, "circle_chain", () => deps.atlas.startCircleChain({
-        verdictId: record.id, familyId: record.event.family_id, parentId: record.event.parent_id,
-      }), "circle_chain");
+      if (!reacted) {
+        if (deps.jobs && !(await deps.jobs.claim(`${name}:${record.id}`))) {
+          await audit(deps, record, { step: name, status: "skipped", details: { reason: "duplicate" } });
+          return;
+        }
+        await effect(deps, record, "circle_chain", () => deps.atlas.startCircleChain({
+          verdictId: record.id, familyId: record.event.family_id, parentId: record.event.parent_id,
+        }), "circle_chain");
+      }
     }
     await audit(deps, record, { step: name, status: "ok" });
   } catch (error) {

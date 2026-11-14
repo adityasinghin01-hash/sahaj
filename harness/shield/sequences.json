@@ -78,10 +78,102 @@
   },
   {
     "id": "seq_10",
-    "name": "Long unknown video call > 20 min (Phase 2 P2/P6)",
+    "name": "Long unknown video call > 20 min (Phase 2 P2 red spec)",
     "events": [
       { "kind": "call", "at": 1763114400000, "ended_at": 1763115900000, "number": "+447911000202", "direction": "in", "video": true }
     ],
-    "expect": { "level": "yellow", "pattern": "P2" }
+    "expect": { "level": "red", "pattern": "P2" }
+  },
+  {
+    "id": "seq_11",
+    "name": "Negative: Banking app opened during saved contact call",
+    "events": [
+      { "kind": "call", "at": 1763114400000, "number": "9800000101", "saved_contact": true, "direction": "in" },
+      { "kind": "app_open", "at": 1763114490000, "package": "com.phonepe.app" }
+    ],
+    "expect": { "level": "green", "pattern": null }
+  },
+  {
+    "id": "seq_12",
+    "name": "Negative: Banking app opened after unknown call already ended",
+    "events": [
+      { "kind": "call", "at": 1763114400000, "ended_at": 1763114460000, "number": "9800000306", "direction": "in" },
+      { "kind": "app_open", "at": 1763114490000, "package": "com.phonepe.app" }
+    ],
+    "expect": { "level": "green", "pattern": null }
+  },
+  {
+    "id": "seq_13",
+    "name": "Boundary: WhatsApp unknown call at 9m59s (below 10 min P2 threshold)",
+    "events": [
+      { "kind": "notification", "at": 1763114999000, "source": "whatsapp", "whatsapp_call_unsaved": true, "call_seconds": 599 }
+    ],
+    "expect": { "level": "green", "pattern": null }
+  },
+  {
+    "id": "seq_14",
+    "name": "Negative: WhatsApp call notification cancelled/removed after 12 min",
+    "events": [
+      { "kind": "notification", "at": 1763115120000, "source": "whatsapp", "whatsapp_call_unsaved": true, "call_seconds": 720, "cancelled": true }
+    ],
+    "expect": { "level": "green", "pattern": null }
+  },
+  {
+    "id": "seq_15",
+    "name": "Boundary: WhatsApp unknown call hits 10m00s (600s P2 red)",
+    "events": [
+      { "kind": "notification", "at": 1763115000000, "source": "whatsapp", "whatsapp_call_unsaved": true, "call_seconds": 600 }
+    ],
+    "expect": { "level": "red", "pattern": "P2" }
+  },
+  {
+    "id": "seq_16",
+    "name": "Negative: Non-banking app opened during active unknown call",
+    "events": [
+      { "kind": "call", "at": 1763114400000, "number": "9800000307", "direction": "in" },
+      { "kind": "app_open", "at": 1763114490000, "package": "com.whatsapp" }
+    ],
+    "expect": { "level": "green", "pattern": null }
+  },
+  {
+    "id": "seq_17",
+    "name": "Security: Spoofed client local_level/matched_rules rejected when no real evidence",
+    "events": [
+      { "kind": "app_open", "at": 1763114490000, "package": "com.whatsapp", "on_call_with_unsaved": true, "local_level": "red", "matched_rules": ["pattern.P9"] }
+    ],
+    "expect": { "level": "green", "pattern": null }
+  },
+  {
+    "id": "seq_18",
+    "name": "WhatsApp APK attachment notification triggers P3 red",
+    "events": [
+      { "kind": "notification", "at": 1763114400000, "source": "whatsapp", "attachment_apk": true }
+    ],
+    "expect": { "level": "red", "pattern": "P3" }
+  },
+  {
+    "id": "seq_19",
+    "name": "Negative: Malformed or missing Phase 2 context does not trigger",
+    "events": [
+      { "kind": "app_open", "at": 1763114400000, "on_call_with_unsaved": true },
+      { "kind": "install", "at": 1763114410000, "installer": "" }
+    ],
+    "expect": { "level": "green", "pattern": null }
+  },
+  {
+    "id": "seq_20",
+    "name": "Remote-control app installed (Phase 2 P4 red)",
+    "events": [
+      { "kind": "install", "at": 1763114400000, "package": "com.anydesk.anydeskandroid", "installer": "com.android.vending", "installed_hours_ago": 1 }
+    ],
+    "expect": { "level": "red", "pattern": "P4" }
+  },
+  {
+    "id": "seq_21",
+    "name": "Sideloaded non-Play-Store app installed within 24h (Phase 2 P3 red)",
+    "events": [
+      { "kind": "install", "at": 1763114400000, "package": "com.example.weddingcard", "installer": "com.whatsapp", "installed_hours_ago": 2, "is_system": false }
+    ],
+    "expect": { "level": "red", "pattern": "P3" }
   }
 ]

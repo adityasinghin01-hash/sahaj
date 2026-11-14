@@ -182,12 +182,14 @@ describe("handleShieldEvent", () => {
     expectNothingWritten(f);
   });
 
-  it("database failure → 500, no hand-off", async () => {
+  it("database failure → 500, no hand-off, no raw DB error message in logs", async () => {
     const { f, deviceId, deviceSecret } = await setup();
-    f.db.insertEvent.mockRejectedValueOnce(new Error("db down"));
+    f.db.insertEvent.mockRejectedValueOnce(new Error("raw postgres detail: masked_text=9876543210"));
     const r = await send(f, { deviceId, deviceSecret }, JSON.stringify(makeEvent(deviceId)));
     expect(r.status).toBe(500);
     expect(f.atlas.enqueueShieldEvent).not.toHaveBeenCalled();
+    expect(f.log.error).toHaveBeenCalledWith("shield.event.failed", { error: "Error" });
+    expect(JSON.stringify(f.log.error.mock.calls)).not.toContain("9876543210");
   });
 });
 
