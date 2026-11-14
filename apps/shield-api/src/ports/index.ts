@@ -82,6 +82,7 @@ export function createShieldPorts(opts: {
       SHIELD_DEVICE_PAIRING_SECRET: opts.env.SHIELD_DEVICE_PAIRING_SECRET ?? "",
       SAFE_BROWSING_KEY: opts.env.SAFE_BROWSING_KEY,
       DEMO_TIMER_SCALE: opts.env.DEMO_TIMER_SCALE,
+      SMS_GATEWAY_SECRET: opts.env.SMS_GATEWAY_SECRET,
     },
     clock,
     cache: createCachePort(opts.auxSql, clock),

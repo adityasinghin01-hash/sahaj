@@ -25,6 +25,8 @@ All routes run on the Node.js runtime (`export const runtime = "nodejs"`).
 | `WHATSAPP_PHONE_NUMBER_ID` | Optional | Meta WhatsApp Business phone number ID paired with `WHATSAPP_TOKEN`. |
 | `WHATSAPP_GRAPH_VERSION` | Optional | Meta Graph API version (defaults to `v27.0`). |
 | `AASHA_DIDI_LINE_ID` | Optional | Dev telephony line id returned by `calls.getParentLine` (defaults to `dev-outbox-line`). |
+| `SMS_GATEWAY_SECRET` | Optional (≥32 chars) | Shared secret (`x-sahaj-gateway-secret`) for `POST /api/sms/gateway`. |
+| `CALL_GATEWAY_ENABLED` | Optional | Set to `1` to enable `POST /api/sarvam/tool/call_screen`; otherwise returns `404 {"enabled":false}`. |
 
 ---
 
@@ -37,7 +39,10 @@ All routes run on the Node.js runtime (`export const runtime = "nodejs"`).
    psql "$DATABASE_URL" -f infra/supabase/migrations/20261114000100_shield.sql
    psql "$DATABASE_URL" -f infra/supabase/migrations/20261114000200_shield_pairing.sql
    psql "$DATABASE_URL" -f infra/supabase/migrations/20261114000300_shield_busy_warnings.sql
+   psql "$DATABASE_URL" -f infra/supabase/migrations/20261114000400_shield_drills_evidence.sql
+   psql "$DATABASE_URL" -f infra/supabase/migrations/20261114000500_shield_gateway.sql
    psql "$DATABASE_URL" -f infra/supabase/migrations/20261114000600_shield_dev.sql
+   psql "$DATABASE_URL" -f infra/supabase/migrations/20261114000900_shield_heartbeat.sql
    psql "$DATABASE_URL" -f infra/supabase/dev/seed_demo.sql
    ```
 
@@ -254,4 +259,58 @@ Runs against an ephemeral `/tmp/shield-p2-pg.*` cluster (deleted on exit; requir
 pnpm -F @sahaj/shield-api test:e2e-pg
 ```
 
+---
 
+## Phase 3 Endpoints (SMS Gateway, Heartbeat, Drills & Call Screening)
+
+### 12. `POST /api/dev/shield/gateway-parent`
+
+Admin endpoint (`x-dev-admin-token`) hashing phone via `numberFingerprint` into `public.shield_gateway_parents` (delegates to `runtime.registerGatewayParent` when present, otherwise `src/lib/gateway_admin.ts`). Never logs or stores raw phone numbers:
+
+```bash
+curl -sS -X POST "$BASE/api/dev/shield/gateway-parent" \
+  -H "content-type: application/json" \
+  -H "x-dev-admin-token: $DEV_ADMIN_TOKEN" \
+  -d "{\"family_id\":\"$FAMILY_ID\",\"parent_id\":\"$PARENT_ID\",\"phone\":\"+919000000001\"}" | jq
+```
+
+### 13. `POST /api/sms/gateway`
+
+Receives forwarded SMS from the spare Android gateway phone (`x-sahaj-gateway-secret: $SMS_GATEWAY_SECRET`), masks OTPs/numbers, inserts idempotently into `shield_events`, and runs the Shield brain via `after()`:
+
+```bash
+curl -sS -X POST "$BASE/api/sms/gateway" \
+  -H "content-type: application/json" \
+  -H "x-sahaj-gateway-secret: $SMS_GATEWAY_SECRET" \
+  -d "{\"from\":\"+919000000001\",\"body\":\"URGENT KYC update OTP 482910 https://kyc-demo.example\",\"received_at\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\",\"gateway_id\":\"gw-1\"}" | jq
+```
+
+### 14. `POST /api/shield/heartbeat`
+
+Device heartbeat signed with the same HMAC-SHA256 + timestamp skew headers (`x-shield-device`, `x-shield-ts`, `x-shield-sig`) as `/api/shield/event`:
+
+```bash
+HB_TS=$(node -e "console.log(Date.now())")
+HB_BODY="{\"device_id\":\"$DEVICE_ID\",\"protections\":{\"sms\":true,\"screening\":true,\"redirection\":false,\"usage\":true,\"notifications\":true,\"overlay\":true},\"android_version\":\"15\",\"app_version\":\"1.0.0\",\"sent_at\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\"}"
+HB_SIG=$(node -e "const c=require('node:crypto'); console.log(c.createHmac('sha256',process.argv[1]).update(process.argv[2]+'.'+process.argv[3]).digest('hex'))" "$DEVICE_SECRET" "$HB_TS" "$HB_BODY")
+curl -sS -X POST "$BASE/api/shield/heartbeat" \
+  -H "content-type: application/json" \
+  -H "x-shield-device: $DEVICE_ID" \
+  -H "x-shield-ts: $HB_TS" \
+  -H "x-shield-sig: $HB_SIG" \
+  --data-binary "$HB_BODY" | jq
+```
+
+### 15. Phase 3 Sarvam Tools (`drill_answer`, `experience_turn`, `call_screen`)
+
+`/api/sarvam/tool/[name]` routes `drill_answer`, `experience_turn`, and `call_screen`. `call_screen` returns `404 {"enabled":false}` unless `CALL_GATEWAY_ENABLED=1` (`501 tool_not_registered` if enabled before `shieldTools` registration is merged in `@sahaj/shield`).
+
+---
+
+## Phase 3 Throwaway-Postgres HTTP Runner
+
+Applies `core_stub.sql`, all `infra/supabase/migrations/*.sql` sorted by name, and `infra/supabase/dev/*.sql` onto an ephemeral `/tmp/shield-p3-pg.*` cluster:
+
+```bash
+pnpm -F @sahaj/shield-api test:e2e-phase3
+```
