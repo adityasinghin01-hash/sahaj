@@ -79,13 +79,20 @@ begin
   exception when invalid_parameter_value then perform pg_temp.c12_assert(true,'invalid signature envelope hash fails closed'); end;
   perform pg_temp.c12_assert((select count(*)=0 from public.outbox where dedupe_key='c12-notice'),'failed commit has no outbox');
   perform pg_temp.c12_assert((select completed_at is null from public.core2_device_handovers where id=j.id),'failed job remains retryable');
-  perform public.core2_complete_device_handover(j.id,e,payload,h,repeat('A',86)||'==',notices);
-  perform public.core2_complete_device_handover(j.id,e,payload,h,repeat('A',86)||'==',notices);
+  -- C-15: a bare notice (no authorized outbox) is refused and rolls back the signed timeline too.
+  -- The authorized path is covered on PG by apps/api/tests/core1/authorized-send.pg.test.ts.
+  begin
+    perform public.core2_complete_device_handover(j.id,e,payload,h,repeat('A',86)||'==',notices);
+    raise exception 'bare notice accepted';
+  exception when insufficient_privilege then perform pg_temp.c12_assert(true,'bare notice refused without authorized outbox'); end;
+  perform pg_temp.c12_assert((select count(*)=0 from public.timeline_events where event_type='core2.device.handover'),'refused notice commits no timeline');
+  perform pg_temp.c12_assert((select count(*)=0 from public.core2_reassurance_updates where subject_person_id=j.person_id),'refused notice writes no Maa line');
+  perform pg_temp.c12_assert((select completed_at is null from public.core2_device_handovers where id=j.id),'refused job remains retryable');
+  perform public.core2_complete_device_handover(j.id,e,payload,h,repeat('A',86)||'==','[]');
+  perform public.core2_complete_device_handover(j.id,e,payload,h,repeat('A',86)||'==','[]');
   perform pg_temp.c12_assert((select count(*)=1 from public.timeline_events where event_type='core2.device.handover'),'one immutable timeline on replay');
-  perform pg_temp.c12_assert((select count(*)=1 from public.outbox where dedupe_key='c12-notice'),'one outbox on replay');
-  perform pg_temp.c12_assert((select count(*)=1 from public.core2_reassurance_updates where subject_person_id=j.person_id),'one Maa truth line');
-  perform pg_temp.c12_assert((select not location_shared and not health_shared and not narrative_shared and not delivery_verified
-    from public.core2_reassurance_updates where subject_person_id=j.person_id),'Maa line no location and no invented delivery');
+  perform pg_temp.c12_assert((select count(*)=0 from public.outbox where dedupe_key='c12-notice'),'handover never writes a bare outbox');
+  perform pg_temp.c12_assert((select completed_at is not null from public.core2_device_handovers where id=j.id),'job completes once');
 end $$;
 
 -- Stale >3min boundary, scaled timer, resolved watches, unknown/never-seen battery.

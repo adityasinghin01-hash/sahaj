@@ -31,7 +31,7 @@ describe.skipIf(!url)('C-14 authorized sends on all-migrations disposable Postgr
     [family, subject, recipient, principal, consent, source, user, identity] = Array.from({ length: 8 }, () => randomUUID());
     sent = 0;
     db = { async rpc(name, args = {}) {
-      if (!/^[a-z_]+$/.test(name) || Object.keys(args).some(k => !/^p_[a-z_]+$/.test(k))) throw new Error('bad_test_rpc');
+      if (!/^[a-z][a-z0-9_]*$/.test(name) || Object.keys(args).some(k => !/^p_[a-z_]+$/.test(k))) throw new Error('bad_test_rpc');
       await sql.unsafe('savepoint rpc_call');
       try {
         const named = Object.keys(args).map((k, i) => `${k} => $${i + 1}`).join(',');
@@ -310,11 +310,11 @@ describe.skipIf(!url)('C-14 authorized sends on all-migrations disposable Postgr
       command: { familyId: family, kind: i.kind, dedupeKey: i.dedupeKey, trustedContactId: i.details!.trustedContactId } };
     const args = { p_job_id: handoverId, p_event: event.envelope, p_payload_canonical: canonicalJson(payload),
       p_chain_hash: event.chainHash, p_signature: event.signature };
-    const bare = await db.rpc('core2_complete_device_handover', { ...args, p_notices: JSON.stringify([notice]) });
+    const bare = await db.rpc('core2_complete_device_handover', { ...args, p_notices: [notice] });
     expect(bare.error?.code).toBe('42501');
     const result = await enqueueAuthorizedSend(db,KEY,i);
     const completed = await db.rpc('core2_complete_device_handover', { ...args,
-      p_notices: JSON.stringify([{ ...notice, authorizedOutboxId: result.id }]) });
+      p_notices: [{ ...notice, authorizedOutboxId: result.id }] });
     expect(completed.error).toBeNull();
     expect((await sql`select completed_at from public.core2_device_handovers where id=${handoverId}`)[0].completed_at).toBeTruthy();
     const lease = await claimAuthorizedSend(db,family,result.id);
