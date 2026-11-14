@@ -6,6 +6,18 @@
   "main": "src/index.ts",
   "types": "src/index.ts",
   "scripts": { "typecheck": "tsc --noEmit", "test": "vitest run" },
-  "dependencies": { "@sahaj/shared": "workspace:*", "zod": "^4.1.0" },
-  "devDependencies": { "typescript": "^5.9.0", "vitest": "^3.2.0" }
+  "dependencies": {
+    "@langchain/core": "1.3.4",
+    "@langchain/langgraph": "1.7.4",
+    "@sahaj/adapters": "workspace:*",
+    "@sahaj/shared": "workspace:*",
+    "ipaddr.js": "2.5.0",
+    "postgres": "^4.1.1",
+    "zod": "^4.1.0"
+  },
+  "devDependencies": {
+    "@types/node": "22.20.5",
+    "typescript": "^5.9.0",
+    "vitest": "^3.2.0"
+  }
 }

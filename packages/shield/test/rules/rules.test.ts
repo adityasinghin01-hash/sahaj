@@ -10,9 +10,9 @@ type Fixture = { id: string; label: "scam" | "normal"; expect: "green" | "yellow
 const FX = fixtures as Fixture[];
 
 describe("fixtures", () => {
-  it("has 15 scam + 15 normal", () => {
-    expect(FX.filter((f) => f.label === "scam")).toHaveLength(15);
-    expect(FX.filter((f) => f.label === "normal")).toHaveLength(15);
+  it("has at least 15 scam + 15 normal", () => {
+    expect(FX.filter((f) => f.label === "scam").length).toBeGreaterThanOrEqual(15);
+    expect(FX.filter((f) => f.label === "normal").length).toBeGreaterThanOrEqual(15);
   });
   for (const f of FX) {
     it(`${f.id} ${f.label} -> ${f.expect}`, () => {

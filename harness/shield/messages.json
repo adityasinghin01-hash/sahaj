@@ -1,0 +1,77 @@
+[
+  { "id": "m_scam_01", "sender": "9800000001", "body": "CBI officer calling: your Aadhaar is linked to money laundering. An arrest warrant is out. Stay on video call and do not disconnect the call.", "label": "scam", "scam_type": "digital_arrest" },
+  { "id": "m_scam_02", "sender": "+14155550101", "body": "Mumbai Crime Branch: aapke khilaf case darj hua hai, digital arrest se bachne ke liye video call par rahein aur verification ke liye paise transfer karein.", "label": "scam", "scam_type": "digital_arrest" },
+  { "id": "m_scam_03", "sender": "9800000002", "body": "ईडी अधिकारी का नोटिस: मनी लॉन्ड्रिंग में आपका नाम आया है। अरेस्ट वारंट जारी है, वीडियो कॉल पर रहें और कॉल मत काटना।", "label": "scam", "scam_type": "digital_arrest" },
+
+  { "id": "m_scam_04", "sender": "9800000003", "body": "Dear SBI customer, your KYC has expired and your account will be blocked today. Update your KYC immediately at bit.ly/sbi-kyc26", "label": "scam", "scam_type": "kyc_block" },
+  { "id": "m_scam_05", "sender": "9800000004", "body": "HDFC Bank alert: aapka khata band hone wala hai. Turant PAN card link karein aur KYC update karein: hdfc-kyc-help.top/verify", "label": "scam", "scam_type": "kyc_block" },
+  { "id": "m_scam_06", "sender": "9800000005", "body": "प्रिय ग्राहक, आपका पीएनबी केवाईसी समाप्त हो गया है। आज ही केवाईसी अपडेट करें वरना खाता बंद कर दिया जाएगा: tinyurl.com/pnbkyc1", "label": "scam", "scam_type": "kyc_block" },
+
+  { "id": "m_scam_07", "sender": "9800000006", "body": "Dear consumer, your electricity connection will be cut tonight at 9:30 PM because your previous month bill was not updated. Contact electricity officer urgently: t.ly/power26", "label": "scam", "scam_type": "electricity_cut" },
+  { "id": "m_scam_08", "sender": "9800000007", "body": "BSES notice: aapka bijli bill update nahi hua hai, aaj raat bijli kat jayegi. Turant bijli officer se baat karein: cutt.ly/bsespay", "label": "scam", "scam_type": "electricity_cut" },
+  { "id": "m_scam_09", "sender": "9800000008", "body": "सूचना: पिछले महीने का बिल अपडेट नहीं होने से आज रात बिजली काट दी जाएगी। तुरंत बिजली अधिकारी से संपर्क करें: bses-bill-desk.xyz/pay", "label": "scam", "scam_type": "electricity_cut" },
+
+  { "id": "m_scam_10", "sender": "+447911000102", "body": "FedEx alert: your parcel has been seized by Mumbai Customs as drugs found inside. Pay customs duty to clear hold: rb.gy/fdx26", "label": "scam", "scam_type": "parcel_customs" },
+  { "id": "m_scam_11", "sender": "9800000009", "body": "India Post: aapka parcel ruka hua hai kyunki address incomplete hai. Redelivery fee bharne ke liye link kholein: indiapost-track.top/re", "label": "scam", "scam_type": "parcel_customs" },
+  { "id": "m_scam_12", "sender": "9800000010", "body": "कस्टम विभाग: आपके नाम का पार्सल जब्त हुआ है, पार्सल में ड्रग्स मिले हैं। जांच के लिए कस्टम ड्यूटी तुरंत भरें: bit.ly/custm1", "label": "scam", "scam_type": "parcel_customs" },
+
+  { "id": "m_scam_13", "sender": "9800000011", "body": "Congratulations you have won Rs 25,00,000 in KBC lucky draw! Claim your prize by paying a small processing fee at kbc-winner26.vip/claim", "label": "scam", "scam_type": "lottery_prize" },
+  { "id": "m_scam_14", "sender": "9800000012", "body": "Badhai ho! Kaun Banega Crorepati mein aapne jeeta hai 25 lakh ka inaam. Registration fee bharein aur lottery claim karein: is.gd/kbcwin", "label": "scam", "scam_type": "lottery_prize" },
+  { "id": "m_scam_15", "sender": "9800000013", "body": "बधाई हो! लकी ड्रा में आपने जीता है कौन बनेगा करोड़पति का बड़ा इनाम। लॉटरी राशि पाने के लिए अभी संपर्क करें: cutt.ly/inaam26", "label": "scam", "scam_type": "lottery_prize" },
+
+  { "id": "m_scam_16", "sender": "9800000014", "body": "Part time job work from home! Like YouTube videos for daily earning Rs 2000-5000. Complete prepaid task and deposit to withdraw: bit.ly/ytjob26", "label": "scam", "scam_type": "job_task" },
+  { "id": "m_scam_17", "sender": "9800000015", "body": "Ghar baithe kamaye roz 3000! Sirf hotel review task aur video like karke task complete karein. Join Telegram: rb.gy/task26", "label": "scam", "scam_type": "job_task" },
+  { "id": "m_scam_18", "sender": "9800000016", "body": "पार्ट टाइम जॉब: घर बैठे कमाएं रोज़ 4000 रुपये। वीडियो लाइक और टेलीग्राम टास्क पूरा करें, प्रीपेड टास्क में तुरंत फायदा: tinyurl.com/jobhi26", "label": "scam", "scam_type": "job_task" },
+
+  { "id": "m_scam_19", "sender": "9800000017", "body": "Maa this is my new number, my phone is damaged. I am in trouble in the hospital after a road mishap, please send money urgently!", "label": "scam", "scam_type": "family_in_trouble" },
+  { "id": "m_scam_20", "sender": "9800000018", "body": "Papa mera naya number hai, mera accident ho gaya hai aur police ne pakad liya hai. Kisi ko mat batana, urgent paise bhejo!", "label": "scam", "scam_type": "family_in_trouble" },
+  { "id": "m_scam_21", "sender": "9800000019", "body": "मम्मी मेरा नया नंबर सेव कर लो, अभी एक्सीडेंट हो गया और अस्पताल में भर्ती हूं। किसी को मत बताना, जल्दी पैसे भेजो!", "label": "scam", "scam_type": "family_in_trouble" },
+
+  { "id": "m_scam_22", "sender": "9800000020", "body": "Warm wedding invitation from Sharma family! Please download invitation app and install wedding card to see venue: http://sharma-wedding.top/invite.apk", "label": "scam", "scam_type": "wedding_invite_apk" },
+  { "id": "m_scam_23", "sender": "9800000021", "body": "Namaste ji, bhai ki shaadi ka card bheja hai. Photo aur address dekhne ke liye card install karein: http://shaadi-card.xyz/Nimantran.apk", "label": "scam", "scam_type": "wedding_invite_apk" },
+  { "id": "m_scam_24", "sender": "9800000022", "body": "सादर निमंत्रण पत्र! शादी का कार्ड देखने के लिए कृपया शादी कार्ड ऐप और कार्ड डाउनलोड करें: http://vivah-card.icu/card.apk", "label": "scam", "scam_type": "wedding_invite_apk" },
+
+  { "id": "m_scam_25", "sender": "9800000023", "body": "Your Income Tax refund of Rs 14,850 is approved! Claim your refund and enter UPI PIN to receive money now: incometax-refund-in.top/go", "label": "scam", "scam_type": "refund_cashback" },
+  { "id": "m_scam_26", "sender": "9800000024", "body": "PhonePe cashback paane ke liye QR scan karein aur refund ke liye PIN enter karein, turant Rs 2000 milenge: bit.ly/ppcb26", "label": "scam", "scam_type": "refund_cashback" },
+  { "id": "m_scam_27", "sender": "9800000025", "body": "बधाई! आपका जीएसटी और इनकम टैक्स रिफंड मंजूर हो गया है। कैशबैक पाएं, पैसे लेने के लिए पिन दर्ज करें: paytm-refund-claim.xyz/p", "label": "scam", "scam_type": "refund_cashback" },
+
+  { "id": "m_scam_28", "sender": "9800000026", "body": "We recorded your private video call. Pay Rs 25000 immediately to delete your video or we will upload on YouTube and send to your contacts.", "label": "scam", "scam_type": "sextortion_threat" },
+  { "id": "m_scam_29", "sender": "9800000027", "body": "Tumhara video mere paas hai. Video delete karne ke liye abhi paise bhejo warna video viral kar denge aur parivar ko bhej denge.", "label": "scam", "scam_type": "sextortion_threat" },
+  { "id": "m_scam_30", "sender": "9800000028", "body": "आपका निजी वीडियो हमारे पास सुरक्षित है। तुरंत पैसे भेजो वरना वीडियो वायरल करके आपके परिवार को भेज देंगे और बदनाम कर देंगे।", "label": "scam", "scam_type": "sextortion_threat" },
+
+  { "id": "m_norm_01", "sender": "AX-HDFCBK-S", "body": "391847 is your OTP for HDFC Bank NetBanking login. Valid for 5 minutes. Do not share this OTP with anyone.", "label": "normal" },
+  { "id": "m_norm_02", "sender": "VM-SBIBNK-S", "body": "OTP is 604219 for SBI YONO UPI transaction of Rs 850.00. Never share OTP with anyone including bank staff.", "label": "normal" },
+  { "id": "m_norm_03", "sender": "JD-ICICIB-S", "body": "728194 is your one time password for ICICI Bank debit card purchase of INR 1,499 at BigBasket. Do not share.", "label": "normal" },
+  { "id": "m_norm_04", "sender": "AD-AXISBK-S", "body": "482019 is your verification code for Axis Mobile login. For security reasons please do not share it.", "label": "normal" },
+  { "id": "m_norm_05", "sender": "BP-KOTAKB-S", "body": "आपका कोटक बैंक लेनदेन का ओटीपी 519304 है। कृपया इसे किसी के साथ साझा न करें।", "label": "normal" },
+  { "id": "m_norm_06", "sender": "JK-PNBSMS-S", "body": "884120 is your PNB ATM PIN generation OTP. Do not share with anyone.", "label": "normal" },
+
+  { "id": "m_norm_07", "sender": "VM-SBIBNK-S", "body": "Dear Customer, Rs 18,500.00 Pension credited to A/c XX4321 on 14-Nov-26. Available balance Rs 42,190.50.", "label": "normal" },
+  { "id": "m_norm_08", "sender": "AX-HDFCBK-S", "body": "Rs 1,240.00 debited from HDFC Bank A/c XX8812 via UPI to GUPTA MEDICAL on 14-Nov-26. Not you? Call 18002026161.", "label": "normal" },
+  { "id": "m_norm_09", "sender": "JD-ICICIB-S", "body": "Your ICICI Bank monthly e-statement for Oct 2026 is available. Login safely at icicibank.com to view.", "label": "normal" },
+  { "id": "m_norm_10", "sender": "AD-AXISBK-S", "body": "Thank you for your SIP payment of Rs 2,000.00 on 14-Nov-26. Track your folio at axisbank.com.", "label": "normal" },
+  { "id": "m_norm_11", "sender": "VM-IPPBNK-S", "body": "आपके इंडिया पोस्ट पेमेंट्स बैंक खाते में 3,000 रुपये जमा हुए हैं। किसी को ओटीपी या पिन न बताएं।", "label": "normal" },
+  { "id": "m_norm_12", "sender": "AX-SBIYNO-S", "body": "Your SBI Fixed Deposit XX9012 matures on 30-Nov-26 and will auto-renew as per your standing instruction.", "label": "normal" },
+
+  { "id": "m_norm_13", "sender": "AD-BLUDRT-S", "body": "Blue Dart: Your package AWB 882104512 is out for delivery today. Share delivery code 4192 only at doorstep.", "label": "normal" },
+  { "id": "m_norm_14", "sender": "BZ-DLHVRY-T", "body": "Delhivery update: Your 1mg medicine order is arriving today before 6 PM. Track at delhivery.com/track", "label": "normal" },
+  { "id": "m_norm_15", "sender": "JD-DTDCEX-S", "body": "DTDC parcel delivered at reception and signed by security guard. Thank you for using dtdc.in.", "label": "normal" },
+  { "id": "m_norm_16", "sender": "IN-INDPST-S", "body": "India Post Speed Post item ED123456IN dispatched from New Delhi sorting hub. Track at indiapost.gov.in.", "label": "normal" },
+  { "id": "m_norm_17", "sender": "VK-BSESDL-T", "body": "BSES Rajdhani: Your monthly electricity bill of Rs 1,680 is generated. Pay on bsesdelhi.com before 24-Nov.", "label": "normal" },
+  { "id": "m_norm_18", "sender": "QP-AIRTEL-S", "body": "Airtel: Your prepaid plan recharged with Rs 299 successfully. Unlimited calls and 1.5GB/day active.", "label": "normal" },
+
+  { "id": "m_norm_19", "sender": "9800000101", "body": "Maa main metro se utar gayi hoon, 15 minute mein ghar pahunch rahi hoon. Chai rakh dena.", "label": "normal" },
+  { "id": "m_norm_20", "sender": "9800000102", "body": "माँ, आज शाम को मैं सब्जी और फल लेकर आऊंगी। आप समय पर दवाई खा लेना।", "label": "normal" },
+  { "id": "m_norm_21", "sender": "9800000103", "body": "Mom, Dr. Verma confirmed the clinic appointment for Tuesday 11 AM. I will drive you there.", "label": "normal" },
+  { "id": "m_norm_22", "sender": "9800000104", "body": "Bua ji, didi ki shaadi 12 December ko Jaipur mein hai. Aapko aur chacha ji ko zaroor aana hai.", "label": "normal" },
+  { "id": "m_norm_23", "sender": "9800000105", "body": "Maa, Rohit reached Pune safely and called me just now. Will talk to you tonight.", "label": "normal" },
+  { "id": "m_norm_24", "sender": "9800000106", "body": "आंटी जी, गुप्ता अंकल की दुकान से ताज़ा पनीर आ गया है, मैं शाम को भिजवा दूंगी।", "label": "normal" },
+
+  { "id": "m_norm_25", "sender": "9800000201", "body": "Happy Diwali to you and the entire family! Wishing you good health and peace.", "label": "normal" },
+  { "id": "m_norm_26", "sender": "9800000202", "body": "दीपावली की हार्दिक शुभकामनाएं! माँ लक्ष्मी आपके घर में सुख, शांति और स्वास्थ्य लाएं।", "label": "normal" },
+  { "id": "m_norm_27", "sender": "9800000203", "body": "Holi ki bahut bahut shubhkamnayein! Sab milkar shaam ko gujiya khane aayenge.", "label": "normal" },
+  { "id": "m_norm_28", "sender": "9800000204", "body": "Eid Mubarak! Duaon mein yaad rakhna, sham ko sewaiyan bhijwa raha hoon.", "label": "normal" },
+  { "id": "m_norm_29", "sender": "9800000205", "body": "Gurpurab di lakh lakh vadhaiyan ji! Satnam Waheguru.", "label": "normal" },
+  { "id": "m_norm_30", "sender": "9800000206", "body": "सुप्रभात! आपका दिन शुभ और मंगलमय हो।", "label": "normal" }
+]
+

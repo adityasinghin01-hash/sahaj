@@ -285,11 +285,20 @@
           { "text": "like youtube videos", "lang": "en", "w": 30 },
           { "text": "prepaid task", "lang": "en", "w": 30 },
           { "text": "hotel review task", "lang": "en", "w": 25 },
+          { "text": "telegram task", "lang": "en", "w": 30 },
+          { "text": "like video and earn", "lang": "en", "w": 30 },
+          { "text": "deposit to withdraw", "lang": "en", "w": 30 },
           { "text": "ghar baithe kamaye", "lang": "hinglish", "w": 25 },
           { "text": "ghar baithe kamai", "lang": "hinglish", "w": 25 },
           { "text": "roz kamaye", "lang": "hinglish", "w": 20 },
+          { "text": "task complete karein", "lang": "hinglish", "w": 25 },
+          { "text": "video like karke", "lang": "hinglish", "w": 25 },
           { "text": "घर बैठे कमाएं", "lang": "hi", "w": 25 },
-          { "text": "पार्ट टाइम जॉब", "lang": "hi", "w": 20 }
+          { "text": "घर बैठे कमाई", "lang": "hi", "w": 25 },
+          { "text": "पार्ट टाइम जॉब", "lang": "hi", "w": 20 },
+          { "text": "टेलीग्राम टास्क", "lang": "hi", "w": 30 },
+          { "text": "प्रीपेड टास्क", "lang": "hi", "w": 30 },
+          { "text": "वीडियो लाइक", "lang": "hi", "w": 25 }
         ]
       },
       "family_in_trouble": {
@@ -300,11 +309,19 @@
           { "text": "mera naya number hai", "lang": "hinglish", "w": 20 },
           { "text": "police ne pakad liya", "lang": "hinglish", "w": 30 },
           { "text": "main musibat mein hoon", "lang": "hinglish", "w": 25 },
+          { "text": "hospital mein hoon", "lang": "hinglish", "w": 25 },
+          { "text": "thane mein hoon", "lang": "hinglish", "w": 30 },
           { "text": "i am in trouble", "lang": "en", "w": 25 },
           { "text": "this is my new number", "lang": "en", "w": 20 },
+          { "text": "my phone is damaged", "lang": "en", "w": 20 },
+          { "text": "in the hospital", "lang": "en", "w": 20 },
+          { "text": "send money urgently", "lang": "en", "w": 30 },
           { "text": "मुसीबत में हूं", "lang": "hi", "w": 25 },
           { "text": "एक्सीडेंट हो गया", "lang": "hi", "w": 25 },
-          { "text": "मेरा नया नंबर", "lang": "hi", "w": 20 }
+          { "text": "मेरा नया नंबर", "lang": "hi", "w": 20 },
+          { "text": "पुलिस ने पकड़ा", "lang": "hi", "w": 30 },
+          { "text": "अस्पताल में भर्ती", "lang": "hi", "w": 25 },
+          { "text": "जल्दी पैसे भेजो", "lang": "hi", "w": 30 }
         ]
       },
       "wedding_invite_apk": {
@@ -313,10 +330,19 @@
           { "text": "wedding invitation", "lang": "en", "w": 15 },
           { "text": "wedding card", "lang": "en", "w": 15 },
           { "text": "invitation card download", "lang": "en", "w": 25 },
+          { "text": "install wedding card", "lang": "en", "w": 30 },
+          { "text": "download invitation app", "lang": "en", "w": 30 },
+          { "text": "view wedding card", "lang": "en", "w": 20 },
           { "text": "shaadi ka card", "lang": "hinglish", "w": 15 },
           { "text": "card download karein", "lang": "hinglish", "w": 25 },
+          { "text": "shaadi card app", "lang": "hinglish", "w": 30 },
+          { "text": "nimantran download", "lang": "hinglish", "w": 25 },
+          { "text": "card install karein", "lang": "hinglish", "w": 30 },
           { "text": "शादी का कार्ड", "lang": "hi", "w": 15 },
-          { "text": "निमंत्रण पत्र", "lang": "hi", "w": 10 }
+          { "text": "निमंत्रण पत्र", "lang": "hi", "w": 10 },
+          { "text": "शादी कार्ड ऐप", "lang": "hi", "w": 30 },
+          { "text": "कार्ड डाउनलोड करें", "lang": "hi", "w": 25 },
+          { "text": "निमंत्रण डाउनलोड", "lang": "hi", "w": 25 }
         ]
       },
       "refund_cashback": {
@@ -327,10 +353,18 @@
           { "text": "cashback credited", "lang": "en", "w": 15 },
           { "text": "income tax refund", "lang": "en", "w": 25 },
           { "text": "enter pin to receive", "lang": "en", "w": 35 },
+          { "text": "claim your cashback", "lang": "en", "w": 25 },
+          { "text": "enter upi pin to receive", "lang": "en", "w": 35 },
+          { "text": "scan qr to receive", "lang": "en", "w": 35 },
           { "text": "refund ke liye pin", "lang": "hinglish", "w": 35 },
           { "text": "cashback paane ke liye", "lang": "hinglish", "w": 25 },
+          { "text": "refund lene ke liye", "lang": "hinglish", "w": 25 },
+          { "text": "qr scan karein", "lang": "hinglish", "w": 25 },
           { "text": "रिफंड", "lang": "hi", "w": 10 },
-          { "text": "कैशबैक", "lang": "hi", "w": 10 }
+          { "text": "कैशबैक", "lang": "hi", "w": 10 },
+          { "text": "रिफंड क्लेम", "lang": "hi", "w": 25 },
+          { "text": "कैशबैक पाएं", "lang": "hi", "w": 25 },
+          { "text": "पैसे लेने के लिए पिन", "lang": "hi", "w": 35 }
         ]
       },
       "sextortion_threat": {
@@ -339,10 +373,19 @@
           { "text": "your private video", "lang": "en", "w": 30 },
           { "text": "video will be viral", "lang": "en", "w": 30 },
           { "text": "send to your contacts", "lang": "en", "w": 20 },
+          { "text": "upload on youtube", "lang": "en", "w": 25 },
+          { "text": "share with your family", "lang": "en", "w": 25 },
+          { "text": "delete your video", "lang": "en", "w": 25 },
           { "text": "video viral kar denge", "lang": "hinglish", "w": 30 },
           { "text": "tumhara video", "lang": "hinglish", "w": 15 },
+          { "text": "video delete karne ke liye", "lang": "hinglish", "w": 30 },
+          { "text": "parivar ko bhej denge", "lang": "hinglish", "w": 30 },
+          { "text": "badnaam kar denge", "lang": "hinglish", "w": 25 },
           { "text": "वीडियो वायरल", "lang": "hi", "w": 30 },
-          { "text": "बदनाम कर देंगे", "lang": "hi", "w": 25 }
+          { "text": "बदनाम कर देंगे", "lang": "hi", "w": 25 },
+          { "text": "निजी वीडियो", "lang": "hi", "w": 30 },
+          { "text": "परिवार को भेज देंगे", "lang": "hi", "w": 30 },
+          { "text": "वीडियो डिलीट", "lang": "hi", "w": 25 }
         ]
       }
     }
