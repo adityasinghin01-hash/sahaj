@@ -18,3 +18,13 @@ export * from "./warnings";
 export * from "./gateway";
 export * from "./callgate";
 export * from "./runtime";
+export {
+  planWeeklyDrills,
+  createSchedulePg,
+  readCheckinDrillVariablesPg,
+  checkinDrillCacheKey,
+  type ScheduledParent,
+  type WeeklyDrillPlanResult,
+  type DrillScheduleStore,
+  type ScheduleDrillsDeps,
+} from "./drills/schedule";

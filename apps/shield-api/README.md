@@ -314,3 +314,26 @@ Applies `core_stub.sql`, all `infra/supabase/migrations/*.sql` sorted by name, a
 ```bash
 pnpm -F @sahaj/shield-api test:e2e-phase3
 ```
+
+---
+
+## Scheduling `/api/cron/weekly-drills` (run once a day)
+
+`GET /api/cron/weekly-drills` calls `planWeeklyDrills({ now })` to schedule the weekly helper drill (stored as the next check-in variables) and start eligible opt-in experience drills. Run once a day (daytime IST, outside quiet hours) with `x-cron-secret: $CRON_SECRET`; re-running within the same 7-day window is idempotent.
+
+```sql
+select cron.schedule(
+  'shield-weekly-drills-daily',
+  '30 4 * * *', -- run once a day (10:00 IST / 04:30 UTC, outside quiet hours)
+  $$
+  select net.http_get(
+    url := 'https://<your-shield-api-host>/api/cron/weekly-drills',
+    headers := jsonb_build_object('x-cron-secret', '<CRON_SECRET>')
+  );
+  $$
+);
+```
+
+```bash
+curl -sS -H "x-cron-secret: $CRON_SECRET" "$BASE/api/cron/weekly-drills" | jq
+```
