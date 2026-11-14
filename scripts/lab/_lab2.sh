@@ -183,6 +183,17 @@ mint_service_role_key() {
     process.stdout.write(d + "." + createHmac("sha256", s).update(d).digest("base64url"));'
 }
 
+# True when SUPABASE_SERVICE_ROLE_KEY is an HS256 JWT signed with the current SUPABASE_JWT_SECRET (values stay in env).
+service_role_key_matches() {
+  node -e '
+    const { createHmac, timingSafeEqual } = require("node:crypto");
+    const [h, p, s] = (process.env.SUPABASE_SERVICE_ROLE_KEY || "").split(".");
+    if (!h || !p || !s || !process.env.SUPABASE_JWT_SECRET) process.exit(1);
+    const want = Buffer.from(createHmac("sha256", process.env.SUPABASE_JWT_SECRET).update(h + "." + p).digest("base64url"));
+    const got = Buffer.from(s);
+    process.exit(want.length === got.length && timingSafeEqual(want, got) ? 0 : 1);'
+}
+
 # Prints KEY="PEM" lines for a fresh Ed25519 pair: <PRIV_NAME> and optional <PUB_NAME>.
 gen_ed25519_env() {
   node -e '
@@ -223,7 +234,9 @@ load_lab2_env() {
   fi
   export TIMELINE_SIGNING_KEY_ID="${TIMELINE_SIGNING_KEY_ID:-lab2-core2-1}"
   export SIGNING_KEY_ID="${SIGNING_KEY_ID:-lab2-atlas-1}"
-  if [[ -z "${SUPABASE_SERVICE_ROLE_KEY:-}" ]]; then
+  # Re-mint when the stored key was signed with a different SUPABASE_JWT_SECRET (e.g. the lab dir was first started with
+  # another secrets file): PostgREST would answer 401 to every service-role call.
+  if [[ -z "${SUPABASE_SERVICE_ROLE_KEY:-}" ]] || ! service_role_key_matches; then
     export SUPABASE_SERVICE_ROLE_KEY="$(mint_service_role_key)"; generated+=(SUPABASE_SERVICE_ROLE_KEY)
   fi
 

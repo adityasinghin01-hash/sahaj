@@ -122,6 +122,9 @@ describe.skipIf(!url)('C-14 authorized sends on all-migrations disposable Postgr
       // Stop before the mutation to obtain a genuine pending request and the Cedar-approved envelope.
       db = { rpc: (name, args) => {
         if (name === 'enqueue_authorized_command') { captured = args; return Promise.resolve({ data: { status: 'denied' }, error: null }); }
+        // Keep the job lease live (enqueueAuthorizedSend closes the job on refusal) so the replay below is refused by
+        // the SQL authorization checks, not merely by stale_job_lease.
+        if (name === 'finish_workflow_job') return Promise.resolve({ data: true, error: null });
         return realDb.rpc(name, args);
       } };
       try { await expect(enqueue(i)).rejects.toThrow('send_not_authorized'); }
