@@ -98,7 +98,24 @@ export function createCheckinVarsHandler(getApp: () => ShieldApp) {
     if (!family.success) return Response.json({ error: "invalid_request" }, { status: 400 });
     const tip = await app.getWeeklyTip({ family_id: family.data });
     if (!tip.ok) return Response.json({ error: tip.error }, { status: tip.status });
-    // Names match the check-in agent's variables ("is hafte ka fraud").
-    return Response.json({ fraud_tip_hi: tip.tip.fraud_tip_hi, fraud_tip_en: tip.tip.fraud_tip_en, as_of: tip.as_of });
+    // Names match the check-in agent's variables ("is hafte ka fraud", @drill_story, @drill_praise).
+    const body: Record<string, unknown> = {
+      fraud_tip: tip.tip.fraud_tip_hi, fraud_tip_hi: tip.tip.fraud_tip_hi, fraud_tip_en: tip.tip.fraud_tip_en, as_of: tip.as_of,
+      drill_id: "", drill_story: "", drill_praise: "",
+    };
+    const parent = Uuid.safeParse(new URL(req.url).searchParams.get("parent_id"));
+    if (parent.success) {
+      const runtime = app.runtime as unknown as {
+        pickDrill?: (input: { familyId: string; parentId: string; now: Date }) => Promise<{ checkin_variables?: Record<string, string> } | null>;
+        takeCheckinPraise?: (input: { familyId: string; parentId: string }) => Promise<{ drill_praise: string } | null>;
+      };
+      const ctx = { familyId: family.data, parentId: parent.data };
+      // A weekly helper drill (null when one was asked in the last 7 days) and any queued praise line.
+      const drill = runtime.pickDrill ? await runtime.pickDrill({ ...ctx, now: new Date() }).catch(() => null) : null;
+      Object.assign(body, drill?.checkin_variables ?? {});
+      const praise = runtime.takeCheckinPraise ? await runtime.takeCheckinPraise(ctx).catch(() => null) : null;
+      if (praise) body.drill_praise = praise.drill_praise;
+    }
+    return Response.json(body);
   };
 }

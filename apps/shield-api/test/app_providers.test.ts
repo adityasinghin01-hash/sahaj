@@ -173,7 +173,10 @@ describe("app real-provider ports (mock fetch only)", () => {
         "connection",
       );
       expect(payload.webhook_config.url).toBe(env.SARVAM_WEBHOOK_URL);
-      expect(JSON.stringify(payload.app_config.agent_variables)).not.toMatch(
+      // Ids (UUIDs) are allowed; phone numbers, OTPs and any other 4+ digit run are not.
+      const vars = payload.app_config.agent_variables;
+      expect(vars.family_id).toBe(F);
+      expect(JSON.stringify(vars).replace(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/gi, "<id>")).not.toMatch(
         /\d{4}/,
       );
       expect(payload.app_config.app_overrides.initial_bot_message).toContain(
@@ -240,5 +243,19 @@ describe("app real-provider ports (mock fetch only)", () => {
       .toEqual({ placed: false });
     expect(offFetch).not.toHaveBeenCalled();
     expect(off.writes.filter(w => w.query.includes("insert"))).toHaveLength(0);
+  });
+  it("Sarvam agents get the context their prompts read: responder @incident_id, drill script, @callback_line", async () => {
+    const { sql } = fakeSql();
+    const fetchFn = vi.fn(async () => Response.json({ attempt_id: "attempt" }));
+    const port = createCallsPort(sql, { ...env, SARVAM_AGENT_ID_EXPERIENCE: "experience" }, fetchFn);
+    await port.startResponderCall({ familyId: F, toPersonId: P, checkId: V });
+    await port.startResponderCall({ familyId: F, toPersonId: P, checkId: "exp.kyc.1", purpose: "experience_drill",
+      script: { id: "kyc", opening_hi: "Namaste ji", ask_hi: "KYC update karna hai", nudge_hi: "Jaldi kijiye" } });
+    await port.startCallback({ familyId: F, parentId: P, line: "Ye Rohit nahi tha" });
+    const bodies = fetchFn.mock.calls.map(c => JSON.parse((c as unknown as [string, RequestInit])[1].body as string));
+    expect(bodies[0].app_config.agent_variables).toMatchObject({ incident_id: V, family_id: F, person_id: P });
+    expect(bodies[1].app_config.app_id).toBe("experience");
+    expect(bodies[1].app_config.agent_variables).toMatchObject({ drill_id: "exp.kyc.1", opening: "Namaste ji", ask: "KYC update karna hai", nudge: "Jaldi kijiye" });
+    expect(bodies[2].app_config.agent_variables).toMatchObject({ callback_line: "Ye Rohit nahi tha", line: "Ye Rohit nahi tha", parent_id: P });
   });
 });

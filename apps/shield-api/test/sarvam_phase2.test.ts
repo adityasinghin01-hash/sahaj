@@ -101,3 +101,15 @@ describe("webhook reads the metadata our Sarvam calls port sends", () => {
     expect(parsed).toMatchObject({ family_id: FAMILY, parent_id: PARENT, purpose: "checkin", status: "busy", in_checkin_window: true });
   });
 });
+
+describe("check-in variables include the weekly drill and praise when parent_id is given", () => {
+  it("returns drill_story / drill_praise from the runtime", async () => {
+    const { app } = fakeApp({ runtime: {
+      pickDrill: vi.fn(async () => ({ checkin_variables: { drill_id: "d1", drill_story: "Meri saheli ko phone aaya..." } })),
+      takeCheckinPraise: vi.fn(async () => ({ drill_praise: "Bahut accha kiya aapne" })),
+    } } as unknown as Partial<ShieldApp>);
+    const res = await createCheckinVarsHandler(() => app)(new Request(`http://x/api/sarvam/checkin-vars?family_id=${FAMILY}&parent_id=${PARENT}`, {
+      headers: { authorization: `Bearer ${TOOL}` } }));
+    expect(await res.json()).toMatchObject({ fraud_tip: "KYC ke naam par link mat kholiye", drill_id: "d1", drill_story: "Meri saheli ko phone aaya...", drill_praise: "Bahut accha kiya aapne" });
+  });
+});

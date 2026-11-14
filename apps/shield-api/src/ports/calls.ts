@@ -5,10 +5,12 @@ import { writeOutbox } from "./outbox";
 import { claimProvider, finishProvider } from "../lib/app_provider";
 
 // Verified 2026-11-14: https://docs.sarvam.ai/voice-agents/api/instant-outbound/create.md
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
 /** True only when every Sarvam outbound setting for this purpose is present and outbound is switched on. */
 export function isSarvamOutboundConfigured(
   env: Readonly<Record<string, string | undefined>>,
-  purpose: "CHECKIN" | "RESPONDER" | "CALLBACK",
+  purpose: "CHECKIN" | "RESPONDER" | "CALLBACK" | "EXPERIENCE",
 ): boolean {
   return Boolean(
     env.SARVAM_API_KEY &&
@@ -32,7 +34,7 @@ export function createCallsPort(
   fetchFn: typeof fetch = fetch,
 ): SarvamCallsPort {
   async function outbound(
-    purpose: "CHECKIN" | "RESPONDER" | "CALLBACK",
+    purpose: "CHECKIN" | "RESPONDER" | "CALLBACK" | "EXPERIENCE",
     input: {
       familyId: string;
       personId: string;
@@ -41,6 +43,8 @@ export function createCallsPort(
       line?: string;
       /** Extra webhook metadata, e.g. busy-watch `in_checkin_window` / `streak_id`. Never phone numbers. */
       metadata?: Record<string, string | boolean>;
+      /** Extra agent variables the prompt reads (@incident_id, @drill_id, @opening …). Masked before sending. */
+      variables?: Record<string, string>;
     },
   ): Promise<boolean> {
     const agent = env[`SARVAM_AGENT_ID_${purpose}`];
@@ -105,7 +109,14 @@ export function createCallsPort(
               agent_variables: {
                 purpose: purpose.toLowerCase(),
                 introduction: "Main Sahaj ki AI sahayak hoon.",
-                ...(input.line ? { line: maskDigits(mask(input.line)) } : {}),
+                // Tool calls need the family/person context (ids only, never phone numbers).
+                family_id: input.familyId,
+                parent_id: input.parentId ?? input.personId,
+                person_id: input.personId,
+                ...Object.fromEntries(Object.entries(input.variables ?? {})
+                  .map(([name, value]) => [name, UUID_RE.test(value) ? value : maskDigits(mask(value))])),
+                // The callback prompt reads @callback_line; older prompts read @line.
+                ...(input.line ? { line: maskDigits(mask(input.line)), callback_line: maskDigits(mask(input.line)) } : {}),
               },
               app_overrides: {
                 initial_bot_message:
@@ -168,10 +179,16 @@ export function createCallsPort(
       return { status: "no_answer" };
     },
     async startResponderCall(input) {
-      await outbound("RESPONDER", {
+      // Experience drills use their own agent when configured (else the responder agent) and carry the
+      // generic script the drill prompt reads; family checks carry the check id as @incident_id.
+      const drill = input.purpose === "experience_drill" && input.script ? input.script : null;
+      await outbound(drill && env.SARVAM_AGENT_ID_EXPERIENCE ? "EXPERIENCE" : "RESPONDER", {
         familyId: input.familyId,
         personId: input.toPersonId,
         key: `calls:responder:${input.checkId}`,
+        variables: drill
+          ? { drill_id: input.checkId, opening: drill.opening_hi, ask: drill.ask_hi, nudge: drill.nudge_hi }
+          : { incident_id: input.checkId, check_id: input.checkId },
       });
     },
     async startCallback(input) {
