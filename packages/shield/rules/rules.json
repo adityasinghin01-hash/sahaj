@@ -1,0 +1,383 @@
+{
+  "version": "1.0.0",
+  "updated": "2026-11-14",
+  "sources": [
+    { "id": "rbi_beaware_2022", "title": "RBI 'BE(A)WARE' booklet on modus operandi of financial frauds (2022)", "url": "https://rbi.org.in/commonperson/English/Scripts/BEAWARE.aspx" },
+    { "id": "state_police_advisories", "title": "State police / I4C cyber-crime advisories (digital arrest, electricity cut, parcel/customs, task jobs, APK invites)", "url": "https://cybercrime.gov.in" },
+    { "id": "trai_headers_1600", "title": "TRAI TCCCPR 2018 + directions on SMS header suffixes (-P/-S/-T/-G), 140-series telemarketing and 1600-series BFSI service calls", "url": "https://www.trai.gov.in" }
+  ],
+  "regex_dialect": "Strings compiled with new RegExp(pattern, flags) in JS and Pattern.compile in Java/Kotlin. Allowed flags: 'i' only (map to CASE_INSENSITIVE). No lookbehind, no named groups, no \\p{..}/\\u{..} escapes. Lookahead (?= / (?! and non-capturing (?: are allowed.",
+  "normalize": {
+    "note": "Phrase matching: lowercase; Devanagari digits U+0966-U+096F -> 0-9; drop U+200C/U+200D; every char that is not [a-z0-9] or Devanagari U+0900-U+0963,U+0966-U+097F becomes a space; collapse spaces; a phrase hits when ' '+phrase+' ' occurs in ' '+text+' '. Phrases are normalized the same way.",
+    "number_strip_pattern": "[\\s().-]"
+  },
+
+  "sender": {
+    "rules": [
+      { "id": "sender.business_header", "type": "business_header", "pattern": "^[A-Z]{2}-[A-Z0-9]{3,6}(-[PSTG])?$", "flags": "i", "score": 0,
+        "reason": { "hi": "संदेश रजिस्टर्ड बिज़नेस हेडर से आया है", "en": "Sent from a registered business header" } },
+      { "id": "sender.mobile_10", "type": "mobile_10", "pattern": "^(\\+91|0091|91|0)?[6-9][0-9]{9}$", "flags": "", "score": 0,
+        "reason": { "hi": "संदेश किसी आम 10 अंकों वाले मोबाइल नंबर से आया है, बैंक या कंपनी से नहीं", "en": "Sent from an ordinary 10-digit mobile number, not a bank/company header" } },
+      { "id": "sender.international", "type": "international", "pattern": "^(\\+|00)(?!91)[1-9][0-9]{6,14}$", "flags": "", "score": 15,
+        "reason": { "hi": "संदेश विदेशी नंबर से आया है", "en": "Sent from an international number" } },
+      { "id": "sender.short_code", "type": "short_code", "pattern": "^[0-9]{3,6}$", "flags": "", "score": 0,
+        "reason": { "hi": "संदेश शॉर्ट कोड से आया है", "en": "Sent from a short code" } }
+    ],
+    "mobile_claims_brand": { "id": "sender.mobile_claims_brand", "score": 15,
+      "reason": { "hi": "बैंक/बिजली/कूरियर की बात आम मोबाइल नंबर से की गई है — असली कंपनी ऐसे नंबर से SMS नहीं भेजती", "en": "Bank/electricity/courier message from an ordinary mobile number — real companies use registered headers" } },
+    "saved_contact": { "id": "sender.saved_contact", "score": -10,
+      "reason": { "hi": "भेजने वाला आपके फ़ोन में सेव है", "en": "Sender is a saved contact" } }
+  },
+
+  "caller": {
+    "rules": [
+      { "id": "caller.series_1600", "type": "series_1600", "pattern": "^(\\+91|0091|91|0)?1600[0-9]{6}$", "flags": "", "score": -10,
+        "reason": { "hi": "1600 वाला नंबर — रजिस्टर्ड बैंक/बीमा कंपनी की कॉल", "en": "1600-series number — registered bank/insurer caller" } },
+      { "id": "caller.series_140", "type": "series_140", "pattern": "^(\\+91|0091|91|0)?140[0-9]{7}$", "flags": "", "score": 5,
+        "reason": { "hi": "140 वाला नंबर — विज्ञापन/टेलीमार्केटिंग कॉल", "en": "140-series number — telemarketing call" } },
+      { "id": "caller.mobile_10", "type": "mobile_10", "pattern": "^(\\+91|0091|91|0)?[6-9][0-9]{9}$", "flags": "", "score": 5,
+        "reason": { "hi": "अनजान 10 अंकों वाले मोबाइल नंबर से कॉल", "en": "Call from an unknown 10-digit mobile number" } },
+      { "id": "caller.international", "type": "international", "pattern": "^(\\+|00)(?!91)[1-9][0-9]{6,14}$", "flags": "", "score": 20,
+        "reason": { "hi": "विदेशी नंबर से कॉल", "en": "Call from an international number" } }
+    ]
+  },
+
+  "otp": {
+    "id": "otp.present",
+    "keyword_pattern": "\\b(otp|one[ -]?time[ -]?(password|passcode|pin)|verification( code)?|security code|auth(entication)? code|login code|code|do not share|don'?t share|never share|share na kar[ea]i?n?)\\b|ओटीपी|वन टाइम पासवर्ड|सत्यापन( कोड)?|कोड|साझा न कर|शेयर न कर",
+    "keyword_flags": "i",
+    "number_pattern": "(^|[^0-9A-Za-z<_])([0-9]{4,8})(?![0-9A-Za-z_])",
+    "number_flags": "",
+    "number_group": 2,
+    "currency_before_pattern": "(rs\\.?|inr|₹|mrp)\\s*$",
+    "currency_before_flags": "i",
+    "window_chars": 60,
+    "reason": { "hi": "इस संदेश में OTP है — OTP किसी को न बताएं", "en": "This message contains an OTP — never share it" }
+  },
+
+  "mask": {
+    "note": "Applied in this order. URLs -> <URL:host> (4+ digit runs in host -> '#', ' [.apk]' appended for APK links); then every step below EXCEPT the last (1600, intl, mobile) with group 1 (left boundary) kept; then OTP digits -> otp_token; then the last step; finally any remaining 4+ digit run -> <NUM> (the lookahead keeps the literal '1600' inside the <1600_NUMBER> token).",
+    "url_token_prefix": "<URL:",
+    "url_token_suffix": ">",
+    "apk_marker": " [.apk]",
+    "otp_token": "******",
+    "steps": [
+      { "id": "mask.series_1600", "token": "<1600_NUMBER>", "pattern": "(^|[^0-9+])(((\\+91|0091|91|0)[ -]?)?1600[ -]?[0-9]{3}[ -]?[0-9]{3})(?![0-9])", "flags": "" },
+      { "id": "mask.international", "token": "<INTL>", "pattern": "(^|[^0-9+])((\\+|00)(?!91)[1-9][0-9 -]{6,16}[0-9])(?![0-9])", "flags": "" },
+      { "id": "mask.mobile_10", "token": "<MOBILE_10>", "pattern": "(^|[^0-9+])(((\\+91|0091|91|0)[ -]?)?[6-9][0-9]{4}[ -]?[0-9]{5})(?![0-9])", "flags": "" },
+      { "id": "mask.digits", "token": "<NUM>", "pattern": "(^|[^0-9])([0-9]{4,})(?!_NUMBER>)", "flags": "" }
+    ]
+  },
+
+  "links": {
+    "url_pattern": "(^|[^A-Za-z0-9@._-])((?:https?://|www\\.)[^\\s<>\"']+|(?:[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?\\.)+(?:com|in|net|org|info|xyz|ly|gd|gy|co|io|me|top|site|online|live|club|app|link|sbi|bank|gov|nic|tk|ml|ga|cf|gq|cc|biz|shop|store|vip|icu|buzz|cyou|click|fun|win|loan|work|today|support|help|services|page|ws|at|to|id|ru|cn|pw|su|us|uk|ae)(?![A-Za-z0-9-])(?:[/?#][^\\s<>\"']*)?)",
+    "url_flags": "i",
+    "url_group": 2,
+    "trailing_punct_pattern": "[.,;:!?)\\]}'\"]+$",
+    "multi_part_suffixes": ["co.in", "gov.in", "nic.in", "org.in", "net.in", "ac.in", "edu.in", "res.in", "firm.in", "gen.in", "ind.in", "bank.in", "fin.in", "co.uk", "org.uk", "com.au", "co.za"],
+    "present": { "id": "link.present", "score": 5,
+      "reason": { "hi": "संदेश में लिंक है", "en": "Message contains a link" } },
+    "shortener": { "id": "link.shortener", "score": 25,
+      "domains": ["bit.ly", "tinyurl.com", "cutt.ly", "is.gd", "t.ly", "rb.gy", "goo.gl", "ow.ly", "t.co", "shorturl.at", "tiny.cc", "s.id", "v.gd", "buff.ly", "rebrand.ly", "bl.ink", "short.gy", "shorte.st", "adf.ly", "clck.ru", "urlz.fr", "lnkd.in", "tiny.one", "surl.li", "u.to"],
+      "reason": { "hi": "छोटा किया हुआ (short) लिंक — असली जगह छिपी है", "en": "Shortened link hides the real destination" } },
+    "apk": { "id": "link.apk", "score": 60, "force_level": "red",
+      "pattern": "\\.apk([^A-Za-z0-9]|$)|एपीके",
+      "flags": "i",
+      "reason": { "hi": ".apk फ़ाइल — इसे इंस्टॉल करने से फ़ोन हैक हो सकता है", "en": ".apk file — installing it can take over the phone" } },
+    "look_alike": { "id": "link.look_alike", "score": 40,
+      "reason": { "hi": "लिंक असली कंपनी जैसा दिखता है पर उसकी आधिकारिक वेबसाइट नहीं है", "en": "Link imitates a brand but is not its official website" } },
+    "punycode": { "id": "link.punycode", "score": 40,
+      "reason": { "hi": "लिंक में छिपे हुए विदेशी अक्षर (xn--) हैं", "en": "Link uses disguised characters (punycode xn--)" } },
+    "trusted_suffixes": ["bank.in", "fin.in", "gov.in", "nic.in"],
+    "brands": [
+      { "brand": "SBI", "tokens": ["sbi", "onlinesbi", "yonosbi", "yono"], "official": ["sbi.co.in", "sbi", "onlinesbi.com", "sbicard.com", "sbilife.co.in", "sbimf.com"] },
+      { "brand": "HDFC Bank", "tokens": ["hdfc"], "official": ["hdfcbank.com", "hdfc.com", "hdfcbank.net", "hdfclife.com", "hdfcergo.com"] },
+      { "brand": "ICICI Bank", "tokens": ["icici"], "official": ["icicibank.com", "icicidirect.com", "iciciprulife.com", "icicilombard.com"] },
+      { "brand": "Axis Bank", "tokens": ["axisbank", "axis"], "official": ["axisbank.com", "axisbank.co.in"] },
+      { "brand": "PNB", "tokens": ["pnb", "punjabnational"], "official": ["pnbindia.in", "netpnb.com", "pnb.co.in"] },
+      { "brand": "Kotak", "tokens": ["kotak"], "official": ["kotak.com", "kotaksecurities.com", "kotakbank.com"] },
+      { "brand": "Bank of Baroda", "tokens": ["bankofbaroda", "barodabank", "bobibanking", "bobcard"], "official": ["bankofbaroda.in", "bankofbaroda.com", "bobibanking.com", "bobcard.co.in"] },
+      { "brand": "UIDAI", "tokens": ["uidai", "aadhaar", "aadhar", "adhaar"], "official": ["uidai.gov.in"] },
+      { "brand": "Income Tax", "tokens": ["incometax", "income-tax", "itrefund", "itr-refund"], "official": ["incometax.gov.in", "incometaxindia.gov.in"] },
+      { "brand": "India Post", "tokens": ["indiapost", "india-post", "ippb", "speedpost"], "official": ["indiapost.gov.in", "ippbonline.com"] },
+      { "brand": "EPFO", "tokens": ["epfo", "epfindia", "pfclaim"], "official": ["epfindia.gov.in"] },
+      { "brand": "NPCI / BHIM", "tokens": ["npci", "bhim", "bhimupi"], "official": ["npci.org.in", "bhimupi.org.in"] },
+      { "brand": "Paytm", "tokens": ["paytm"], "official": ["paytm.com", "paytmbank.com", "paytmmoney.com"] },
+      { "brand": "PhonePe", "tokens": ["phonepe", "phone-pe"], "official": ["phonepe.com"] },
+      { "brand": "Google Pay", "tokens": ["gpay", "googlepay", "google-pay"], "official": ["google.com", "gpay.app"] },
+      { "brand": "Delhi electricity (BSES / Tata Power-DDL)", "tokens": ["bses", "tatapower", "tata-power", "bsesdelhi"], "official": ["bsesdelhi.com", "tatapower-ddl.com", "tatapower.com"] },
+      { "brand": "UP electricity (UPPCL)", "tokens": ["uppcl"], "official": ["uppcl.org", "uppclonline.com"] },
+      { "brand": "Maharashtra electricity (MSEDCL)", "tokens": ["msedcl", "mahadiscom", "mahavitaran"], "official": ["mahadiscom.in"] },
+      { "brand": "Karnataka electricity (BESCOM etc.)", "tokens": ["bescom", "hescom", "mescom", "gescom", "cescmysore"], "official": ["bescom.co.in", "hescom.co.in", "mescom.co.in", "gescom.in", "cescmysore.in", "karnataka.gov.in"] },
+      { "brand": "Blue Dart", "tokens": ["bluedart", "blue-dart"], "official": ["bluedart.com"] },
+      { "brand": "Delhivery", "tokens": ["delhivery"], "official": ["delhivery.com"] },
+      { "brand": "DTDC", "tokens": ["dtdc"], "official": ["dtdc.com", "dtdc.in"] }
+    ]
+  },
+
+  "topic_words": {
+    "note": "Used by pattern P5 and sender.mobile_claims_brand. Same phrase matching as scam scripts.",
+    "bank": ["bank", "banking", "account", "a c", "kyc", "pan card", "aadhaar", "aadhar", "atm", "debit card", "credit card", "netbanking", "net banking", "upi", "yono", "sbi", "hdfc", "icici", "axis", "pnb", "kotak", "baroda", "paytm", "phonepe", "बैंक", "खाता", "केवाईसी", "अकाउंट", "पैन कार्ड"],
+    "electricity": ["electricity", "bijli", "power", "meter", "light bill", "electricity bill", "bijli bill", "bses", "uppcl", "msedcl", "mahadiscom", "bescom", "बिजली", "बिजली बिल", "मीटर"],
+    "courier": ["parcel", "courier", "package", "shipment", "consignment", "customs", "india post", "fedex", "dhl", "blue dart", "bluedart", "delhivery", "dtdc", "पार्सल", "कूरियर", "कस्टम"]
+  },
+
+  "generic_signals": [
+    { "id": "signal.urgency", "score": 10,
+      "phrases": ["immediately", "urgent", "urgently", "within 24 hours", "today itself", "last warning", "final notice", "turant", "abhi turant", "aaj hi", "jaldi karein", "तुरंत", "अभी", "आज ही", "अंतिम चेतावनी"],
+      "reason": { "hi": "जल्दबाज़ी का दबाव डाला जा रहा है", "en": "Pressure to act immediately" } },
+    { "id": "signal.secrecy", "score": 15,
+      "phrases": ["do not tell anyone", "don t tell anyone", "keep this confidential", "kisi ko mat batana", "kisi ko na batayein", "ghar walon ko mat batana", "किसी को मत बताना", "किसी को न बताएं"],
+      "reason": { "hi": "बात छुपाने को कहा जा रहा है", "en": "Asked to keep it secret" } },
+    { "id": "signal.otp_ask", "score": 30, "scam_type": "otp_theft",
+      "phrases": ["otp batao", "otp bata do", "otp batayein", "otp bhejo", "otp bhej do", "send the otp", "send me the otp", "tell me the otp", "read out the otp", "share the otp with", "please share otp", "otp share karein", "otp forward karein", "ओटीपी बताएं", "ओटीपी बताओ", "ओटीपी भेजें"],
+      "reason": { "hi": "OTP माँगा जा रहा है — बैंक कभी OTP नहीं माँगता", "en": "Someone is asking for the OTP — banks never ask for it" } },
+    { "id": "signal.remote_access", "score": 30, "scam_type": "remote_access",
+      "phrases": ["anydesk", "any desk", "teamviewer", "team viewer", "quicksupport", "quick support", "rustdesk", "screen share", "screen sharing", "airdroid", "एनीडेस्क", "स्क्रीन शेयर"],
+      "reason": { "hi": "फ़ोन का कंट्रोल देने वाला ऐप/स्क्रीन शेयर माँगा जा रहा है", "en": "Asked to install a remote-access app or share the screen" } },
+    { "id": "signal.money_ask", "score": 15,
+      "phrases": ["transfer the amount", "pay now", "send money", "paise bhejo", "paise transfer karein", "paisa bhejo", "upi pin", "enter your pin", "पैसे भेजो", "पैसे भेजें", "यूपीआई पिन"],
+      "reason": { "hi": "पैसे या PIN माँगा जा रहा है", "en": "Asked to send money or enter a PIN" } }
+  ],
+
+  "scam_scripts": {
+    "min_type_score": 15,
+    "types": {
+      "digital_arrest": {
+        "reason": { "hi": "यह 'डिजिटल अरेस्ट' ठगी जैसा है — पुलिस/CBI कभी वीडियो कॉल पर गिरफ्तार नहीं करती", "en": "Looks like a 'digital arrest' scam — police/CBI never arrest anyone over a video call" },
+        "phrases": [
+          { "text": "digital arrest", "lang": "en", "w": 40 },
+          { "text": "arrest warrant", "lang": "en", "w": 30 },
+          { "text": "money laundering", "lang": "en", "w": 25 },
+          { "text": "cbi officer", "lang": "en", "w": 25 },
+          { "text": "enforcement directorate", "lang": "en", "w": 20 },
+          { "text": "safe account", "lang": "en", "w": 30 },
+          { "text": "do not disconnect the call", "lang": "en", "w": 25 },
+          { "text": "stay on video call", "lang": "en", "w": 25 },
+          { "text": "video call par rahein", "lang": "hinglish", "w": 25 },
+          { "text": "video call pe rehna hoga", "lang": "hinglish", "w": 25 },
+          { "text": "aapke khilaf case darj", "lang": "hinglish", "w": 25 },
+          { "text": "giraftar", "lang": "hinglish", "w": 25 },
+          { "text": "girftar", "lang": "hinglish", "w": 25 },
+          { "text": "call cut mat karna", "lang": "hinglish", "w": 25 },
+          { "text": "verification ke liye paise transfer", "lang": "hinglish", "w": 30 },
+          { "text": "डिजिटल अरेस्ट", "lang": "hi", "w": 40 },
+          { "text": "गिरफ्तार", "lang": "hi", "w": 25 },
+          { "text": "गिरफ्तारी", "lang": "hi", "w": 25 },
+          { "text": "अरेस्ट वारंट", "lang": "hi", "w": 30 },
+          { "text": "मनी लॉन्ड्रिंग", "lang": "hi", "w": 25 },
+          { "text": "वीडियो कॉल पर रहें", "lang": "hi", "w": 25 },
+          { "text": "कॉल मत काटना", "lang": "hi", "w": 25 },
+          { "text": "केस दर्ज", "lang": "hi", "w": 20 }
+        ]
+      },
+      "kyc_block": {
+        "reason": { "hi": "यह KYC/खाता बंद होने वाली ठगी जैसा है — बैंक लिंक भेजकर KYC नहीं करवाता", "en": "Looks like a KYC/account-block scam — banks never do KYC through an SMS link" },
+        "phrases": [
+          { "text": "kyc", "lang": "en", "w": 10 },
+          { "text": "kyc expire", "lang": "en", "w": 25 },
+          { "text": "kyc expired", "lang": "en", "w": 25 },
+          { "text": "kyc update", "lang": "en", "w": 20 },
+          { "text": "update your kyc", "lang": "en", "w": 20 },
+          { "text": "kyc pending", "lang": "en", "w": 20 },
+          { "text": "account will be blocked", "lang": "en", "w": 25 },
+          { "text": "account blocked", "lang": "en", "w": 20 },
+          { "text": "account will be suspended", "lang": "en", "w": 25 },
+          { "text": "pan card update", "lang": "en", "w": 20 },
+          { "text": "kyc expire ho raha hai", "lang": "hinglish", "w": 30 },
+          { "text": "kyc update karein", "lang": "hinglish", "w": 25 },
+          { "text": "khata band", "lang": "hinglish", "w": 25 },
+          { "text": "account band ho jayega", "lang": "hinglish", "w": 25 },
+          { "text": "account block ho jayega", "lang": "hinglish", "w": 25 },
+          { "text": "pan card link karein", "lang": "hinglish", "w": 20 },
+          { "text": "केवाईसी", "lang": "hi", "w": 10 },
+          { "text": "केवाईसी अपडेट", "lang": "hi", "w": 20 },
+          { "text": "केवाईसी समाप्त", "lang": "hi", "w": 25 },
+          { "text": "खाता बंद", "lang": "hi", "w": 25 },
+          { "text": "खाता ब्लॉक", "lang": "hi", "w": 25 },
+          { "text": "अकाउंट ब्लॉक", "lang": "hi", "w": 25 },
+          { "text": "पैन कार्ड अपडेट", "lang": "hi", "w": 20 }
+        ]
+      },
+      "electricity_cut": {
+        "reason": { "hi": "यह बिजली कटने वाली ठगी जैसा है — बिजली विभाग मोबाइल नंबर से ऐसे SMS नहीं भेजता", "en": "Looks like an electricity-disconnection scam — power companies don't send such SMS from mobile numbers" },
+        "phrases": [
+          { "text": "electricity will be disconnected", "lang": "en", "w": 35 },
+          { "text": "power will be disconnected", "lang": "en", "w": 35 },
+          { "text": "electricity connection will be cut", "lang": "en", "w": 35 },
+          { "text": "electricity bill is not updated", "lang": "en", "w": 30 },
+          { "text": "previous month bill was not updated", "lang": "en", "w": 30 },
+          { "text": "bill not updated", "lang": "en", "w": 25 },
+          { "text": "contact electricity officer", "lang": "en", "w": 30 },
+          { "text": "electricity officer", "lang": "en", "w": 20 },
+          { "text": "disconnected tonight", "lang": "en", "w": 25 },
+          { "text": "bijli kat jayegi", "lang": "hinglish", "w": 35 },
+          { "text": "light kat jayegi", "lang": "hinglish", "w": 30 },
+          { "text": "bijli connection kat", "lang": "hinglish", "w": 30 },
+          { "text": "aaj raat bijli", "lang": "hinglish", "w": 30 },
+          { "text": "bijli bill update nahi", "lang": "hinglish", "w": 30 },
+          { "text": "bijli officer", "lang": "hinglish", "w": 25 },
+          { "text": "बिजली कट", "lang": "hi", "w": 25 },
+          { "text": "बिजली काट दी जाएगी", "lang": "hi", "w": 35 },
+          { "text": "बिजली कनेक्शन काट", "lang": "hi", "w": 30 },
+          { "text": "बिजली अधिकारी", "lang": "hi", "w": 25 },
+          { "text": "बिल अपडेट नहीं", "lang": "hi", "w": 30 },
+          { "text": "आज रात बिजली", "lang": "hi", "w": 30 },
+          { "text": "काट दी जाएगी", "lang": "hi", "w": 30 }
+        ]
+      },
+      "parcel_customs": {
+        "reason": { "hi": "यह पार्सल/कस्टम वाली ठगी जैसा है — कूरियर कंपनी पार्सल रोककर पैसे नहीं माँगती", "en": "Looks like a parcel/customs scam — couriers don't hold parcels and demand payment by SMS/call" },
+        "phrases": [
+          { "text": "parcel seized", "lang": "en", "w": 30 },
+          { "text": "your parcel has been seized", "lang": "en", "w": 35 },
+          { "text": "customs duty", "lang": "en", "w": 20 },
+          { "text": "customs clearance", "lang": "en", "w": 20 },
+          { "text": "illegal items", "lang": "en", "w": 25 },
+          { "text": "drugs found", "lang": "en", "w": 35 },
+          { "text": "parcel on hold", "lang": "en", "w": 20 },
+          { "text": "incomplete address", "lang": "en", "w": 20 },
+          { "text": "address incomplete", "lang": "en", "w": 20 },
+          { "text": "pay customs", "lang": "en", "w": 25 },
+          { "text": "redelivery fee", "lang": "en", "w": 20 },
+          { "text": "parcel mein drugs", "lang": "hinglish", "w": 35 },
+          { "text": "parcel pakda gaya", "lang": "hinglish", "w": 30 },
+          { "text": "custom duty bharein", "lang": "hinglish", "w": 25 },
+          { "text": "parcel ruka hua hai", "lang": "hinglish", "w": 20 },
+          { "text": "पार्सल जब्त", "lang": "hi", "w": 30 },
+          { "text": "कस्टम ड्यूटी", "lang": "hi", "w": 20 },
+          { "text": "पार्सल में ड्रग्स", "lang": "hi", "w": 35 },
+          { "text": "पार्सल रोका गया", "lang": "hi", "w": 20 },
+          { "text": "पता अधूरा", "lang": "hi", "w": 20 }
+        ]
+      },
+      "lottery_prize": {
+        "reason": { "hi": "यह लॉटरी/इनाम वाली ठगी जैसा है — असली इनाम के लिए फ़ीस नहीं देनी पड़ती", "en": "Looks like a lottery/prize scam — real prizes never ask for a fee" },
+        "phrases": [
+          { "text": "you have won", "lang": "en", "w": 25 },
+          { "text": "congratulations you have won", "lang": "en", "w": 30 },
+          { "text": "lottery", "lang": "en", "w": 20 },
+          { "text": "lucky draw", "lang": "en", "w": 25 },
+          { "text": "lucky winner", "lang": "en", "w": 25 },
+          { "text": "prize money", "lang": "en", "w": 25 },
+          { "text": "claim your prize", "lang": "en", "w": 30 },
+          { "text": "processing fee", "lang": "en", "w": 20 },
+          { "text": "jackpot", "lang": "en", "w": 20 },
+          { "text": "kbc", "lang": "en", "w": 25 },
+          { "text": "kaun banega crorepati", "lang": "hinglish", "w": 30 },
+          { "text": "aapne jeeta", "lang": "hinglish", "w": 25 },
+          { "text": "lottery lagi hai", "lang": "hinglish", "w": 30 },
+          { "text": "inaam jeeta", "lang": "hinglish", "w": 25 },
+          { "text": "registration fee bharein", "lang": "hinglish", "w": 20 },
+          { "text": "लॉटरी", "lang": "hi", "w": 20 },
+          { "text": "इनाम", "lang": "hi", "w": 15 },
+          { "text": "आपने जीता", "lang": "hi", "w": 25 },
+          { "text": "लकी ड्रा", "lang": "hi", "w": 25 },
+          { "text": "कौन बनेगा करोड़पति", "lang": "hi", "w": 30 }
+        ]
+      },
+      "job_task": {
+        "reason": { "hi": "यह 'घर बैठे कमाई / टास्क' वाली ठगी जैसा है", "en": "Looks like a work-from-home / task-job scam" },
+        "phrases": [
+          { "text": "part time job", "lang": "en", "w": 20 },
+          { "text": "work from home", "lang": "en", "w": 15 },
+          { "text": "daily earning", "lang": "en", "w": 20 },
+          { "text": "like youtube videos", "lang": "en", "w": 30 },
+          { "text": "prepaid task", "lang": "en", "w": 30 },
+          { "text": "hotel review task", "lang": "en", "w": 25 },
+          { "text": "ghar baithe kamaye", "lang": "hinglish", "w": 25 },
+          { "text": "ghar baithe kamai", "lang": "hinglish", "w": 25 },
+          { "text": "roz kamaye", "lang": "hinglish", "w": 20 },
+          { "text": "घर बैठे कमाएं", "lang": "hi", "w": 25 },
+          { "text": "पार्ट टाइम जॉब", "lang": "hi", "w": 20 }
+        ]
+      },
+      "family_in_trouble": {
+        "reason": { "hi": "यह 'परिवार मुसीबत में है' वाली ठगी जैसा है — पहले उसी व्यक्ति को उसके पुराने नंबर पर कॉल करें", "en": "Looks like a 'family member in trouble' scam — call the person on their known number first" },
+        "phrases": [
+          { "text": "accident ho gaya", "lang": "hinglish", "w": 25 },
+          { "text": "urgent paise bhejo", "lang": "hinglish", "w": 30 },
+          { "text": "mera naya number hai", "lang": "hinglish", "w": 20 },
+          { "text": "police ne pakad liya", "lang": "hinglish", "w": 30 },
+          { "text": "main musibat mein hoon", "lang": "hinglish", "w": 25 },
+          { "text": "i am in trouble", "lang": "en", "w": 25 },
+          { "text": "this is my new number", "lang": "en", "w": 20 },
+          { "text": "मुसीबत में हूं", "lang": "hi", "w": 25 },
+          { "text": "एक्सीडेंट हो गया", "lang": "hi", "w": 25 },
+          { "text": "मेरा नया नंबर", "lang": "hi", "w": 20 }
+        ]
+      },
+      "wedding_invite_apk": {
+        "reason": { "hi": "यह शादी के कार्ड के नाम पर ऐप (.apk) भेजने वाली ठगी जैसा है", "en": "Looks like a wedding-invitation APK scam" },
+        "phrases": [
+          { "text": "wedding invitation", "lang": "en", "w": 15 },
+          { "text": "wedding card", "lang": "en", "w": 15 },
+          { "text": "invitation card download", "lang": "en", "w": 25 },
+          { "text": "shaadi ka card", "lang": "hinglish", "w": 15 },
+          { "text": "card download karein", "lang": "hinglish", "w": 25 },
+          { "text": "शादी का कार्ड", "lang": "hi", "w": 15 },
+          { "text": "निमंत्रण पत्र", "lang": "hi", "w": 10 }
+        ]
+      },
+      "refund_cashback": {
+        "reason": { "hi": "यह रिफ़ंड/कैशबैक वाली ठगी जैसा है — पैसे लेने के लिए PIN कभी नहीं डालना होता", "en": "Looks like a refund/cashback scam — you never enter a PIN to receive money" },
+        "phrases": [
+          { "text": "refund approved", "lang": "en", "w": 20 },
+          { "text": "claim your refund", "lang": "en", "w": 25 },
+          { "text": "cashback credited", "lang": "en", "w": 15 },
+          { "text": "income tax refund", "lang": "en", "w": 25 },
+          { "text": "enter pin to receive", "lang": "en", "w": 35 },
+          { "text": "refund ke liye pin", "lang": "hinglish", "w": 35 },
+          { "text": "cashback paane ke liye", "lang": "hinglish", "w": 25 },
+          { "text": "रिफंड", "lang": "hi", "w": 10 },
+          { "text": "कैशबैक", "lang": "hi", "w": 10 }
+        ]
+      },
+      "sextortion_threat": {
+        "reason": { "hi": "यह वीडियो के नाम पर धमकी/ब्लैकमेल वाली ठगी जैसा है — पैसे न दें, 1930 पर शिकायत करें", "en": "Looks like a video-blackmail threat — don't pay, report on 1930" },
+        "phrases": [
+          { "text": "your private video", "lang": "en", "w": 30 },
+          { "text": "video will be viral", "lang": "en", "w": 30 },
+          { "text": "send to your contacts", "lang": "en", "w": 20 },
+          { "text": "video viral kar denge", "lang": "hinglish", "w": 30 },
+          { "text": "tumhara video", "lang": "hinglish", "w": 15 },
+          { "text": "वीडियो वायरल", "lang": "hi", "w": 30 },
+          { "text": "बदनाम कर देंगे", "lang": "hi", "w": 25 }
+        ]
+      }
+    }
+  },
+
+  "patterns": {
+    "P1": { "phase": 1, "id": "pattern.P1", "level": "red", "scam_type": "otp_theft",
+      "description": "OTP SMS arrives while a call with an unknown number is active, or within 5 minutes after it ended",
+      "caller_types": ["mobile_10", "international", "series_140", "unknown"],
+      "window_after_call_ms": 300000,
+      "reason": { "hi": "अनजान नंबर से कॉल चल रही है और उसी समय OTP आया — यह OTP किसी को न बताएं, कॉल काट दें", "en": "An OTP arrived during a call with an unknown number — do not read it out, hang up" } },
+    "P5": { "phase": 1, "id": "pattern.P5",
+      "description": "SMS with a link + bank/electricity/courier words + 10-digit (or international) sender -> red; only one of the two signals -> yellow. Trusted senders (business header / saved contact) only fire yellow when a link is a shortener, look-alike or punycode.",
+      "risky_sender_types": ["mobile_10", "international"],
+      "red": { "level": "red", "reason": { "hi": "आम मोबाइल नंबर से बैंक/बिजली/कूरियर के नाम पर लिंक भेजा गया है — लिंक न खोलें", "en": "Link about bank/electricity/courier sent from an ordinary mobile number — do not open it" } },
+      "yellow": { "level": "yellow", "reason": { "hi": "संदेश में लिंक है और एक संदिग्ध संकेत है — लिंक खोलने से पहले पूछ लें", "en": "Message has a link plus one warning sign — check before opening" } } },
+    "P2": { "phase": 2, "id": "pattern.P2", "description": "placeholder" },
+    "P3": { "phase": 2, "id": "pattern.P3", "description": "placeholder" },
+    "P4": { "phase": 2, "id": "pattern.P4", "description": "placeholder" },
+    "P6": { "phase": 2, "id": "pattern.P6", "description": "placeholder" },
+    "P7": { "phase": 2, "id": "pattern.P7", "description": "placeholder" },
+    "P8": { "phase": 2, "id": "pattern.P8", "description": "placeholder" },
+    "P9": { "phase": 2, "id": "pattern.P9", "description": "placeholder" }
+  },
+
+  "thresholds": {
+    "red_at": 60,
+    "yellow_at": 30,
+    "ask_ai_between": [20, 60],
+    "max_score": 100
+  },
+
+  "actions": {
+    "red": ["show_red_screen", "speak_clip", "alert_child"],
+    "yellow": ["alert_child"],
+    "green": []
+  }
+}
