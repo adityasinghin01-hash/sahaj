@@ -3,6 +3,9 @@ import { safeTokenEquals } from "@/lib/secrets";
 import { serviceDatabase } from "@/lib/database";
 import { randomUUID } from "node:crypto";
 import { WebhookError } from "@/lib/webhook-security";
+import { dispatchEvents, runWorkflowJobs, type ClaimedEvent } from "@/lib/atlas-runtime/runner";
+import { createAtlasRuntime } from "@/lib/atlas-runtime/factory";
+import type { RpcDb } from "@/lib/atlas-runtime/db";
 
 export const runtime = "nodejs";
 export async function POST(request: Request) {
@@ -16,20 +19,19 @@ export async function POST(request: Request) {
     const db = serviceDatabase();
     const { data: events, error } = await db.rpc("claim_raw_events", { p_worker_id: randomUUID(), p_limit: 20, p_lease_seconds: 60 });
     if (error) throw new WebhookError("event_claim_failed", 503);
-    let dispatched = 0;
-    for (const event of events ?? []) {
-      // This only moves accepted input into durable work. It does not claim a care action occurred.
-      const { error: dispatchError } = await db.rpc("dispatch_raw_event", {
-        p_event_id: event.id, p_lease_token: event.lease_token,
-        p_workflow_kind: "core1.ingest", p_thread_id: event.id,
-      });
-      if (dispatchError) {
-        await db.rpc("finish_raw_event", { p_event_id: event.id, p_lease_token: event.lease_token, p_success: false, p_error_code: "dispatch_failed" });
-        throw new WebhookError("workflow_dispatch_failed", 503);
-      }
-      dispatched++;
+    // Routing only turns accepted input into durable work or an explicit dead letter. No care action runs here.
+    const routed = await dispatchEvents(db as unknown as RpcDb, (events ?? []) as ClaimedEvent[]);
+
+    const { WEBHOOK_ENCRYPTION_KEY: key, DATABASE_URL: databaseUrl, TIMELINE_SIGNING_PRIVATE_KEY: signing, TIMELINE_KEY_ID: keyId } = process.env;
+    let workflow: Record<string, unknown> = { status: "not_configured" };
+    if (key && databaseUrl && signing && keyId) {
+      // The model/provider understanding port is deliberately not injected yet: only exact commands are understood.
+      const atlas = createAtlasRuntime({ db: db as never, workerId: randomUUID(), encryptionKeyHex: key, databaseUrl,
+        timelinePrivateKeyPem: signing.replace(/\\n/g, "\n"), timelineKeyId: keyId });
+      try { workflow = await runWorkflowJobs(atlas.deps); } finally { await atlas.close().catch(() => undefined); }
     }
-    return NextResponse.json({ dispatched, care_actions_run: 0, processing: "durable_workflow_queue" });
+    return NextResponse.json({ ...routed, workflow, care_actions_run: 0, processing: "durable_workflow_queue" },
+      { status: routed.failed > 0 ? 503 : 200 });
   } catch (error) {
     return NextResponse.json({ error: error instanceof WebhookError ? error.code : "tick_failed" }, { status: error instanceof WebhookError ? error.status : 503 });
   }
