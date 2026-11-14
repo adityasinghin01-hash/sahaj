@@ -1,7 +1,8 @@
-import { handleCore1ApiRoute } from '@/lib/core1';
+import { createProductionRefillDeps, executeRefillCommand } from '@/lib/core1/refill-service';
 
 export const runtime = 'nodejs';
+export const dynamic = 'force-dynamic';
 
 export async function POST(request: Request) {
-  return handleCore1ApiRoute(request, undefined, 'refill_proposal');
+  return executeRefillCommand(request, createProductionRefillDeps());
 }
