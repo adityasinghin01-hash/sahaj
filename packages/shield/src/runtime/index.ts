@@ -86,29 +86,9 @@ export function createShieldRuntime(ports: ShieldRuntimePorts | ShieldRuntimeTes
       if (existing) return { verdict: existing.verdict, verdictId: existing.id };
       const deps = brainDeps(storage);
       const state = await buildShieldGraph(deps).invoke({ event });
-      // KEYPAD ladder for forwarded SMS: the brain calls Maa for red; yellow also gets Aasha
-      // Didi's call (one attempt, gated and signed) next to Riya's quiet card.
-      if (event.channel === "gateway_sms" && state.decision.verdict.level === "yellow" && state.decision.verdictId) {
-        await keypadYellowCall(deps, { id: state.decision.verdictId, event, parent: state.parent, verdict: state.decision.verdict });
-      }
+      // Keypad yellow (gateway SMS, voice report) is called by the brain's ladder (respond.ts), with retries.
       return state.decision;
     });
-  }
-
-  async function keypadYellowCall(deps: ShieldBrainDeps, record: StoredVerdict) {
-    if (!await checkAction(deps, record, "speak_clip")) return;
-    const lineId = record.parent.line_id;
-    if (!lineId) {
-      await audit(deps, record, { step: "call_parent", status: "skipped", action: "speak_clip", details: { reason: "missing_line", attempt: 1, level: "yellow" } });
-      return;
-    }
-    let status = "failed";
-    try {
-      status = (await ports.calls.callParent({ familyId: record.event.family_id, parentId: record.event.parent_id,
-        lineId, verdictId: record.id, attempt: 1 })).status;
-    } catch { /* Provider failure is signed; never expose its raw error. */ }
-    await audit(deps, record, { step: "call_parent", status: status === "failed" ? "failed" : "ok", action: "speak_clip",
-      details: { result: status, attempt: 1, level: "yellow" } });
   }
 
   const serverDeps: ShieldServerDeps = {
