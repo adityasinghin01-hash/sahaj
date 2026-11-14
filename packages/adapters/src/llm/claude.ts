@@ -1,0 +1,44 @@
+import Anthropic from "@anthropic-ai/sdk";
+import { zodOutputFormat } from "@anthropic-ai/sdk/helpers/zod";
+import { ProviderError, type Provider } from "./types.js";
+
+export const CLAUDE_MODEL = "claude-opus-5-5";
+
+export function createClaudeProvider(client: Anthropic): Provider {
+  return async (req) => {
+    const format = zodOutputFormat(req.schema);
+    let parseFailure = false;
+    // SDK parse normally throws before callers can inspect stop_reason. Defer
+    // parse failures until after the refusal/truncation checks below.
+    const guardedFormat = {
+      ...format,
+      parse(text: string) {
+        try { return format.parse(text); }
+        catch { parseFailure = true; return null; }
+      },
+    };
+    try {
+      const response = await client.beta.messages.parse({
+        model: CLAUDE_MODEL,
+        max_tokens: 2000,
+        system: req.system,
+        messages: [{ role: "user", content: req.input }],
+        output_config: { effort: req.effort, format: guardedFormat },
+        betas: ["server-side-fallback-2026-07-01"],
+        fallbacks: "default",
+      }, { timeout: req.timeoutMs, signal: req.signal, maxRetries: 0 });
+      if (response.stop_reason === "refusal") throw new ProviderError("refusal");
+      if (response.stop_reason === "max_tokens") throw new ProviderError("max_tokens");
+      if (parseFailure || response.parsed_output === null) throw new ProviderError("validation");
+      return { kind: "parsed", data: response.parsed_output };
+    } catch (error) {
+      if (error instanceof ProviderError) throw error;
+      if (error instanceof Anthropic.APIConnectionTimeoutError || error instanceof Anthropic.RequestTimeoutError) throw new ProviderError("timeout");
+      if (error instanceof Anthropic.RateLimitError) throw new ProviderError("rate_limit");
+      if (error instanceof Anthropic.AuthenticationError || error instanceof Anthropic.PermissionDeniedError) throw new ProviderError("authentication");
+      if (error instanceof Anthropic.APIConnectionError) throw new ProviderError("connection");
+      if (error instanceof Anthropic.APIError) throw new ProviderError("api");
+      throw error;
+    }
+  };
+}
