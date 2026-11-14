@@ -1,0 +1,18 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Proposed Z2 weekly response — Issue 6 approval pending",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["week_start", "week_end", "parent_name", "checkin_summary", "mood_summary", "medicine_summary", "errand_summary", "alert_summary", "weekly_summary"],
+  "properties": {
+    "week_start": {"type": "string", "format": "date-time"},
+    "week_end": {"type": "string", "format": "date-time"},
+    "parent_name": {"const": "Parent"},
+    "checkin_summary": {"type": "string"},
+    "mood_summary": {"type": "string"},
+    "medicine_summary": {"type": "string"},
+    "errand_summary": {"type": "string"},
+    "alert_summary": {"type": "string"},
+    "weekly_summary": {"type": "string"}
+  }
+}

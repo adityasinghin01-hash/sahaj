@@ -185,7 +185,7 @@ describe("Adversarial QA: Safety Redaction, Isolation, Liveness Independence & H
     it("attaches Cache-Control: no-store on dedicated /api/health/readiness endpoint (503)", async () => {
       vi.mocked(defaultReadinessDependencies.isConfigured).mockReturnValue(false);
 
-      const res = await readinessRoute();
+      const res = await readinessRoute(new Request('http://localhost:3000/api/health/readiness'));
 
       expect(res.status).toBe(503);
       expect(res.headers.get("Cache-Control")).toBe("no-store");
