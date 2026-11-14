@@ -21,6 +21,11 @@ export function createPushPort(
         channel,
         lang: "en",
       });
+      const red = card.verdict.level === "red";
+      // The shared formatter masks OTPs/phones and supplies an empty-reason fallback.
+      // Push displays only its reason line; remove even short/Unicode numbers here.
+      const reason = (alert.body.split("\n")[1] ?? "Suspicious call or message")
+        .replace(/\p{Nd}+/gu, "•••");
       const key = `push:child_card:${card.verdictId}`;
       await writeOutbox(sql, {
         channel: "push",
@@ -67,11 +72,14 @@ export function createPushPort(
               },
               body: JSON.stringify({
                 to: token,
-                title: alert.title,
-                body: alert.body,
-                priority: card.verdict.level === "red" ? "high" : "normal",
-                sound: card.quiet ? null : "default",
-                data: { verdict_id: card.verdictId, route: "/alert" },
+                title: red ? "🔴 Maa ko scam call/message" : alert.title,
+                body: reason,
+                channelId: red ? "shield-red-v2" : "shield-quiet-v2",
+                priority: red ? "high" : "normal",
+                // Bundled on both platforms. iOS uses its default if the file is absent.
+                // Android 8+ plays the channel sound; a red must override card.quiet.
+                sound: red ? "shield_alarm.wav" : "default",
+                data: { verdict_id: card.verdictId, route: "/alert", level: card.verdict.level },
               }),
               signal: AbortSignal.timeout(5000),
             },

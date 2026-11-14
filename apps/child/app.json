@@ -18,7 +18,10 @@
         "foregroundImage": "./assets/images/adaptive-icon.png",
         "backgroundColor": "#FDF9F8"
       },
-      "package": "app.sahaj.child"
+      "package": "app.sahaj.child",
+      "permissions": [
+        "android.permission.ACCESS_NOTIFICATION_POLICY"
+      ]
     },
     "web": {
       "bundler": "metro",
@@ -40,7 +43,10 @@
       [
         "expo-notifications",
         {
-          "defaultChannel": "shield-alerts"
+          "defaultChannel": "shield-quiet-v2",
+          "sounds": [
+            "./assets/sounds/shield_alarm.wav"
+          ]
         }
       ],
       "expo-secure-store"

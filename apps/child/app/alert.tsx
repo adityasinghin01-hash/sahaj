@@ -130,9 +130,23 @@ function DemoAlertDetail() {
   );
 }
 
+function LocalAlarmTest() {
+  return (
+    <Screen>
+      <TopBar title="Local alarm test" />
+      <LevelPill level="red" />
+      <T v="title" className="mt-4">Test alarm · sirf test hai</T>
+      <T v="body" className="mt-3">This alarm was scheduled on your phone. Maa has no new scam alert from this test.</T>
+      <T v="small" className="mt-3">If you did not hear it, check alarm volume and Shield notification settings.</T>
+      <Btn label="Back to Shield" className="mt-6" onPress={() => router.replace('/shield')} />
+    </Screen>
+  );
+}
+
 export default function AlertDetail() {
   const {ready,session}=useSession();
-  const {id} = useLocalSearchParams<{id?:string}>();
+  const {id, alarm_test} = useLocalSearchParams<{id?:string; alarm_test?:string}>();
+  if (alarm_test === 'true') return <LocalAlarmTest/>;
   if(!ready) return <LiveLoading/>;
   return session ? <LiveAlert id={id ?? ""}/> : <DemoAlertDetail/>;
 }

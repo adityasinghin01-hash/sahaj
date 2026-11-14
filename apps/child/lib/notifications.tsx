@@ -1,11 +1,12 @@
 import * as React from 'react';
-import { Platform } from 'react-native';
+import { AppState, Platform } from 'react-native';
 import Constants from 'expo-constants';
 import { router, usePathname, useRootNavigationState } from 'expo-router';
 import { createApi } from './api';
 import { useSession, type Session } from './session';
 
-import type { NotificationResponse } from 'expo-notifications';
+import type { Notification } from 'expo-notifications';
+import { offerDndAccessOnce, prepareShieldChannels } from './shield-alarm';
 let note = Platform.OS === 'web' ? 'Push alerts are available in the installed phone app.' : '';
 const listeners = new Set<() => void>();
 const setNote = (value: string) => { note = value; listeners.forEach((fn) => fn()); };
@@ -22,13 +23,7 @@ async function register(session: Session, current: () => boolean) {
   try {
     const notifications = await import('expo-notifications');
     if (!current()) return;
-    if (Platform.OS === 'android') {
-      await notifications.setNotificationChannelAsync('shield-alerts', {
-        name: 'Shield alerts',
-        importance: notifications.AndroidImportance.HIGH,
-        lockscreenVisibility: notifications.AndroidNotificationVisibility.PRIVATE,
-      });
-    }
+    await prepareShieldChannels(notifications);
     const projectId = Constants.expoConfig?.extra?.eas?.projectId ?? Constants.easConfig?.projectId;
     if (!projectId) {
       if (current()) setNote('Push alerts are off: finish eas init for Riya’s app, then rebuild and sign in.');
@@ -50,6 +45,7 @@ async function register(session: Session, current: () => boolean) {
       setNote('Push alerts are off. Enable notifications in phone Settings; Shield alerts remain available in the app.');
       return;
     }
+    void offerDndAccessOnce();
     const token = (await notifications.getExpoPushTokenAsync({ projectId })).data;
     if (!current()) return;
     await createApi(session).push({ expo_token: token });
@@ -65,47 +61,71 @@ export function PushNotifications() {
   const { ready, session } = useSession();
   const navigation = useRootNavigationState();
   const pathname = usePathname();
-  const [pendingId, setPendingId] = React.useState<string | null>(null);
+  const [pending, setPending] = React.useState<{ id?: string; test?: true } | null>(null);
   const handled = React.useRef<string | null>(null);
   React.useEffect(() => {
     if (Platform.OS === 'web') return;
     let active = true;
-    let subscription: { remove(): void } | undefined;
-    const receive = (response: NotificationResponse) => {
+    const subscriptions: { remove(): void }[] = [];
+    const receive = (notification: Notification) => {
       if (!active) return;
-      const key = response.notification.request.identifier;
-      const id = response.notification.request.content.data?.verdict_id;
-      if (key === handled.current || typeof id !== 'string' || !/^[A-Za-z0-9_-]{1,128}$/.test(id)) return;
+      const key = `${notification.request.identifier}:${notification.date}`;
+      const data = notification.request.content.data;
+      if (key === handled.current) return;
+      if (data?.alarm_test === true) {
+        handled.current = key;
+        setPending({ test: true });
+        return;
+      }
+      const id = data?.verdict_id;
+      if (typeof id !== 'string' || !/^[A-Za-z0-9_-]{1,128}$/.test(id)) return;
       handled.current = key;
-      setPendingId(id);
+      setPending({ id });
     };
     void import('expo-notifications').then(async (notifications) => {
       if (!active) return;
       notifications.setNotificationHandler({
-        handleNotification: async () => ({
-          shouldShowBanner: true, shouldShowList: true, shouldPlaySound: false, shouldSetBadge: false,
+        handleNotification: async (notification) => ({
+          shouldShowBanner: true, shouldShowList: true,
+          shouldPlaySound: notification.request.content.data?.level === 'red',
+          shouldSetBadge: false,
         }),
       });
-      subscription = notifications.addNotificationResponseReceivedListener(receive);
+      subscriptions.push(notifications.addNotificationReceivedListener((notification) => {
+        if (notification.request.content.data?.level === 'red') receive(notification);
+      }));
+      subscriptions.push(notifications.addNotificationResponseReceivedListener((response) => receive(response.notification)));
+      subscriptions.push(AppState.addEventListener('change', (state) => {
+        if (state === 'active') void prepareShieldChannels(notifications).catch(() => {});
+      }));
+      // Create channels even before sign-in, so local testing never needs a server.
+      await prepareShieldChannels(notifications);
+      if (!active) return;
       const last = await notifications.getLastNotificationResponseAsync();
-      if (last) receive(last);
+      if (last) receive(last.notification);
     }).catch(() => {
       if (active) setNote('Push alerts need an installed build with notifications support.');
     });
-    return () => { active = false; subscription?.remove(); };
+    return () => { active = false; subscriptions.forEach((subscription) => subscription.remove()); };
   }, []);
   React.useEffect(() => {
-    if (!pendingId || !ready || !navigation?.key) return;
+    if (!pending || !ready || !navigation?.key) return;
+    if (pending.test) {
+      router.push({ pathname: '/alert', params: { alarm_test: 'true' } });
+      setPending(null);
+      void import('expo-notifications').then((notifications) => notifications.clearLastNotificationResponseAsync()).catch(() => {});
+      return;
+    }
     if (!session) {
       if (pathname !== '/sign-in') router.push('/sign-in');
       return;
     }
     // Let sign-in finish its storage write and default redirect before opening the alert.
     if (pathname === '/sign-in') return;
-    router.push({ pathname: '/alert', params: { id: pendingId } });
-    setPendingId(null);
+    router.push({ pathname: '/alert', params: { id: pending.id } });
+    setPending(null);
     void import('expo-notifications').then((notifications) => notifications.clearLastNotificationResponseAsync()).catch(() => {});
-  }, [pendingId, ready, session, navigation?.key, pathname]);
+  }, [pending, ready, session, navigation?.key, pathname]);
   React.useEffect(() => {
     if (Platform.OS === 'web' || !ready) return;
     if (!session) { setNote('Sign in to connect push alerts.'); return; }

@@ -1,3 +1,4 @@
+import { AlarmSettings } from '@/components/sahaj/alarm-settings';
 import { useSession } from '@/lib/session';
 import { LiveShield, LiveLoading } from '@/components/sahaj/live';
 import { Icon } from '@/components/ui/icon';
@@ -67,6 +68,7 @@ function DemoShield() {
           </T>
         </Hero>
       </Pop>
+      <AlarmSettings />
       <Section title="Recent alerts">
         <View className="gap-3">
           {shield.alerts.map((alert, i) => (

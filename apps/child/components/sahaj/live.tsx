@@ -1,4 +1,5 @@
 import * as React from 'react';
+import { AlarmSettings } from './alarm-settings';
 import { Linking, Platform, Share, Switch, View } from 'react-native';
 import { router } from 'expo-router';
 import type { AppHarness, AppVerification } from '@sahaj/shared';
@@ -233,6 +234,7 @@ export function LiveShield() {
           </Section>
         </>
       ) : null}
+      <AlarmSettings />
       <Section title="Recent alerts">
         <View className="gap-3">
           {alerts.data?.map((a) => (

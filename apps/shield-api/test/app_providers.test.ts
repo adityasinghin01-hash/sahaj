@@ -87,7 +87,12 @@ describe("app real-provider ports (mock fetch only)", () => {
     expect(args[0]).toBe("https://exp.host/--/api/v2/push/send");
     const body = JSON.parse(args[1].body as string);
     expect(body.priority).toBe("high");
-    expect(body.body).not.toContain("123456");
+    expect(body.channelId).toBe("shield-red-v2");
+    expect(body.sound).toBe("shield_alarm.wav");
+    expect(body.title).toBe("🔴 Maa ko scam call/message");
+    expect(body.body).toBe("Why: Share OTP •••");
+    expect(body.body).not.toMatch(/\p{Nd}/u);
+    expect(body.data).toEqual({ verdict_id: V, route: "/alert", level: "red" });
   });
   it("yellow Expo stays quiet", async () => {
     const { sql } = fakeSql();
@@ -103,8 +108,41 @@ describe("app real-provider ports (mock fetch only)", () => {
       (fetchFn.mock.calls[0] as unknown as [string, RequestInit])[1]
         .body as string,
     );
-    expect(body.sound).toBeNull();
+    expect(body.sound).toBe("default");
+    expect(body.channelId).toBe("shield-quiet-v2");
     expect(body.priority).toBe("normal");
+    expect(body.data.level).toBe("yellow");
+    expect(body.body).toBe("Why: Share OTP •••");
+  });
+  it("red alarm overrides a quiet flag", async () => {
+    const { sql } = fakeSql();
+    const fetchFn = vi.fn(async () => Response.json({ data: { status: "ok", id: "ticket" } }));
+    await createPushPort(sql, { EXPO_PUSH_ENABLED: "1" }, fetchFn).childCard({ ...card, quiet: true });
+    const body = JSON.parse((fetchFn.mock.calls[0] as unknown as [string, RequestInit])[1].body as string);
+    expect(body).toMatchObject({ channelId: "shield-red-v2", sound: "shield_alarm.wav", priority: "high" });
+  });
+  it("push reason removes short and Unicode numbers and never includes action lines", async () => {
+    const { sql } = fakeSql();
+    const fetchFn = vi.fn(async () => Response.json({ data: { status: "ok", id: "ticket" } }));
+    await createPushPort(sql, { EXPO_PUSH_ENABLED: "1" }, fetchFn).childCard({
+      ...card,
+      verdict: { ...card.verdict, reasons: [{ rule_id: "x", en: "Pay 99 in 2 minutes; code १२३४५६, call +919000000001", hi: "Code hidden" }], actions: ["watch_numbers_24h"] },
+    });
+    const body = JSON.parse((fetchFn.mock.calls[0] as unknown as [string, RequestInit])[1].body as string);
+    expect(body.body).toMatch(/^Why: Pay/);
+    expect(body.body).not.toMatch(/\p{Nd}/u);
+    expect(body.body).not.toContain("\n");
+    expect(body.body).not.toContain("Sahaj");
+  });
+  it("push with no reason uses a safe scam explanation", async () => {
+    const { sql } = fakeSql();
+    const fetchFn = vi.fn(async () => Response.json({ data: { status: "ok", id: "ticket" } }));
+    await createPushPort(sql, { EXPO_PUSH_ENABLED: "1" }, fetchFn).childCard({
+      ...card, verdict: { ...card.verdict, reasons: [] },
+    });
+    const body = JSON.parse((fetchFn.mock.calls[0] as unknown as [string, RequestInit])[1].body as string);
+    expect(body.body).toBe("Why: a fake bank KYC block");
+    expect(body.body).not.toMatch(/\p{Nd}/u);
   });
   it("Expo handles ticket error and unregisters invalid destination", async () => {
     const { sql, writes } = fakeSql();
