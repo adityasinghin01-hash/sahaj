@@ -155,19 +155,22 @@ export function createWhatsappPort(
         }
       }
 
+      // No WhatsApp (not configured, e.g. the joined lab, or no WhatsApp number for this person): no card can reach
+      // them, so record why and fail the send. family_check then rings them at once with the Sarvam responder call
+      // (packages/shield tools/family_check.ts card-failed path) instead of waiting 60 s for a tap that cannot come.
       await writeOutbox(sql, {
         channel: "whatsapp",
-        kind: "send_family_check_card",
+        kind: "family_check_card_skipped",
         familyId: input.familyId,
         dedupeKey: `whatsapp:family_check:${input.checkId}`,
         payload: {
           check_id: input.checkId,
           to_person_id: input.toPersonId,
-          claimed_name: safeName,
-          asked_what: safeAsked,
-          text_body: textBody,
+          reason: configured ? "no_whatsapp_destination" : "whatsapp_not_configured",
+          route: "sarvam_responder_call",
         },
       });
+      throw new Error(configured ? "whatsapp_no_destination" : "whatsapp_not_configured");
     },
   };
 }

@@ -34,8 +34,9 @@ describe('C-15 durable care delivery', () => {
   it('signs source, loads the server-principal snapshot, then uses the atomic authorized enqueue', async () => {
     const f = fixture();
     const prepared = await prepareCareDelivery(f.db, f.timeline, input, '12'.repeat(32));
-    expect(f.calls).toEqual(['signed-source','prepare_care_send','load_gate_snapshot','enqueue_authorized_command']);
-    expect(f.rpc.mock.calls).toHaveLength(3);
+    // The one-shot send job is closed after the enqueue (K-GREEN: it used to stay 'processing').
+    expect(f.calls).toEqual(['signed-source','prepare_care_send','load_gate_snapshot','enqueue_authorized_command','finish_workflow_job']);
+    expect(f.rpc.mock.calls).toHaveLength(4);
     expect(prepared).toMatchObject({ id: 'outbox', channel: 'expo', send: { subjectId: subject, recipientId: recipient } });
     expect(f.timeline.append.mock.calls[0]).toBeDefined();
   });

@@ -1,4 +1,5 @@
 import { createPgWhatsappInboundStore, type WhatsappInboundStore } from "./whatsapp_inbound";
+import { createPgSarvamFamilyCheckStore, type SarvamFamilyCheckStore } from "./sarvam_family_check";
 import type { Sql } from "postgres";
 import { createShieldRuntime } from "@sahaj/shield";
 import { getDbPools } from "./db";
@@ -44,6 +45,8 @@ export interface OutboxRow {
 export interface ShieldApp {
   whatsappInboundStore?: WhatsappInboundStore;
   whatsappInboundWaitUntil?: (promise: Promise<unknown>) => void;
+  /** Family-check answers from the Sarvam responder call (post-call webhook). */
+  sarvamFamilyCheckStore?: SarvamFamilyCheckStore;
   env: Readonly<Record<string, string | undefined>>;
   portsStatus: PortsStatus;
   runtime: ReturnType<typeof createShieldRuntime>;
@@ -171,6 +174,7 @@ export function createShieldApp(env: Readonly<Record<string, string | undefined>
     portsStatus: getPortsStatus(env),
     whatsappInboundStore: createPgWhatsappInboundStore(auxSql, env),
     whatsappInboundWaitUntil: ports.waitUntil,
+    sarvamFamilyCheckStore: createPgSarvamFamilyCheckStore(auxSql),
     runtime,
     recordBusyCallStatus: phase2.submitCallStatus,
     recordBusyReply: phase2.submitBusyReply,

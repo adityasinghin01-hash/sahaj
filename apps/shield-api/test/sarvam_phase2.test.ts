@@ -113,3 +113,59 @@ describe("check-in variables include the weekly drill and praise when parent_id 
     expect(await res.json()).toMatchObject({ fraud_tip: "KYC ke naam par link mat kholiye", drill_id: "d1", drill_story: "Meri saheli ko phone aaya...", drill_praise: "Bahut accha kiya aapne" });
   });
 });
+
+describe("responder post-call → family check answer (no WhatsApp)", () => {
+  const ROHIT = "22222222-2222-4222-8222-222222222223";
+  const CHECK = "33333333-3333-4333-8333-333333333399";
+  const RECEIPT = "44444444-4444-4444-8444-444444444499";
+  const responderBody = (answer: string, extra: Record<string, unknown> = {}) => ({
+    status: "completed",
+    metadata: { family_id: FAMILY, person_id: ROHIT, receipt_id: RECEIPT, purpose: "responder" },
+    final_agent_variables: { check_id: CHECK, family_check_answer: answer },
+    ...extra,
+  });
+
+  it("records Rohit's spoken answer, bound to the responder call receipt, check and person", async () => {
+    const recordResponderAnswer = vi.fn(async () => "recorded" as const);
+    const { app, recordBusyCallStatus } = fakeApp({ sarvamFamilyCheckStore: { recordResponderAnswer } });
+    const res = await createSarvamWebhookHandler(() => app)(webhook(responderBody("nahi")), params());
+    expect(await res.json()).toEqual({ ok: true, family_check: "denied" });
+    expect(recordResponderAnswer).toHaveBeenCalledWith(expect.objectContaining({
+      familyId: FAMILY, personId: ROHIT, receiptId: RECEIPT, checkId: CHECK, answer: "denied" }));
+    expect(recordBusyCallStatus).not.toHaveBeenCalled();
+  });
+
+  it("an unbound call, a missing answer or an unconnected call records nothing", async () => {
+    const recordResponderAnswer = vi.fn(async () => "no_responder_call" as const);
+    const { app } = fakeApp({ sarvamFamilyCheckStore: { recordResponderAnswer } });
+    const handler = createSarvamWebhookHandler(() => app);
+    expect(await (await handler(webhook(responderBody("haan")), params())).json()).toEqual({ ok: true, ignored: "no_responder_call" });
+    recordResponderAnswer.mockClear();
+    expect(await (await handler(webhook(responderBody("shayad")), params())).json()).toMatchObject({ ignored: "not_checkin" });
+    expect(await (await handler(webhook(responderBody("haan", { status: "no_answer" })), params())).json()).toMatchObject({ ignored: "not_checkin" });
+    const noReceipt = responderBody("haan"); delete (noReceipt.metadata as Record<string, unknown>).receipt_id;
+    expect(await (await handler(webhook(noReceipt), params())).json()).toMatchObject({ ignored: "not_checkin" });
+    expect(recordResponderAnswer).not.toHaveBeenCalled();
+  });
+
+  it("wrong path secret → 401 before anything is read", async () => {
+    const recordResponderAnswer = vi.fn(async () => "recorded" as const);
+    const { app } = fakeApp({ sarvamFamilyCheckStore: { recordResponderAnswer } });
+    const res = await createSarvamWebhookHandler(() => app)(webhook(responderBody("haan"), "x".repeat(40)), params("x".repeat(40)));
+    expect(res.status).toBe(401);
+    expect(recordResponderAnswer).not.toHaveBeenCalled();
+  });
+});
+
+describe("WhatsApp port without WhatsApp → family check card fails so the responder call rings at once", () => {
+  it("records a skipped-card row and throws", async () => {
+    const { createWhatsappPort } = await import("@/ports/whatsapp");
+    const writes: string[] = [];
+    const fakeSql = Object.assign(async (strings: TemplateStringsArray) => { writes.push(strings.join("?")); return []; },
+      { json: (v: unknown) => v }) as unknown as Parameters<typeof createWhatsappPort>[0];
+    const wa = createWhatsappPort(fakeSql, {});
+    await expect(wa.sendFamilyCheckCard({ familyId: FAMILY, toPersonId: PARENT, claimedName: "Rohit", askedWhat: "paise", checkId: "c-1" }))
+      .rejects.toThrow("whatsapp_not_configured");
+    expect(writes.some((w) => w.includes("insert into public.dev_outbox"))).toBe(true);
+  });
+});

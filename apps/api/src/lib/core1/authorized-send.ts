@@ -42,6 +42,32 @@ export async function enqueueAuthorizedSend(db: RpcDb, encryptionKeyHex: string 
     p_subject_id: input.subjectId, p_recipient_id: input.recipientId, p_kind: input.kind, p_source_id: input.sourceId,
     p_fingerprint: requestFingerprint(request), ...(care ? { p_details: input.details } : {}),
   }, 'send_prepare_failed');
+  // The prepare RPC opens a one-shot workflow job (state 'processing', 2 min lease) only to fence the enqueue. No runner
+  // claims these kinds, so close it here once the enqueue is decided; otherwise it stays 'processing' forever.
+  try {
+    const out = await gateAndEnqueue(db, encryptionKeyHex, input, { jobId, requestId, eventId, request, lease: prepared.lease });
+    await finishSendJob(db, jobId, prepared.lease, 'completed', null);
+    return { ...out, channel: prepared.channel };
+  } catch (error) {
+    const code = error instanceof Error && /^[a-z0-9_]{1,80}$/.test(error.message) ? error.message : 'send_failed';
+    await finishSendJob(db, jobId, prepared.lease, 'failed', code);
+    throw error;
+  }
+}
+
+/** Best effort: the outbox row (or the refusal) is already decided, so a finish problem must not change the result. */
+async function finishSendJob(db: RpcDb, jobId: string, lease: string, state: 'completed' | 'failed', code: string | null) {
+  try {
+    const finished = await call<boolean>(db, 'finish_workflow_job', { p_job_id: jobId, p_lease_token: lease, p_state: state, p_error_code: code }, 'send_job_finish_failed');
+    if (finished === false) console.warn('[authorized-send] send job not finished: stale_lease');
+  } catch (error) {
+    console.warn(`[authorized-send] send job not finished: ${error instanceof Error ? error.message : 'unknown'}`);
+  }
+}
+
+async function gateAndEnqueue(db: RpcDb, encryptionKeyHex: string, input: AuthorizedSendInput,
+  ids: { jobId: string; requestId: string; eventId: string; request: GateRequest; lease: string }): Promise<Omit<AuthorizedSendResult, 'channel'>> {
+  const { jobId, requestId, eventId, request } = ids;
   const snapshot = await call<Snapshot>(db, 'load_gate_snapshot', {
     p_family_id: input.familyId, p_job_id: jobId, p_request_id: requestId,
   }, 'send_snapshot_failed');
@@ -58,14 +84,14 @@ export async function enqueueAuthorizedSend(db: RpcDb, encryptionKeyHex: string 
   }
   const plain = Buffer.from(JSON.stringify({ v: 1, action: request.action, requestId, eventId }));
   const result = await call<{ status: string; outbox_id?: string; recovered?: boolean; reason?: string }>(db, 'enqueue_authorized_command', {
-    p_family_id: input.familyId, p_job_id: jobId, p_lease_token: prepared.lease, p_action_request_id: requestId,
+    p_family_id: input.familyId, p_job_id: jobId, p_lease_token: ids.lease, p_action_request_id: requestId,
     p_action: request.action, p_dedupe_key: input.dedupeKey,
     p_payload_ciphertext: encryptWebhook(plain, encryptionKeyHex, `outbox:${input.familyId}:${input.dedupeKey}`),
     p_payload_hash: createHash('sha256').update(plain).digest('hex'), p_revision: snapshot.revision,
     p_incident_id: null, p_assignment_id: null,
   }, 'send_enqueue_failed');
   if (result.status !== 'enqueued' || !result.outbox_id) throw new Error(result.reason === 'consent_required' ? 'send_consent_required' : 'send_not_authorized');
-  return { id: result.outbox_id, duplicate: result.recovered === true, channel: prepared.channel };
+  return { id: result.outbox_id, duplicate: result.recovered === true };
 }
 
 export interface SendClaim { lease: string; attempt: number; callId: string | null; personId: string }

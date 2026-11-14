@@ -437,10 +437,9 @@ function makeScenes(device) {
       title: 'Keypad: "Rohit ka phone aaya, paise maang raha tha" -> family_check -> Rohit denies -> red',
       expectedLevel: "red",
       async run() {
-        if (!env.WHATSAPP_APP_SECRET || env.WHATSAPP_APP_SECRET.length < 32) {
-          throw new Error("Scene C needs lab-only WHATSAPP_APP_SECRET (at least 32 characters) in the lab and player env");
-        }
-        // Contacts are provisioned encrypted in the synthetic seed; this scene never changes routing.
+        // No WhatsApp in the joined lab: family_check rings Rohit with the Sarvam RESPONDER call at once, and his
+        // answer comes back on the secret-path Sarvam post-call webhook (apps/shield-api lib/sarvam_family_check.ts).
+        // Providers are off, so the responder call is a dev_outbox row and the post-call below is synthetic.
         const rohitId = "22222222-2222-4222-8222-222222222223";
         const [rohit] = await sql`select id from public.people where id=${rohitId} and family_id=${FAMILY_ID}`;
         if (!rohit) throw new Error("Scene C needs the synthetic Rohit identity fixture");
@@ -460,24 +459,26 @@ function makeScenes(device) {
           );
         }
         const checkId = startRes.data.check_id;
-        const webhookBody = JSON.stringify({
-          object: "whatsapp_business_account",
-          entry: [{ changes: [{ field: "messages", value: {
-            messaging_product: "whatsapp",
-            messages: [{ id: `wamid.lab.${randomUUID()}`, from: "919000000003", type: "text", text: { body: "DENIED" } }],
-          } }] }],
+        const responderCall = await pollUntil(async () => {
+          const [row] = await sql`select id, kind from public.dev_outbox
+            where dedupe_key=${`calls:responder:${checkId}`} and family_id=${FAMILY_ID} and channel='calls'`;
+          return row ?? null;
         });
-        const signature = createHmac("sha256", env.WHATSAPP_APP_SECRET).update(webhookBody).digest("hex");
-        const inbound = await reqJson("/api/whatsapp/webhook", {
-          method: "POST", body: webhookBody, headers: { "X-Hub-Signature-256": `sha256=${signature}` },
+        if (!responderCall) throw new Error("family_check did not dispatch the Sarvam responder call to Rohit");
+        const postCall = await reqJson(`/api/sarvam/webhook/${env.SARVAM_WEBHOOK_SECRET}`, {
+          method: "POST",
+          body: {
+            status: "completed",
+            metadata: { family_id: FAMILY_ID, person_id: rohitId, receipt_id: responderCall.id, purpose: "responder" },
+            final_agent_variables: { check_id: checkId, family_check_answer: "denied" },
+            ended_at: new Date().toISOString(),
+          },
         });
-        if (inbound.status !== 200) throw new Error(`WhatsApp webhook failed (${inbound.status})`);
-        // The webhook acknowledges promptly and processes through Next's after lifecycle.
-        const answered = await pollUntil(async () => {
-          const [check] = await sql`select state from public.family_checks where id=${checkId}`;
-          return check?.state === "denied";
-        });
-        if (!answered) throw new Error("WhatsApp webhook did not record the synthetic DENIED answer");
+        if (postCall.status !== 200 || postCall.data?.family_check !== "denied") {
+          throw new Error(`Sarvam post-call webhook did not record the answer (${postCall.status}): ${JSON.stringify(postCall.data)}`);
+        }
+        const [answered] = await sql`select state from public.family_checks where id=${checkId}`;
+        if (answered?.state !== "denied") throw new Error("family check not marked denied");
         const resultRes = await reqJson("/api/sarvam/tool/family_check_result", {
           method: "POST",
           headers: sarvamHeaders,
@@ -503,7 +504,7 @@ function makeScenes(device) {
             Boolean(verdict) &&
             Boolean(riya.match),
           inputSummary:
-            'POST /api/sarvam/tool/family_check(Rohit) -> POST /api/whatsapp/webhook(DENIED, signed) -> /api/sarvam/tool/family_check_result',
+            `POST /api/sarvam/tool/family_check(Rohit) -> responder call (${responderCall.kind}) -> POST /api/sarvam/webhook/<secret>(responder, DENIED) -> /api/sarvam/tool/family_check_result`,
           scamType: verdict?.scam_type || "family_in_trouble",
           reasonsText: verdict
             ? englishReasons(verdict.reasons)
@@ -860,13 +861,19 @@ function makeScenes(device) {
       title: "Keypad SMS gateway — register Maa (admin) + forward scam SMS",
       expectedLevel: "red",
       async run() {
+        // The gateway knows Maa only by the number her keypad forwards from, and registration must match her stored
+        // contact. The lab stores only REAL demo numbers, so read Maa's from the secrets env at runtime (never printed,
+        // never in code). LAB_MAA_PRIMARY picks the handset load-phones.ts made her primary contact.
+        const maaPhoneVar = env.LAB_MAA_PRIMARY === "smartphone" ? "LAB_PHONE_MAA_SMARTPHONE" : "LAB_PHONE_MAA_KEYPAD";
+        const maaPhone = env[maaPhoneVar];
+        if (!maaPhone) throw new Error(`Scene GW needs ${maaPhoneVar} (Maa's demo number) in the secrets env`);
         const regRes = await reqJson("/api/dev/shield/gateway-parent", {
           method: "POST",
           headers: { "x-dev-admin-token": env.DEV_ADMIN_TOKEN },
           body: {
             family_id: FAMILY_ID,
             parent_id: PARENT_ID,
-            phone: "+919000000001",
+            phone: maaPhone,
           },
         });
         if (regRes.status !== 200 || !regRes.data?.registered) {
@@ -879,7 +886,7 @@ function makeScenes(device) {
           method: "POST",
           headers: { "x-sahaj-gateway-secret": env.SMS_GATEWAY_SECRET },
           body: {
-            from: "+919000000001",
+            from: maaPhone,
             body: "URGENT bank account KYC blocked update http://kyc-update-demo.example OTP 482910",
             received_at: new Date().toISOString(),
             gateway_id: `lab-gw-${randomUUID()}`,
@@ -899,7 +906,7 @@ function makeScenes(device) {
           actual: verdict.level,
           passed,
           inputSummary:
-            "POST /api/dev/shield/gateway-parent(+919000000001) -> POST /api/sms/gateway(KYC scam SMS)",
+            `POST /api/dev/shield/gateway-parent(${maaPhoneVar}) -> POST /api/sms/gateway(KYC scam SMS from Maa's number)`,
           scamType: verdict.scam_type,
           reasonsText: englishReasons(verdict.reasons),
           effectsSummary: summarizeEffects(outbox),

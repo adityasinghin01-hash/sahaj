@@ -29,8 +29,11 @@ describe('authorized production send boundaries', () => {
   it('passes a Cedar-issued request to the atomic enqueue with the SQL lease and revision', async () => {
     const { db, rpc } = fixture();
     expect(await enqueueAuthorizedSend(db, KEY, input)).toEqual({ id: 'outbox', duplicate: false, channel: 'twilio' });
-    expect(rpc.mock.calls.map(([name]) => name)).toEqual(['prepare_authorized_send','load_gate_snapshot','enqueue_authorized_command']);
+    expect(rpc.mock.calls.map(([name]) => name)).toEqual(['prepare_authorized_send','load_gate_snapshot','enqueue_authorized_command','finish_workflow_job']);
     expect(rpc.mock.calls[2][1]).toMatchObject({ p_lease_token: 'lease', p_revision: 'revision', p_action: 'voice_message' });
+    // The one-shot send job is closed with the same lease once the outbox row is queued (never left 'processing').
+    expect(rpc.mock.calls[3][1]).toEqual({ p_job_id: stableUuid(['authorized-send-job', input.familyId, input.dedupeKey]),
+      p_lease_token: 'lease', p_state: 'completed', p_error_code: null });
     expect(JSON.stringify(rpc.mock.calls)).not.toContain('unencrypted_unavailable');
   });
   it.each(['block','missing_permission','inactive','fingerprint'] as const)('refuses %s authority before enqueue', async mode => {
@@ -41,6 +44,14 @@ describe('authorized production send boundaries', () => {
     if (mode === 'fingerprint') snapshot.request.fingerprint = 'tampered';
     await expect(enqueueAuthorizedSend(db, KEY, input)).rejects.toThrow();
     expect(rpc.mock.calls.map(([name]) => name)).not.toContain('enqueue_authorized_command');
+    // The refused send's job is closed as failed with a code, not left 'processing'.
+    expect(rpc.mock.calls.at(-1)).toEqual(['finish_workflow_job', expect.objectContaining({ p_lease_token: 'lease', p_state: 'failed',
+      p_error_code: expect.stringMatching(/^send_[a-z_]+$/) })]);
+  });
+  it('keeps the queued result when closing the send job fails', async () => {
+    const { db } = fixture();
+    const failing: RpcDb = { rpc: async (name, args) => name === 'finish_workflow_job' ? { data: null, error: { code: 'XX000' } } : db.rpc(name, args) };
+    expect(await enqueueAuthorizedSend(failing, KEY, input)).toEqual({ id: 'outbox', duplicate: false, channel: 'twilio' });
   });
   it('refuses missing encryption before preparing any durable work', async () => {
     const { db, rpc } = fixture();

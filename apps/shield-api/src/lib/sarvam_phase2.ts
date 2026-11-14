@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { constantTimeEqual, verifyBearerToken } from "./auth";
 import type { ShieldApp } from "./app";
+import { parseResponderAnswer } from "./sarvam_family_check";
 
 /**
  * Phase 2 links between Sarvam calls and Shield.
@@ -77,6 +78,17 @@ export function createSarvamWebhookHandler(getApp: () => ShieldApp) {
     const parsed = parseSarvamStatus(body);
     // Unknown shapes are acknowledged (Sarvam does not retry) but never recorded.
     if (!parsed) return Response.json({ ok: true, ignored: "unrecognised_payload" });
+    // Responder calls placed for a keypad family check carry Rohit's spoken answer back (no WhatsApp needed).
+    // Without a parsable answer on a connected call it is acknowledged like any other non-check-in call.
+    const answer = parsed.purpose === "responder" && parsed.status === "connected" ? parseResponderAnswer(body) : null;
+    if (answer && app.sarvamFamilyCheckStore) {
+      const recorded = await app.sarvamFamilyCheckStore.recordResponderAnswer({
+        familyId: parsed.family_id, personId: answer.personId, receiptId: answer.receiptId,
+        checkId: answer.checkId, answer: answer.answer, at: new Date(),
+      });
+      if (recorded !== "recorded") return Response.json({ ok: true, ignored: recorded });
+      return Response.json({ ok: true, family_check: answer.answer });
+    }
     // Only check-in calls feed the busy-line watch; other purposes are acknowledged only.
     if (parsed.purpose !== "checkin") return Response.json({ ok: true, ignored: "not_checkin" });
     const result = await app.recordBusyCallStatus({

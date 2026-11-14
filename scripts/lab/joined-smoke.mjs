@@ -3,7 +3,7 @@
 //
 //   set -a; source ~/.sahaj-lab2/lab2.env; source ~/dev/sahaj-secrets/shield.env; set +a
 //   LAB_DOOR_URL=http://127.0.0.1:3200 node scripts/lab/joined-smoke.mjs            # everything
-//   node scripts/lab/joined-smoke.mjs --only core1,maa                               # sections: base,core3,core2,core1,maa
+//   node scripts/lab/joined-smoke.mjs --only core1,maa                               # sections: base,core3,core2,core1,maa,x
 //
 // Prints one PASS/FAIL line per check with statuses, ids and safe codes only; never tokens, secrets or numbers.
 // Lab fixtures (trusted contact, circle, consents, permissions, medicine, vendor, synthetic TeleCMI caller) are written
@@ -11,7 +11,7 @@
 // every "acted on" check reads the durable rows (outbox, child_alerts, nudges, assignments, timeline), never a phone.
 // Timers: the script drives the same tick routes as scripts/lab/cron-tick.mjs (CRON_SECRET) instead of waiting 30 s.
 // Exits 1 on any FAIL.
-import { createHmac, randomUUID } from "node:crypto";
+import { createHash, createHmac, randomUUID } from "node:crypto";
 import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
@@ -47,6 +47,7 @@ const FX = {
   permShare: "71000000-0000-4000-8000-000000000009", consentMaaRefill: "71000000-0000-4000-8000-00000000000a",
   telecmiCaller: "71000000-0000-4000-8000-00000000000b", vendorPerson: "71000000-0000-4000-8000-00000000000c",
   principal: "71000000-0000-4000-8000-00000000000d", permVoice: "71000000-0000-4000-8000-00000000000e", permNudge: "71000000-0000-4000-8000-00000000000f",
+  permMaaVoice: "71000000-0000-4000-8000-000000000010",
 };
 const TELECMI_APP_ID = Number(env.TELECMI_APP_ID || 900001);
 const TELECMI_VIRTUAL = env.TELECMI_VIRTUAL_NUMBER || "910000000099";
@@ -60,6 +61,7 @@ function mint(sub, secret = SECRET) {
 }
 const riya = mint(RIYA_USER), rohit = mint(ROHIT_USER);
 
+const RUN_START = new Date().toISOString();
 let failed = 0, passed = 0;
 const results = [];
 let blocked = 0;
@@ -137,6 +139,11 @@ async function fixtures() {
   const riyaVoiceConsent = (await q(`select id from public.consents where family_id=$1 and person_id=$2 and purpose=$3 and answer order by created_at desc limit 1`,
     [FAMILY, RIYA, `voice_share:${MAA}`]))[0]?.id ?? null;
   if (riyaVoiceConsent) await perm(FX.permVoice, RIYA, "voice_message", riyaVoiceConsent, { target_ids: [MAA], max_uses: 1000 }, { principal: FX.principal });
+  // Keypad leave_message (core1.sarvam_message_push, Cedar action voice_message): Maa -> Riya, bound to the principal and
+  // to Maa's seeded voice_share:<Riya> consent. Without it the transcript is saved but its push is (correctly) refused.
+  const maaVoiceConsent = (await q(`select id from public.consents where family_id=$1 and person_id=$2 and purpose=$3 and answer order by created_at desc limit 1`,
+    [FAMILY, MAA, `voice_share:${RIYA}`]))[0]?.id ?? null;
+  if (maaVoiceConsent) await perm(FX.permMaaVoice, MAA, "voice_message", maaVoiceConsent, { target_ids: [RIYA], max_uses: 1000 }, { principal: FX.principal });
   // Core 1 missed-call push (authorized path): the gate request is person=Maa (caller), target=Riya (recipient). The S1 seed's
   // missed_call_nudge permission targets Maa herself, which Cedar refuses, so the lab adds the Maa -> Riya grant.
   await perm(FX.permNudge, MAA, "missed_call_nudge", "88888888-8888-4888-8888-888888888801", { target_ids: [RIYA], max_uses: 1000 }, { principal: FX.principal });
@@ -394,6 +401,12 @@ if (want("core1")) {
 
   const deadCmd = await q(`select count(*)::int n from public.raw_events where (event_type like 'command.%' or source='core1_maa_device') and status='dead'`);
   check("core1", "no Core 1 command raw event dead-lettered", deadCmd[0].n === 0, `dead ${deadCmd[0].n}`);
+  // Authorized sends open a one-shot workflow job to fence their enqueue; it must be closed once the outbox row is queued.
+  const sendJobs = await q(`select workflow_kind, state, count(*)::int n from public.workflow_jobs where family_id=$1 and created_at>=$2
+      and workflow_kind in ('core1.voice_notify','core1.missed_call_push') group by 1,2 order by 1,2`, [FAMILY, RUN_START]);
+  check("core1", "voice_notify + missed_call_push send jobs completed (none left processing)",
+    ["core1.voice_notify", "core1.missed_call_push"].every((k) => sendJobs.some((j) => j.workflow_kind === k && j.state === "completed")) && !sendJobs.some((j) => j.state === "processing"),
+    sendJobs.map((j) => `${j.workflow_kind}:${j.state}:${j.n}`).join(",") || "none");
 }
 
 // ---------------------------------------------------------------- Maa's device routes with a real paired-device signature
@@ -413,6 +426,108 @@ if (want("maa")) {
     const urgent = await call("/api/core1/maa/urgent", { method: "POST", headers: { ...json, ...signed(body) }, body });
     check("maa", "POST /api/core1/maa/urgent (signed) -> calm status + offer", urgent.status === 201, `status ${urgent.status} ${urgent.data?.error ?? urgent.data?.state ?? ""}`);
   }
+}
+
+// ---------------------------------------------------------------- keypad Core 1 tools + X1 proof / any-phone + X2 gentle news + X3 matcher
+// Keypad tools are Sarvam tool calls (bearer SARVAM_TOOL_TOKEN) on apps/api; the lab gives their raw-SQL ports
+// SARVAM_TOOLS_DATABASE_URL. Maa's device routes use a freshly paired synthetic device signature, like section "maa".
+if (want("x")) {
+  const tool = { ...json, authorization: `Bearer ${env.SARVAM_TOOL_TOKEN || env.SARVAM_TOOL_BEARER || ""}` };
+  const keypad = async (name, input = {}) => call(`/api/core1/sarvam/${name}`, { method: "POST", headers: { ...tool, "idempotency-key": `e2e-${randomUUID()}` },
+    body: { variables: { family_id: FAMILY, parent_id: MAA }, input } });
+  const since = new Date(Date.now() - 1000).toISOString();
+  const cs = await keypad("check_status");
+  check("x", "keypad tool check_status (Sarvam bearer) -> calm line, no transfer", cs.status === 200 && cs.data?.transfer === false && typeof cs.data?.line_hi === "string",
+    `status ${cs.status}, result ${short(cs.data?.result, 60)}, transfer ${cs.data?.transfer}`);
+  const chs = await keypad("child_status");
+  check("x", "keypad tool child_status -> Riya's calm status line", chs.status === 200 && chs.data?.transfer === false && typeof chs.data?.result?.status === "string",
+    `status ${chs.status}, child ${chs.data?.result?.status ?? short(chs.data?.result, 60)}`);
+  const lm = await keypad("leave_message", { transcript: "Riya beta, khana kha lena. Lab smoke sandesh." });
+  const lmRow = (await q(`select event_type from public.timeline_events where family_id=$1 and event_type='core1.message.transcript' and created_at>=$2 limit 1`, [FAMILY, since]))[0];
+  const lmPush = (await q(`select o.status from public.outbox o join public.authorized_send_context c on c.request_id=o.action_request_id and c.family_id=o.family_id
+      where o.family_id=$1 and c.kind='core1.sarvam_message_push' and o.created_at>=$2 limit 1`, [FAMILY, since]))[0];
+  // Providers off: EXPO push is disabled, so the tool (by design, docs/sarvam-setup.md) says the fallback line and transfers
+  // AFTER the transcript is saved and its authorized push is queued. With push on it answers transfer:false.
+  const pushOff = env.LAB2_PROVIDERS === "off";
+  check("x", "keypad tool leave_message -> AI transcript saved + authorized push to Riya queued", lm.status === 200 && !!lmRow && !!lmPush
+    && (lm.data?.transfer === false || (pushOff && lm.data?.result?.error === "unavailable")),
+    `status ${lm.status}, transfer ${lm.data?.transfer}${pushOff ? " (push off)" : ""}; timeline ${lmRow ? "core1.message.transcript" : "none"}; push ${lmPush?.status ?? "none"}`);
+  const ru = await keypad("raise_urgent", { said: "Lab smoke: mujhe madad chahiye", severity: "urgent" });
+  check("x", "keypad tool raise_urgent -> urgent help for Maa raised", ru.status === 200 && ru.data?.transfer === false && ["queued", "offered", "open", "accepted", "escalated"].includes(ru.data?.result?.status),
+    `status ${ru.status}, result ${short(ru.data?.result, 60)}, transfer ${ru.data?.transfer}`);
+  const noBearer = await call("/api/core1/sarvam/check_status", { method: "POST", headers: json, body: { variables: { family_id: FAMILY, parent_id: MAA } } });
+  check("x", "keypad tools refuse a missing Sarvam bearer", noBearer.status === 401, `status ${noBearer.status}`);
+
+  // Maa's synthetic device for the X1 / X2 device routes.
+  const code = await call("/api/app/shield/pair-code", { method: "POST", headers: as(riya), body: {} });
+  const pair = code.data?.code ? await call("/api/shield/pair", { method: "POST", headers: json, body: { code: code.data.code, parent_person_id: MAA, label: "Lab e2e Maa phone (x)", platform: "android",
+    protections: { sms: true, screening: true, redirection: true, usage: true, notifications: true, overlay: true } } }) : { status: code.status, data: null };
+  const signed = (body = "") => { const ts = String(Date.now()); return { "x-shield-device": pair.data?.device_id ?? "", "x-shield-ts": ts,
+    "x-shield-sig": createHmac("sha256", pair.data?.device_secret ?? "x").update(`${ts}.${body}`).digest("hex") }; };
+
+  // X1: Riya asks for a fresh proof of life -> Maa's device route shows that same check and its status.
+  const pr = await call("/api/core2/proof", { method: "POST", headers: as(riya), body: {} });
+  const challenge = pr.data?.challenge;
+  check("x", "X1 proof: Riya asks for a fresh proof-of-life check", pr.status === 201 && !!challenge?.id, `status ${pr.status}, ${challenge?.status ?? pr.data?.error ?? ""}`);
+  const mp = await call("/api/core2/maa-proof", { headers: signed("") });
+  check("x", "X1 proof: Maa's device route (signed) answers with that check", mp.status === 200 && !!challenge?.id && mp.data?.proof?.id === challenge.id,
+    `status ${mp.status}, proof ${mp.data?.proof?.status ?? mp.data?.error ?? "none"}${mp.data?.proof?.id === challenge?.id ? " (same id)" : ""}`);
+  const mpBad = await call("/api/core2/maa-proof", { headers: { ...signed(""), "x-shield-sig": "0".repeat(64) } });
+  check("x", "X1 proof: a wrong device signature is refused", mpBad.status === 401, `status ${mpBad.status}`);
+
+  // X1 any-phone: Riya calls from another phone and says the family code word. A pass rotates the word, so the lab sets the
+  // synthetic seed word first, clears this family's attempt guard, and restores the seed word afterwards.
+  const SEED_WORD = "gulmohar"; // synthetic demo code word from infra/supabase/dev/seed_demo_full.sql section 12
+  const seedHash = createHash("sha256").update(SEED_WORD).digest("hex"); // seed: sha256(normalizeCodeWord(word))
+  await q(`update public.shield_family_security set code_word_hash=$2 where family_id=$1`, [FAMILY, seedHash]);
+  await q(`delete from public.core2_any_phone_guards where family_id=$1`, [FAMILY]);
+  const ap = await call("/api/core2/any-phone/verify", { method: "POST", headers: tool, body: { family_id: FAMILY, said_name: "Riya", said_code_word: SEED_WORD, status_kind: "safe" } });
+  const apWrong = await call("/api/core2/any-phone/verify", { method: "POST", headers: tool, body: { family_id: FAMILY, said_name: "Riya", said_code_word: "galat shabd", status_kind: "safe" } });
+  await q(`update public.shield_family_security set code_word_hash=$2 where family_id=$1`, [FAMILY, seedHash]);
+  await q(`delete from public.core2_any_phone_guards where family_id=$1`, [FAMILY]);
+  check("x", "X1 any-phone verify: name + code word -> verified, limited powers, word rotated", ap.status === 200 && ap.data?.verified === true && ap.data?.code_word_rotated === true && !!ap.data?.incident_id,
+    `status ${ap.status}, verified ${ap.data?.verified}, powers ${(ap.data?.granted_powers ?? []).join("+")}, offered ${ap.data?.offered_contact_name ? "yes" : "no"}`);
+  check("x", "X1 any-phone verify: a wrong code word is refused", apWrong.status === 200 && apWrong.data?.verified === false, `status ${apWrong.status}, remaining ${apWrong.data?.remaining_attempts}`);
+  const mpAny = await call("/api/core2/maa-proof", { headers: signed("") });
+  check("x", "X1 any-phone: Maa's device route shows the live any-phone status", mpAny.status === 200 && !!ap.data?.session_id && mpAny.data?.any_phone?.id === ap.data.session_id,
+    `status ${mpAny.status}, any_phone ${mpAny.data?.any_phone ? "present" : "none"}`);
+
+  // X2: gentle news on the any-phone incident (Riya marks hurt) -> state -> close with after-report -> report readable.
+  const incidentId = ap.data?.incident_id;
+  if (incidentId) {
+    const gn = await call("/api/core2/news", { method: "POST", headers: as(riya), body: { incident_id: incidentId, calm_summary: "Riya theek hai, doctor ne dekh liya hai." } });
+    check("x", "X2 gentle news: Riya marks the incident hurt (Maa not pushed directly)", [200, 201].includes(gn.status) && !!gn.data,
+      `status ${gn.status}, ${gn.data?.status ?? gn.data?.circle_offer_status ?? gn.data?.error ?? ""}`);
+    const gs = await call(`/api/core2/news?incident_id=${incidentId}`, { headers: as(riya) });
+    check("x", "X2 gentle news: state readable", gs.status === 200, `status ${gs.status}, ${gs.data?.status ?? gs.data?.error ?? ""}`);
+    const close = await call(`/api/core2/after-report/${incidentId}`, { method: "POST", headers: as(riya), body: {} });
+    const rep = await call(`/api/core2/after-report/${incidentId}`, { headers: as(riya) });
+    check("x", "X2 after-report: Riya closes the incident -> after-report generated and readable", close.status === 200 && rep.status === 200,
+      `close ${close.status} ${close.data?.error ?? ""}, report ${rep.status} ${rep.data?.error ?? ""}`);
+  } else check("x", "X2 gentle news: needs the any-phone incident", false, "no incident");
+
+  // X2 heard: Maa's device acks full playback of Riya's newest voice note -> receipt + Riya sees "heard".
+  const vp = (await q(`select id from public.voice_posts where family_id=$1 and recipient_id=$2 order by created_at desc limit 1`, [FAMILY, MAA]))[0];
+  if (vp) {
+    const body = JSON.stringify({ message_kind: "core1_voice_post", delivery_id: vp.id, clip_duration_s: 2, played_duration_s: 2, playback_finished: true });
+    const heard = await call("/api/core2/heard/device", { method: "POST", headers: { ...json, ...signed(body) }, body });
+    const hs = await call(`/api/core2/heard?voice_post_id=${vp.id}&message_kind=core1_voice_post`, { headers: as(riya) });
+    check("x", "X2 heard: Maa's device acks full playback (signed) -> heard receipt", heard.status === 200 && !!heard.data?.receipt_id,
+      `status ${heard.status} ${heard.data?.error ?? ""}, already ${heard.data?.already_recorded}`);
+    check("x", "X2 heard: Riya reads the heard status", hs.status === 200, `status ${hs.status} ${hs.data?.error ?? short(hs.data?.heard ?? hs.data?.status, 40)}`);
+  } else check("x", "X2 heard: needs a voice note for Maa (run section core1 first)", false, "no voice post");
+
+  // X3: Maa says when she is free (save_free_time) -> a window row -> the matcher tick evaluates the family.
+  const ft = await call("/api/core1/matcher/free-time-tool", { method: "POST", headers: tool,
+    body: { variables: { family_id: FAMILY, parent_id: MAA }, input: { said: "shaam 6 se 8 baje tak free hoon" } } });
+  const win = ft.data?.window_id ? (await q(`select active, source from public.core1_free_windows where id=$1 and family_id=$2`, [ft.data.window_id, FAMILY]))[0] : null;
+  check("x", "X3 save_free_time: Maa's free time saved (window row, read back)", ft.status === 200 && ft.data?.saved === true && win?.active === true,
+    `status ${ft.status}, ${ft.data?.start_time ?? ""}-${ft.data?.end_time ?? ""}, window ${win ? `${win.source}` : "none"}`);
+  const mt = await call("/api/core1/matcher/tick", { method: "POST", headers: cron, body: { family_id: FAMILY } });
+  const nudged = (mt.data?.nudges_sent ?? []).some((n) => n.family_id === FAMILY);
+  const skip = (mt.data?.skipped ?? []).find((s) => s.family_id === FAMILY);
+  check("x", "X3 matcher tick: evaluates the family (nudge, or a stated skip reason)", mt.status === 200 && mt.data?.checked_families >= 1 && (nudged || !!skip),
+    `status ${mt.status}, ${nudged ? "both-free nudge queued" : `skipped: ${skip?.reason ?? "none"}`}`);
 }
 
 await db.end();
