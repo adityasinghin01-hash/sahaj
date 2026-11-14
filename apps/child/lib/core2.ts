@@ -202,6 +202,18 @@ const reassuranceResult = z.object({
   idempotent_replay: z.boolean().optional(),
 });
 const preferencesResult = z.object({ preferences: PreferencesSchema });
+const DeviceInputSchema = z.object({
+  battery_level: z.number().int().min(0).max(100).nullable(),
+  is_charging: z.boolean().nullable(),
+  sampled_at: timestamp,
+}).strict();
+const DeviceStateSchema = DeviceInputSchema.extend({
+  family_id: uuid, person_id: uuid, heartbeat_at: timestamp,
+});
+const deviceResult = z.object({
+  device_status: DeviceStateSchema.nullable(), idempotent_replay: z.boolean().optional(),
+});
+export type DeviceInput = z.infer<typeof DeviceInputSchema>;
 
 export function createCore2(session: Session) {
   async function request<T>(
@@ -255,6 +267,10 @@ export function createCore2(session: Session) {
   }
   const resource = (name: string, id: string) => `${name}/${encodeURIComponent(uuid.parse(id))}`;
   return {
+    deviceStatus: (signal?: AbortSignal) =>
+      request('GET', 'device-status', deviceResult, undefined, undefined, signal),
+    reportDeviceStatus: (input: DeviceInput, key: MutationKey, signal?: AbortSignal) =>
+      request('POST', 'device-status', deviceResult, DeviceInputSchema.parse(input), key, signal),
     sosList: async (q?: PageQuery, signal?: AbortSignal) =>
       request(
         'GET',

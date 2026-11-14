@@ -1,6 +1,10 @@
 /** Same {en, hi}/pick pattern as Maa's existing useT; English is the default. */
 export type Lang = 'en' | 'hi';
 export const core2Strings = {
+  phoneLow: {
+    en: 'Phone low — Priya and Maa will be told calmly if it dies',
+    hi: 'फ़ोन का चार्ज कम है — बंद होने पर प्रिया और माँ को शांति से बताया जाएगा',
+  },
   serverStatus: { en: 'Server status', hi: 'सर्वर पर दर्ज स्थिति' },
   live: { en: 'Live · Core 2', hi: 'लाइव · आपकी सुरक्षा' },
   demo: {

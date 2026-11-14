@@ -1,4 +1,5 @@
 import * as React from 'react';
+import { DeviceBatteryBanner } from './device-banner';
 import { Btn, Card, Notice, T } from '../sahaj/ui';
 import { type Core2Api, type Sos } from '../../lib/core2';
 import { useCore2Mutation, useCore2Read } from '../../lib/useCore2';
@@ -29,6 +30,7 @@ export function LiveSos() {
   const terminal = record && ['cancelled', 'safe'].includes(record.status);
   return (
     <>
+      <DeviceBatteryBanner />
       <T v="title">{t('sosIntro')}</T>
       <ReadState {...list} />
       {!record && list.data ? (

@@ -1,4 +1,5 @@
 import * as React from 'react';
+import { DeviceBatteryBanner } from './device-banner';
 import { router } from 'expo-router';
 import { Btn, Card, Field, Notice, T } from '../sahaj/ui';
 import { type Core2Api, type Watch } from '../../lib/core2';
@@ -46,6 +47,7 @@ export function LiveWatch() {
   const terminal = record && ['safe', 'cancelled'].includes(record.state);
   return (
     <>
+      <DeviceBatteryBanner />
       <ReadState {...list} />
       {!record && list.data && !creating ? (
         <>
