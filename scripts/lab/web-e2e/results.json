@@ -1,0 +1,89 @@
+{
+  "ranAt": "2026-11-14T16:01:54.011Z",
+  "webUrl": "http://127.0.0.1:8081",
+  "apiUrl": "http://127.0.0.1:3100",
+  "viewport": {
+    "width": 390,
+    "height": 844
+  },
+  "alertSentCount": 0,
+  "newAlertId": "5e5361ba-9518-4c90-a916-6046eedbab40",
+  "consoleErrorCount": 0,
+  "consoleErrors": [],
+  "pageErrorCount": 0,
+  "pageErrors": [],
+  "results": [
+    {
+      "num": 1,
+      "name": "Mint Riya lab token and verify /api/app/shield/summary",
+      "status": "PASS",
+      "elapsedMs": 1238,
+      "screenshot": "scripts/lab/web-e2e/step-01-token-and-demo-home.png",
+      "detail": "Verified via ~/.sahaj-lab/lab.env; family_id=11111111-1111-4111-8111-111111111111, checks=2"
+    },
+    {
+      "num": 2,
+      "name": "Open sign-in at 390x844, enter http://127.0.0.1:3100 + token, sign in",
+      "status": "PASS",
+      "elapsedMs": 1656,
+      "screenshot": "scripts/lab/web-e2e/step-02-signed-in-shield.png",
+      "detail": "Signed in and landed on LiveShield"
+    },
+    {
+      "num": 3,
+      "name": "Reuse existing red alert 5e5361ba-9518-4c90-a916-6046eedbab40 (0 new alerts sent)",
+      "status": "PASS",
+      "elapsedMs": 398,
+      "screenshot": "scripts/lab/web-e2e/step-03-home-before-poll.png",
+      "detail": "Reused existing red alert id=5e5361ba-9518-4c90-a916-6046eedbab40 (alertSentCount=0, snippet=\"URGENT bank account KYC blocked update immediately at http://kyc-check-rxiixu.example\")"
+    },
+    {
+      "num": 4,
+      "name": "Poll brings new red alert into UI within 15s; open it, verify reasons & masking",
+      "status": "PASS",
+      "elapsedMs": 1030,
+      "screenshot": "scripts/lab/web-e2e/step-04-alert-detail.png",
+      "detail": "Appeared in Home UI in 400ms (<15000ms); 5 reasons verified; no 4+ digit run in masked snippet"
+    },
+    {
+      "num": 5,
+      "name": "Tap fraud feedback button -> saved state & verify via GET /api/app/shield/alerts/:id",
+      "status": "PASS",
+      "elapsedMs": 266,
+      "screenshot": "scripts/lab/web-e2e/step-05-feedback-saved.png",
+      "detail": "Existing alert already had \"Family marked this fraud.\" visible from prior pass; API confirmed child_feedback=\"fraud\""
+    },
+    {
+      "num": 6,
+      "name": "Timeline -> Verify confirms valid hash chain",
+      "status": "PASS",
+      "elapsedMs": 1863,
+      "screenshot": "scripts/lab/web-e2e/step-06-timeline-verify.png",
+      "detail": "UI displayed \"Hash chain matches\" (51 steps checked); API /api/app/timeline/verify valid=true"
+    },
+    {
+      "num": 7,
+      "name": "Report pack opens and shows \"1930\" and \"cybercrime.gov.in\"",
+      "status": "PASS",
+      "elapsedMs": 2320,
+      "screenshot": "scripts/lab/web-e2e/step-07-report-pack.png",
+      "detail": "Visible \"1930\" and \"cybercrime.gov.in\" (button visible=true, <a href> count=0)"
+    },
+    {
+      "num": 8,
+      "name": "Shield tab shows server protections + scam-sense (no \"Demo\" label)",
+      "status": "PASS",
+      "elapsedMs": 1304,
+      "screenshot": "scripts/lab/web-e2e/step-08-shield-server-values.png",
+      "detail": "Rendered \"Meena: 0/5\" and server device protections; no \"Demo\" label on Shield tab"
+    },
+    {
+      "num": 9,
+      "name": "Sign out -> app falls back to labelled Demo mode",
+      "status": "PASS",
+      "elapsedMs": 1007,
+      "screenshot": "scripts/lab/web-e2e/step-09-signed-out-demo.png",
+      "detail": "Signed out cleanly; \"Demo mode\" + \"Connect live Shield\" restored; localStorage session cleared"
+    }
+  ]
+}
