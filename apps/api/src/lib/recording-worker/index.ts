@@ -1,3 +1,4 @@
 export * from "./types";
 export * from "./worker";
-export { recordingStore, recordingStorage, readRawEvent, RECORDINGS_BUCKET, type RecordingDb } from "./supabase-store";
+export * from "./purge";
+export { recordingStore, recordingStorage, purgeStore, readRawEvent, RECORDINGS_BUCKET, type RecordingDb } from "./supabase-store";

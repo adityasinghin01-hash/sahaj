@@ -7,3 +7,4 @@ export * from "./twilio";
 export * from "./telecmi";
 export { assertSafeUrl, assertE164 } from "./http";
 export { fetchTwilioRecording, MAX_TWILIO_RECORDING_BYTES } from "./twilio-recording";
+export { verifySarvamAttemptInteraction } from "./sarvam-attempts";

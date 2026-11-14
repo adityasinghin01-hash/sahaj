@@ -45,7 +45,7 @@ export class FakeRecordingStore implements RecordingStore {
   /** consents returned by the second lookup, to model revocation during the fetch */
   laterConsents: ConsentRow[] | null = null;
   lookups = 0;
-  slotValue: "none" | "same" | "other" = "none";
+  slotValue: "none" | "same" | "other" | "purged" = "none";
   putResult: PutResult | RecordingError | Error = "stored";
   puts: Array<Parameters<RecordingStore["put"]>[0]> = [];
   async getCall() { return this.call; }

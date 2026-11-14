@@ -1,5 +1,6 @@
 import { serviceDatabase } from "../database";
 import type { ConsentRow } from "../provider-ingestion/gateway";
+import type { PurgeStore } from "./purge";
 import { RecordingError, type RawEventRow, type RecordingStorage, type RecordingStore } from "./types";
 
 type DbError = { code?: string; message?: string; statusCode?: string | number } | null;
@@ -39,7 +40,7 @@ export function recordingStore(db: RecordingDb = serviceDatabase() as unknown as
     },
     async slot(familyId, callId, refHash) {
       const { data, error } = await db.rpc("get_call_recording_slot", { p_family_id: familyId, p_call_id: callId, p_recording_ref_hash: refHash });
-      if (error || (data !== "none" && data !== "same" && data !== "other")) throw unavailable();
+      if (error || (data !== "none" && data !== "same" && data !== "other" && data !== "purged")) throw unavailable();
       return data;
     },
     async put(i) {
@@ -53,7 +54,7 @@ export function recordingStore(db: RecordingDb = serviceDatabase() as unknown as
         if (error.code === "22023") throw new RecordingError("invalid_metadata");
         throw unavailable();
       }
-      if (data !== "stored" && data !== "already_stored" && data !== "ignored_additional") throw unavailable();
+      if (data !== "stored" && data !== "already_stored" && data !== "ignored_additional" && data !== "purged") throw unavailable();
       return data;
     },
   };
@@ -83,4 +84,20 @@ export async function readRawEvent(db: RecordingDb, id: string): Promise<RawEven
     id: String(data.id), familyId: String(data.family_id), source: String(data.source), providerEventId: String(data.provider_event_id),
     eventType: String(data.event_type), metadata: (data.metadata ?? {}) as Record<string, unknown>, payloadCiphertext: data.payload_ciphertext ?? null,
   } : null;
+}
+
+export function purgeStore(db: RecordingDb = serviceDatabase() as unknown as RecordingDb): PurgeStore {
+  return {
+    async listCandidates(limit, asOf) {
+      const { data, error } = await db.rpc("list_recording_purge_candidates", { p_limit: limit, p_as_of: asOf.toISOString() });
+      if (error || !Array.isArray(data)) throw unavailable();
+      return data.flatMap((r: Record<string, unknown>) => (typeof r.family_id === "string" && typeof r.call_id === "string" && typeof r.object_path === "string" && (r.reason === "retention" || r.reason === "consent")
+        ? [{ familyId: r.family_id, callId: r.call_id, objectPath: r.object_path, reason: r.reason as "retention" | "consent" }] : []));
+    },
+    async finish(familyId, callId, objectPath, asOf) {
+      const { data, error } = await db.rpc("finish_recording_purge", { p_family_id: familyId, p_call_id: callId, p_object_path: objectPath, p_as_of: asOf.toISOString() });
+      if (error) throw unavailable();
+      return data === true;
+    },
+  };
 }

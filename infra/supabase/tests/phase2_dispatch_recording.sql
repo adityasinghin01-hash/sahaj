@@ -1,174 +1,275 @@
--- Run as database owner after 20261114201600_phase2_dispatch_recording.sql. All fixtures are synthetic and rolled back.
--- NOT YET EXECUTED in the authoring session (no Postgres was available there): run before relying on the migration.
+-- Run as database owner after 20261114201600_phase2_dispatch_recording.sql on a SCRATCH database. All fixtures are synthetic and rolled back.
+-- NOT YET EXECUTED by its author (no Postgres was available): the parent runs it after review. Never run against the real project.
+-- Concurrency (two sessions) is covered separately by phase2_concurrency.ps1.
 begin;
 insert into public.families(id,name) values
  ('b2000000-0000-4000-8000-000000000001','Synthetic Phase2 A'),('b2000000-0000-4000-8000-000000000002','Synthetic Phase2 B');
 insert into public.people(id,family_id,display_name,role) values
  ('c2000000-0000-4000-8000-000000000001','b2000000-0000-4000-8000-000000000001','Synthetic Parent A','parent'),
- ('c2000000-0000-4000-8000-000000000002','b2000000-0000-4000-8000-000000000002','Synthetic Parent B','parent');
+ ('c2000000-0000-4000-8000-000000000002','b2000000-0000-4000-8000-000000000002','Synthetic Parent B','parent'),
+ ('c2000000-0000-4000-8000-000000000003','b2000000-0000-4000-8000-000000000001','Synthetic Circle A','circle');
 insert into public.calls(id,family_id,person_id,provider) values
  ('d2000000-0000-4000-8000-000000000001','b2000000-0000-4000-8000-000000000001','c2000000-0000-4000-8000-000000000001','sarvam'),
- ('d2000000-0000-4000-8000-000000000002','b2000000-0000-4000-8000-000000000001','c2000000-0000-4000-8000-000000000001','twilio'),
- ('d2000000-0000-4000-8000-000000000003','b2000000-0000-4000-8000-000000000002','c2000000-0000-4000-8000-000000000002','sarvam');
-insert into public.outbox(id,family_id,kind,dedupe_key,payload_ciphertext,status,attempt_count,lease_token,lease_until) values
- ('e2000000-0000-4000-8000-000000000001','b2000000-0000-4000-8000-000000000001','call','k1','x','processing',1,'f2000000-0000-4000-8000-000000000001',now()+interval '1 minute'),
- ('e2000000-0000-4000-8000-000000000002','b2000000-0000-4000-8000-000000000001','call','k2','x','processing',1,'f2000000-0000-4000-8000-000000000002',now()+interval '1 minute');
+ ('d2000000-0000-4000-8000-000000000002','b2000000-0000-4000-8000-000000000001','c2000000-0000-4000-8000-000000000003','twilio'),
+ ('d2000000-0000-4000-8000-000000000003','b2000000-0000-4000-8000-000000000002','c2000000-0000-4000-8000-000000000002','sarvam'),
+ ('d2000000-0000-4000-8000-000000000004','b2000000-0000-4000-8000-000000000001','c2000000-0000-4000-8000-000000000001','twilio'),
+ ('d2000000-0000-4000-8000-000000000005','b2000000-0000-4000-8000-000000000001','c2000000-0000-4000-8000-000000000001','twilio');
+insert into public.incidents(id,family_id,person_id,severity) values
+ ('a2000000-0000-4000-8000-000000000001','b2000000-0000-4000-8000-000000000001','c2000000-0000-4000-8000-000000000001','urgent');
+insert into public.action_requests(id,family_id,person_id,action,expires_at) values
+ ('a3000000-0000-4000-8000-000000000001','b2000000-0000-4000-8000-000000000001','c2000000-0000-4000-8000-000000000001','urgent_responder',now()+interval '1 hour'),
+ ('a3000000-0000-4000-8000-000000000002','b2000000-0000-4000-8000-000000000001','c2000000-0000-4000-8000-000000000001','other_action',now()+interval '1 hour');
+insert into public.assignments(id,family_id,incident_id,person_id,expires_at) values
+ ('a4000000-0000-4000-8000-000000000001','b2000000-0000-4000-8000-000000000001','a2000000-0000-4000-8000-000000000001','c2000000-0000-4000-8000-000000000003',now()+interval '1 hour');
+insert into public.outbox(id,family_id,kind,dedupe_key,payload_ciphertext,status,attempt_count,lease_token,lease_until,action_request_id) values
+ ('e2000000-0000-4000-8000-000000000001','b2000000-0000-4000-8000-000000000001','call','k1','x','processing',1,'f2000000-0000-4000-8000-000000000001',now()+interval '1 minute',null),
+ ('e2000000-0000-4000-8000-000000000002','b2000000-0000-4000-8000-000000000001','call','k2','x','processing',1,'f2000000-0000-4000-8000-000000000002',now()+interval '1 minute','a3000000-0000-4000-8000-000000000001'),
+ ('e2000000-0000-4000-8000-000000000003','b2000000-0000-4000-8000-000000000002','call','k3','x','processing',1,'f2000000-0000-4000-8000-000000000003',now()+interval '1 minute',null),
+ ('e2000000-0000-4000-8000-000000000004','b2000000-0000-4000-8000-000000000001','call','k4','x','processing',1,'f2000000-0000-4000-8000-000000000004',now()+interval '1 minute',null),
+ ('e2000000-0000-4000-8000-000000000005','b2000000-0000-4000-8000-000000000001','call','k5','x','processing',1,'f2000000-0000-4000-8000-000000000005',now()+interval '1 minute','a3000000-0000-4000-8000-000000000002');
 
--- privileges: service role only, no client access, no direct writes to the ledger
-do $$ begin
-  if has_table_privilege('authenticated','public.dispatch_ledger','SELECT') or has_table_privilege('anon','public.dispatch_ledger','SELECT')
-    or has_table_privilege('service_role','public.dispatch_ledger','INSERT') or has_table_privilege('service_role','public.dispatch_ledger','UPDATE') then
-    raise exception 'FAIL ledger privileges';
-  end if;
-  if not exists(select 1 from pg_class where oid='public.dispatch_ledger'::regclass and relrowsecurity) then raise exception 'FAIL ledger rls'; end if;
+-- ---------------------------------------------------------------- privileges
+do $$ declare t text; begin
+  foreach t in array array['public.dispatch_ledger','public.dispatch_bindings'] loop
+    if has_table_privilege('authenticated',t,'SELECT') or has_table_privilege('anon',t,'SELECT')
+      or has_table_privilege('service_role',t,'INSERT') or has_table_privilege('service_role',t,'UPDATE')
+      or has_table_privilege('service_role',t,'DELETE') or has_table_privilege('service_role',t,'TRUNCATE') then
+      raise exception 'FAIL % privileges (service_role must have SELECT only)',t;
+    end if;
+    if not has_table_privilege('service_role',t,'SELECT') then raise exception 'FAIL % select missing',t; end if;
+    if not exists(select 1 from pg_class where oid=t::regclass and relrowsecurity) then raise exception 'FAIL % rls',t; end if;
+  end loop;
   if has_function_privilege('authenticated','public.claim_dispatch(uuid,uuid,text,text,text,uuid,uuid,uuid)','EXECUTE')
     or has_function_privilege('anon','public.put_call_recording(uuid,uuid,uuid,text,timestamptz,text)','EXECUTE')
     or has_function_privilege('authenticated','public.accept_assignment_verified(uuid,uuid,uuid)','EXECUTE')
-    or has_function_privilege('service_role','sahaj_private.bind_dispatch(public.dispatch_ledger,text,text,text,boolean)','EXECUTE') then
+    or has_function_privilege('authenticated','public.record_responder_acceptance(uuid,text)','EXECUTE')
+    or has_function_privilege('authenticated','public.record_delivery_proof(uuid,uuid,text)','EXECUTE')
+    or has_function_privilege('authenticated','public.finish_recording_purge(uuid,uuid,text,timestamptz)','EXECUTE')
+    or has_function_privilege('anon','public.bind_outbox_dispatch(uuid,uuid,uuid,text,text,uuid,uuid,uuid)','EXECUTE')
+    or has_function_privilege('service_role','sahaj_private.bind_dispatch(public.dispatch_ledger,text,text,text,boolean)','EXECUTE')
+    or has_function_privilege('service_role','sahaj_private.derive_responder_binding(uuid,uuid)','EXECUTE') then
     raise exception 'FAIL function privileges';
   end if;
-  if not has_function_privilege('service_role','public.put_call_recording(uuid,uuid,uuid,text,timestamptz,text)','EXECUTE') then raise exception 'FAIL service rpc'; end if;
+  if not has_function_privilege('service_role','public.put_call_recording(uuid,uuid,uuid,text,timestamptz,text)','EXECUTE')
+    or not has_function_privilege('service_role','public.list_recording_purge_candidates(integer,timestamptz)','EXECUTE') then raise exception 'FAIL service rpc'; end if;
 end $$;
 
--- claim: first wins, replay is duplicate, a second key for the same outbox row is duplicate, wrong lease and foreign call/person are refused
-do $$ declare r text; begin
-  r := public.claim_dispatch('b2000000-0000-4000-8000-000000000001','c2000000-0000-4000-8000-000000000001','dispatch:o1:a1','sarvam','sarvam.outbound_call',
-    'e2000000-0000-4000-8000-000000000001','f2000000-0000-4000-8000-000000000001','d2000000-0000-4000-8000-000000000001');
-  if r<>'claimed' then raise exception 'FAIL first claim %',r; end if;
-  r := public.claim_dispatch('b2000000-0000-4000-8000-000000000001','c2000000-0000-4000-8000-000000000001','dispatch:o1:a1','sarvam','sarvam.outbound_call',
-    'e2000000-0000-4000-8000-000000000001','f2000000-0000-4000-8000-000000000001','d2000000-0000-4000-8000-000000000001');
-  if r<>'duplicate' then raise exception 'FAIL replay %',r; end if;
-  r := public.claim_dispatch('b2000000-0000-4000-8000-000000000001','c2000000-0000-4000-8000-000000000001','dispatch:o1:a2','sarvam','sarvam.outbound_call',
-    'e2000000-0000-4000-8000-000000000001','f2000000-0000-4000-8000-000000000001','d2000000-0000-4000-8000-000000000001');
-  if r<>'duplicate' then raise exception 'FAIL second key %',r; end if;
+-- ---------------------------------------------------------------- consent writers: future rows refused
+do $$ begin
   begin
-    perform public.claim_dispatch('b2000000-0000-4000-8000-000000000001','c2000000-0000-4000-8000-000000000001','dispatch:o2:a1','twilio','twilio.create_call',
-      'e2000000-0000-4000-8000-000000000002','f2000000-0000-4000-8000-0000000000ff','d2000000-0000-4000-8000-000000000002');
-    raise exception 'FAIL wrong lease accepted';
-  exception when serialization_failure then null; end;
+    insert into public.consents(family_id,person_id,call_id,purpose,question,answer,version,created_at)
+      values('b2000000-0000-4000-8000-000000000001','c2000000-0000-4000-8000-000000000001',null,'call_recording','Synthetic?',true,'v1',now()+interval '1 day');
+    raise exception 'FAIL future consent accepted';
+  exception when check_violation then null; end;
+end $$;
+
+-- ---------------------------------------------------------------- proof flag cannot be forged
+do $$ begin
   begin
-    perform public.claim_dispatch('b2000000-0000-4000-8000-000000000001','c2000000-0000-4000-8000-000000000001','dispatch:o2:a1','twilio','twilio.create_call',
-      'e2000000-0000-4000-8000-000000000002','f2000000-0000-4000-8000-000000000002','d2000000-0000-4000-8000-000000000003');
-    raise exception 'FAIL foreign-family call accepted';
+    insert into public.raw_events(family_id,source,provider_event_id,event_type,metadata,status,normalized_proof)
+      values('b2000000-0000-4000-8000-000000000001','twilio','forged-proof','delivery.not_sent','{}','processed',true);
+    raise exception 'FAIL forged normalized_proof insert';
   exception when insufficient_privilege then null; end;
+  insert into public.raw_events(family_id,source,provider_event_id,event_type,metadata,status)
+    values('b2000000-0000-4000-8000-000000000001','twilio','plain-raw','delivery.not_sent','{}','processed');
   begin
-    perform public.claim_dispatch('b2000000-0000-4000-8000-000000000001','c2000000-0000-4000-8000-000000000002','dispatch:o2:a1','twilio','twilio.create_call',
-      'e2000000-0000-4000-8000-000000000002','f2000000-0000-4000-8000-000000000002','d2000000-0000-4000-8000-000000000002');
-    raise exception 'FAIL foreign person accepted';
-  exception when insufficient_privilege or foreign_key_violation then null; end;
+    update public.raw_events set normalized_proof=true where provider_event_id='plain-raw';
+    raise exception 'FAIL normalized_proof flip';
+  exception when insufficient_privilege then null; end;
 end $$;
 
--- complete: binds the call and the Sarvam attempt identity atomically; a second completion with another ref is refused
+-- ---------------------------------------------------------------- bindings are immutable and gate every claim
+do $$ declare r text; begin
+  if public.bind_outbox_dispatch('b2000000-0000-4000-8000-000000000001','e2000000-0000-4000-8000-000000000001','c2000000-0000-4000-8000-000000000001',
+    'sarvam','sarvam.outbound_call','d2000000-0000-4000-8000-000000000001')<>true then raise exception 'FAIL bind'; end if;
+  if public.bind_outbox_dispatch('b2000000-0000-4000-8000-000000000001','e2000000-0000-4000-8000-000000000001','c2000000-0000-4000-8000-000000000001',
+    'sarvam','sarvam.outbound_call','d2000000-0000-4000-8000-000000000001')<>true then raise exception 'FAIL idempotent bind'; end if;
+  begin
+    perform public.bind_outbox_dispatch('b2000000-0000-4000-8000-000000000001','e2000000-0000-4000-8000-000000000001','c2000000-0000-4000-8000-000000000003','sarvam','sarvam.outbound_call','d2000000-0000-4000-8000-000000000001');
+    raise exception 'FAIL conflicting rebind';
+  exception when unique_violation then null; end;
+  begin update public.dispatch_bindings set person_id='c2000000-0000-4000-8000-000000000003' where outbox_id='e2000000-0000-4000-8000-000000000001'; raise exception 'FAIL binding update';
+  exception when integrity_constraint_violation then null; end;
+  begin delete from public.dispatch_bindings where outbox_id='e2000000-0000-4000-8000-000000000001'; raise exception 'FAIL binding delete';
+  exception when integrity_constraint_violation then null; end;
+  begin perform public.bind_outbox_dispatch('b2000000-0000-4000-8000-000000000001','e2000000-0000-4000-8000-000000000003','c2000000-0000-4000-8000-000000000001','sarvam','sarvam.outbound_call');
+    raise exception 'FAIL cross-family outbox bound'; exception when insufficient_privilege then null; end;
+  begin perform public.bind_outbox_dispatch('b2000000-0000-4000-8000-000000000001','e2000000-0000-4000-8000-000000000004','c2000000-0000-4000-8000-000000000001','twilio','sarvam.outbound_call');
+    raise exception 'FAIL provider/action mismatch'; exception when invalid_parameter_value then null; end;
+  -- same family, valid lease, but another person / provider / action / call than the binding
+  begin perform public.claim_dispatch('b2000000-0000-4000-8000-000000000001','c2000000-0000-4000-8000-000000000003','dispatch:o1:a1','sarvam','sarvam.outbound_call','e2000000-0000-4000-8000-000000000001','f2000000-0000-4000-8000-000000000001','d2000000-0000-4000-8000-000000000001');
+    raise exception 'FAIL other person claimed'; exception when insufficient_privilege then null; end;
+  begin perform public.claim_dispatch('b2000000-0000-4000-8000-000000000001','c2000000-0000-4000-8000-000000000001','dispatch:o1:a1','twilio','twilio.create_call','e2000000-0000-4000-8000-000000000001','f2000000-0000-4000-8000-000000000001','d2000000-0000-4000-8000-000000000001');
+    raise exception 'FAIL other provider claimed'; exception when insufficient_privilege then null; end;
+  begin perform public.claim_dispatch('b2000000-0000-4000-8000-000000000001','c2000000-0000-4000-8000-000000000001','dispatch:o1:a1','sarvam','sarvam.outbound_call','e2000000-0000-4000-8000-000000000001','f2000000-0000-4000-8000-000000000001','d2000000-0000-4000-8000-000000000004');
+    raise exception 'FAIL other call claimed'; exception when insufficient_privilege then null; end;
+  begin perform public.claim_dispatch('b2000000-0000-4000-8000-000000000001','c2000000-0000-4000-8000-000000000001','dispatch:o1:a1','sarvam','sarvam.outbound_call','e2000000-0000-4000-8000-000000000001','f2000000-0000-4000-8000-000000000001',null);
+    raise exception 'FAIL call dropped'; exception when insufficient_privilege then null; end;
+  begin perform public.claim_dispatch('b2000000-0000-4000-8000-000000000001','c2000000-0000-4000-8000-000000000001','dispatch:o4:a1','twilio','twilio.create_call','e2000000-0000-4000-8000-000000000004','f2000000-0000-4000-8000-000000000004','d2000000-0000-4000-8000-000000000004');
+    raise exception 'FAIL unbound outbox claimed'; exception when insufficient_privilege then null; end;
+  begin perform public.claim_dispatch('b2000000-0000-4000-8000-000000000001','c2000000-0000-4000-8000-000000000001','dispatch:o1:a1','sarvam','sarvam.outbound_call','e2000000-0000-4000-8000-000000000001','f2000000-0000-4000-8000-0000000000ff','d2000000-0000-4000-8000-000000000001');
+    raise exception 'FAIL wrong lease'; exception when serialization_failure then null; end;
+  if (select count(*) from public.dispatch_ledger)<>0 then raise exception 'FAIL ledger written by refused claims'; end if;
+  r := public.claim_dispatch('b2000000-0000-4000-8000-000000000001','c2000000-0000-4000-8000-000000000001','dispatch:o1:a1','sarvam','sarvam.outbound_call','e2000000-0000-4000-8000-000000000001','f2000000-0000-4000-8000-000000000001','d2000000-0000-4000-8000-000000000001');
+  if r<>'claimed' then raise exception 'FAIL first claim %',r; end if;
+  if public.claim_dispatch('b2000000-0000-4000-8000-000000000001','c2000000-0000-4000-8000-000000000001','dispatch:o1:a1','sarvam','sarvam.outbound_call','e2000000-0000-4000-8000-000000000001','f2000000-0000-4000-8000-000000000001','d2000000-0000-4000-8000-000000000001')<>'duplicate' then raise exception 'FAIL replay'; end if;
+  if public.claim_dispatch('b2000000-0000-4000-8000-000000000001','c2000000-0000-4000-8000-000000000001','dispatch:o1:a2','sarvam','sarvam.outbound_call','e2000000-0000-4000-8000-000000000001','f2000000-0000-4000-8000-000000000001','d2000000-0000-4000-8000-000000000001')<>'duplicate' then raise exception 'FAIL second key'; end if;
+end $$;
+
+-- ---------------------------------------------------------------- complete binds call and attempt identity atomically
 do $$ declare h text := repeat('a',64); begin
   if public.complete_dispatch('b2000000-0000-4000-8000-000000000001','dispatch:o1:a1','att-1','app-1',h,true)<>'dispatched' then raise exception 'FAIL complete'; end if;
   if not exists(select 1 from public.calls where id='d2000000-0000-4000-8000-000000000001' and external_id='att-1' and ai_disclosed_at is not null) then raise exception 'FAIL call link'; end if;
   if not exists(select 1 from public.provider_identities where source='sarvam' and account_id='app-1' and external_id_hash=h and binding_kind='attempt'
     and family_id='b2000000-0000-4000-8000-000000000001' and person_id='c2000000-0000-4000-8000-000000000001' and attempt_id='att-1' and agent_id='app-1') then raise exception 'FAIL identity'; end if;
   if public.complete_dispatch('b2000000-0000-4000-8000-000000000001','dispatch:o1:a1','att-1','app-1',h,true)<>'dispatched' then raise exception 'FAIL idempotent complete'; end if;
-  begin
-    perform public.complete_dispatch('b2000000-0000-4000-8000-000000000001','dispatch:o1:a1','att-OTHER','app-1',h,true);
-    raise exception 'FAIL complete with different ref';
+  begin perform public.complete_dispatch('b2000000-0000-4000-8000-000000000001','dispatch:o1:a1','att-OTHER','app-1',h,true); raise exception 'FAIL other ref';
   exception when serialization_failure then null; end;
-  if public.mark_dispatch_failed('b2000000-0000-4000-8000-000000000001','dispatch:o1:a1','provider_rejected') then raise exception 'FAIL failed after dispatched'; end if;
-  if public.mark_dispatch_unknown('b2000000-0000-4000-8000-000000000001','dispatch:o1:a1') then raise exception 'FAIL unknown after dispatched'; end if;
+  if public.mark_dispatch_failed('b2000000-0000-4000-8000-000000000001','dispatch:o1:a1') or public.mark_dispatch_unknown('b2000000-0000-4000-8000-000000000001','dispatch:o1:a1') then raise exception 'FAIL status moved after dispatch'; end if;
 end $$;
 
--- another family cannot take over the same attempt reference; a recorded reference survives bookkeeping failure
-do $$ declare h text := repeat('a',64); begin
-  insert into public.outbox(id,family_id,kind,dedupe_key,payload_ciphertext,status,attempt_count,lease_token,lease_until) values
-   ('e2000000-0000-4000-8000-000000000003','b2000000-0000-4000-8000-000000000002','call','k3','x','processing',1,'f2000000-0000-4000-8000-000000000003',now()+interval '1 minute');
-  perform public.claim_dispatch('b2000000-0000-4000-8000-000000000002','c2000000-0000-4000-8000-000000000002','dispatch:o3:a1','sarvam','sarvam.outbound_call',
-    'e2000000-0000-4000-8000-000000000003','f2000000-0000-4000-8000-000000000003','d2000000-0000-4000-8000-000000000003');
-  begin
-    perform public.complete_dispatch('b2000000-0000-4000-8000-000000000002','dispatch:o3:a1','att-1','app-1',h,true);
-    raise exception 'FAIL identity takeover';
-  exception when unique_violation then null; end;
-  if not public.mark_dispatch_unknown('b2000000-0000-4000-8000-000000000002','dispatch:o3:a1','bookkeeping_failed','att-9') then raise exception 'FAIL mark unknown'; end if;
-  if (select status from public.dispatch_ledger where idempotency_key='dispatch:o3:a1')<>'delivery_unknown' then raise exception 'FAIL status'; end if;
-  if public.bind_dispatch_identity('b2000000-0000-4000-8000-000000000002','dispatch:o3:a1','app-1',repeat('b',64),true)<>true then raise exception 'FAIL repair'; end if;
-  if (select status from public.dispatch_ledger where idempotency_key='dispatch:o3:a1')<>'delivery_unknown' then raise exception 'FAIL repair changed status'; end if;
-end $$;
+-- ---------------------------------------------------------------- normalized delivery proof and reconciliation
+do $$ declare fam uuid := 'b2000000-0000-4000-8000-000000000001'; tw uuid := 'd2000000-0000-4000-8000-000000000004'; o uuid := 'e2000000-0000-4000-8000-000000000004';
+  src uuid; src_done uuid; forged uuid; proof jsonb; ref text := 'CA'||repeat('b',32); k text := 'dispatch:o4:a1'; begin
+  perform public.bind_outbox_dispatch(fam,o,'c2000000-0000-4000-8000-000000000001','twilio','twilio.create_call',tw);
+  perform public.claim_dispatch(fam,'c2000000-0000-4000-8000-000000000001',k,'twilio','twilio.create_call',o,'f2000000-0000-4000-8000-000000000004',tw);
+  -- provider answered but bookkeeping failed: unknown WITH a reference, then identity repair links the call
+  if not public.mark_dispatch_unknown(fam,k,'bookkeeping_failed',ref) then raise exception 'FAIL unknown'; end if;
+  if not public.bind_dispatch_identity(fam,k,null,null,false) then raise exception 'FAIL repair'; end if;
+  insert into public.raw_events(family_id,source,provider_event_id,event_type,metadata,status) values
+   (fam,'twilio','st-noanswer','twilio.call_status',jsonb_build_object('status','no-answer','call_id',tw,'person_id','c2000000-0000-4000-8000-000000000001'),'processed') returning id into src;
+  insert into public.raw_events(family_id,source,provider_event_id,event_type,metadata,status) values
+   (fam,'twilio','st-completed','twilio.call_status',jsonb_build_object('status','completed','call_id',tw),'processed') returning id into src_done;
+  -- a generic (non-normalized) event with perfect-looking metadata is not proof
+  insert into public.raw_events(family_id,source,provider_event_id,event_type,metadata,status) values
+   (fam,'twilio','forged-delivery','delivery.not_sent',jsonb_build_object('dispatch_key',k,'outcome','confirmed_not_sent','outbox_id',o,'provider_ref',ref,'action','twilio.create_call','action_request_id',null),'processed') returning id into forged;
+  if public.reconcile_dispatch(fam,k,forged,'confirmed_not_sent') then raise exception 'FAIL forged event reconciled'; end if;
+  begin perform public.record_delivery_proof(fam,src_done,'confirmed_not_sent'); raise exception 'FAIL completed call is proof'; exception when insufficient_privilege then null; end;
+  begin perform public.record_delivery_proof(fam,src,'delivered'); raise exception 'FAIL call proves delivered'; exception when insufficient_privilege then null; end;
+  begin perform public.record_delivery_proof('b2000000-0000-4000-8000-000000000002',src,'confirmed_not_sent'); raise exception 'FAIL cross-family proof'; exception when insufficient_privilege then null; end;
+  proof := public.record_delivery_proof(fam,src,'confirmed_not_sent');
+  if proof->>'dispatch_key'<>k or (proof->>'outbox_id')::uuid<>o then raise exception 'FAIL proof derivation'; end if;
+  if (select metadata->>'action_request_id' from public.raw_events where id=(proof->>'proof_event_id')::uuid) is not null then raise exception 'FAIL action_request_id invented'; end if;
+  if public.record_delivery_proof(fam,src,'confirmed_not_sent')->>'proof_event_id'<>proof->>'proof_event_id' then raise exception 'FAIL proof replay'; end if;
+  if public.reconcile_dispatch(fam,'dispatch:other:a1',(proof->>'proof_event_id')::uuid,'confirmed_not_sent') then raise exception 'FAIL other key'; end if;
+  if public.reconcile_dispatch(fam,k,(proof->>'proof_event_id')::uuid,'delivered') then raise exception 'FAIL other outcome'; end if;
+  if public.reconcile_outbox(o,(proof->>'proof_event_id')::uuid,'confirmed_not_sent') then raise exception 'FAIL outbox before ledger'; end if;
+  if not public.reconcile_dispatch(fam,k,(proof->>'proof_event_id')::uuid,'confirmed_not_sent') then raise exception 'FAIL reconcile'; end if;
+  if (select status from public.dispatch_ledger where idempotency_key=k)<>'not_sent' then raise exception 'FAIL not_sent'; end if;
+  update public.outbox set status='delivery_unknown' where id=o;
+  if public.reconcile_outbox(o,forged,'confirmed_not_sent') then raise exception 'FAIL outbox forged'; end if;
+  if not public.reconcile_outbox(o,(proof->>'proof_event_id')::uuid,'confirmed_not_sent') then raise exception 'FAIL outbox reconcile'; end if;
+  -- a not_sent row is retryable only under a NEW key: the live-outbox index allows exactly that
+  if public.claim_dispatch(fam,'c2000000-0000-4000-8000-000000000001','dispatch:o4:a2','twilio','twilio.create_call',o,'f2000000-0000-4000-8000-000000000004',tw)<>'duplicate' then
+    null; -- outbox no longer 'processing' after reconcile: stale_outbox_lease is also acceptable; both stop a double send
+  end if;
+exception when serialization_failure then null; end $$;
 
--- sweep turns abandoned claims into delivery_unknown, never back to a retryable state
+-- sweep: abandoned claims become delivery_unknown, never a retryable state
 do $$ begin
-  perform public.claim_dispatch('b2000000-0000-4000-8000-000000000001','c2000000-0000-4000-8000-000000000001','dispatch:o2:a1','twilio','twilio.create_call',
-    'e2000000-0000-4000-8000-000000000002','f2000000-0000-4000-8000-000000000002','d2000000-0000-4000-8000-000000000002');
-  update public.dispatch_ledger set claimed_at=now()-interval '1 hour' where idempotency_key='dispatch:o2:a1';
+  perform public.bind_outbox_dispatch('b2000000-0000-4000-8000-000000000001','e2000000-0000-4000-8000-000000000005','c2000000-0000-4000-8000-000000000001','twilio','twilio.create_call','d2000000-0000-4000-8000-000000000005');
+  perform public.claim_dispatch('b2000000-0000-4000-8000-000000000001','c2000000-0000-4000-8000-000000000001','dispatch:o5:a1','twilio','twilio.create_call','e2000000-0000-4000-8000-000000000005','f2000000-0000-4000-8000-000000000005','d2000000-0000-4000-8000-000000000005');
+  update public.dispatch_ledger set claimed_at=now()-interval '1 hour' where idempotency_key='dispatch:o5:a1';
   if public.sweep_stale_dispatch_claims(120)<1 then raise exception 'FAIL sweep'; end if;
-  if (select status from public.dispatch_ledger where idempotency_key='dispatch:o2:a1')<>'delivery_unknown' then raise exception 'FAIL swept status'; end if;
+  if (select status from public.dispatch_ledger where idempotency_key='dispatch:o5:a1')<>'delivery_unknown' then raise exception 'FAIL swept status'; end if;
 end $$;
 
--- reconcile needs verified, same-family, same-provider evidence carrying the dispatch key and a matching outcome
-do $$ declare ev uuid; bad uuid; begin
+-- ---------------------------------------------------------------- responder acceptance: common responder.accepted proof
+do $$ declare fam uuid := 'b2000000-0000-4000-8000-000000000001'; tw uuid := 'd2000000-0000-4000-8000-000000000002'; o uuid := 'e2000000-0000-4000-8000-000000000002';
+  resp uuid := 'c2000000-0000-4000-8000-000000000003'; asg uuid := 'a4000000-0000-4000-8000-000000000001'; ref text := 'CA'||repeat('d',32);
+  proof jsonb; sarvam_ev uuid; completed_ev uuid; p2 jsonb; m jsonb; begin
+  perform public.bind_outbox_dispatch(fam,o,resp,'twilio','twilio.create_call',tw,'a2000000-0000-4000-8000-000000000001',asg);
+  -- connected/completed events and a Sarvam event are never acceptance, whatever their metadata says
   insert into public.raw_events(family_id,source,provider_event_id,event_type,metadata,status) values
-   ('b2000000-0000-4000-8000-000000000001','twilio','ev-good','delivery.not_sent','{"dispatch_key":"dispatch:o2:a1","outcome":"confirmed_not_sent"}','processed') returning id into ev;
+   (fam,'sarvam','ev-conn','sarvam.outbound',jsonb_build_object('assignment_id',asg,'person_id',resp,'call_id',tw,'digit','1'),'processed') returning id into sarvam_ev;
+  begin perform public.record_responder_acceptance(fam,'ev-conn'); raise exception 'FAIL sarvam status accepted'; exception when insufficient_privilege then null; end;
   insert into public.raw_events(family_id,source,provider_event_id,event_type,metadata,status) values
-   ('b2000000-0000-4000-8000-000000000001','twilio','ev-wrongkey','delivery.not_sent','{"dispatch_key":"dispatch:other:a1","outcome":"confirmed_not_sent"}','processed') returning id into bad;
-  if public.reconcile_dispatch('b2000000-0000-4000-8000-000000000001','dispatch:o2:a1',bad,'confirmed_not_sent') then raise exception 'FAIL wrong evidence key'; end if;
-  if public.reconcile_dispatch('b2000000-0000-4000-8000-000000000001','dispatch:o2:a1',ev,'delivered') then raise exception 'FAIL outcome mismatch'; end if;
-  if public.reconcile_dispatch('b2000000-0000-4000-8000-000000000002','dispatch:o2:a1',ev,'confirmed_not_sent') then raise exception 'FAIL wrong family'; end if;
-  if not public.reconcile_dispatch('b2000000-0000-4000-8000-000000000001','dispatch:o2:a1',ev,'confirmed_not_sent') then raise exception 'FAIL good evidence'; end if;
-  if (select status from public.dispatch_ledger where idempotency_key='dispatch:o2:a1')<>'not_sent' then raise exception 'FAIL not_sent'; end if;
-  if public.reconcile_dispatch('b2000000-0000-4000-8000-000000000001','dispatch:o1:a1',ev,'confirmed_not_sent') then raise exception 'FAIL reconciled a dispatched row'; end if;
+   (fam,'twilio','ev-completed','twilio.call_status',jsonb_build_object('status','completed','call_id',tw,'person_id',resp),'processed') returning id into completed_ev;
+  begin perform public.record_responder_acceptance(fam,'ev-completed'); raise exception 'FAIL completed accepted'; exception when insufficient_privilege then null; end;
+  -- gather press before the call was placed/bound: not provable
+  insert into public.raw_events(family_id,source,provider_event_id,event_type,metadata,status) values
+   (fam,'twilio','AC:gather:CA1','twilio.gather.response',jsonb_build_object('call_id',tw,'person_id',resp,'digit','1'),'processed');
+  begin perform public.record_responder_acceptance(fam,'AC:gather:CA1'); raise exception 'FAIL accepted before dispatch'; exception when insufficient_privilege then null; end;
+  perform public.claim_dispatch(fam,resp,'dispatch:o2:a1','twilio','twilio.create_call',o,'f2000000-0000-4000-8000-000000000002',tw);
+  perform public.complete_dispatch(fam,'dispatch:o2:a1',ref,null,null,true);
+  -- wrong digit event
+  insert into public.raw_events(family_id,source,provider_event_id,event_type,metadata,status) values
+   (fam,'twilio','AC:gather:digit2','twilio.gather.response',jsonb_build_object('call_id',tw,'person_id',resp,'digit','2'),'processed');
+  begin perform public.record_responder_acceptance(fam,'AC:gather:digit2'); raise exception 'FAIL digit 2 accepted'; exception when insufficient_privilege then null; end;
+  -- gather event naming another person than the call's responder
+  insert into public.raw_events(family_id,source,provider_event_id,event_type,metadata,status) values
+   (fam,'twilio','AC:gather:other','twilio.gather.response',jsonb_build_object('call_id',tw,'person_id','c2000000-0000-4000-8000-000000000001','digit','1'),'processed');
+  begin perform public.record_responder_acceptance(fam,'AC:gather:other'); raise exception 'FAIL other responder accepted'; exception when insufficient_privilege then null; end;
+  begin perform public.record_responder_acceptance('b2000000-0000-4000-8000-000000000002','AC:gather:CA1'); raise exception 'FAIL cross-family'; exception when insufficient_privilege then null; end;
+  update public.raw_events set received_at=now() where provider_event_id='AC:gather:CA1';
+  proof := public.record_responder_acceptance(fam,'AC:gather:CA1');
+  select metadata into m from public.raw_events where id=(proof->>'proof_event_id')::uuid;
+  if m->>'incident_id'<>'a2000000-0000-4000-8000-000000000001' or m->>'assignment_id'<>asg::text or m->>'responder_person_id'<>resp::text
+    or m->>'person_id'<>'c2000000-0000-4000-8000-000000000001' or m->>'call_id'<>tw::text or m->>'outbox_id'<>o::text
+    or m->>'action_request_id'<>'a3000000-0000-4000-8000-000000000001' or m->>'action'<>'urgent_responder' or m->>'verified_by'<>'twilio_signature' then
+    raise exception 'FAIL common metadata contract %',m;
+  end if;
+  if (select status from public.assignments where id=asg)<>'offered' then raise exception 'FAIL recording proof must not accept'; end if;
+  if public.accept_assignment_verified(fam,asg,sarvam_ev) or public.accept_assignment_verified(fam,asg,completed_ev) then raise exception 'FAIL non-proof accepted'; end if;
+  if public.accept_assignment_verified('b2000000-0000-4000-8000-000000000002',asg,(proof->>'proof_event_id')::uuid) then raise exception 'FAIL cross-family accept'; end if;
+  if not public.accept_assignment_verified(fam,asg,(proof->>'proof_event_id')::uuid) then raise exception 'FAIL valid accept'; end if;
+  if (select status from public.assignments where id=asg)<>'accepted' then raise exception 'FAIL status'; end if;
+  if not public.accept_assignment_verified(fam,asg,(proof->>'proof_event_id')::uuid) then raise exception 'FAIL idempotent accept'; end if;
+  p2 := public.record_responder_acceptance(fam,'AC:gather:CA1');
+  if p2->>'proof_event_id'<>proof->>'proof_event_id' then raise exception 'FAIL replay proof'; end if;
+  if public.accept_assignment_verified(fam,asg,sarvam_ev) then raise exception 'FAIL accepted assignment re-verified by other event'; end if;
 end $$;
 
--- responder acceptance: only a Twilio Gather event for this assignment, from a call this system placed to this person
-do $$ declare inc uuid; asg uuid; ev uuid; wrong uuid; tw uuid := 'd2000000-0000-4000-8000-000000000002'; begin
-  insert into public.incidents(family_id,person_id,severity) values('b2000000-0000-4000-8000-000000000001','c2000000-0000-4000-8000-000000000001','urgent') returning id into inc;
-  insert into public.assignments(family_id,incident_id,person_id,expires_at) values('b2000000-0000-4000-8000-000000000001',inc,'c2000000-0000-4000-8000-000000000001',now()+interval '1 hour') returning id into asg;
-  insert into public.raw_events(family_id,source,provider_event_id,event_type,metadata,status) values
-   ('b2000000-0000-4000-8000-000000000001','sarvam','ev-conn','sarvam.outbound',jsonb_build_object('assignment_id',asg,'person_id','c2000000-0000-4000-8000-000000000001','call_id',tw),'processed') returning id into wrong;
-  if public.accept_assignment_verified('b2000000-0000-4000-8000-000000000001',asg,wrong) then raise exception 'FAIL gateway success accepted'; end if;
-  insert into public.raw_events(family_id,source,provider_event_id,event_type,metadata,status) values
-   ('b2000000-0000-4000-8000-000000000001','twilio','ev-gather','twilio.gather.accepted',jsonb_build_object('assignment_id',asg,'person_id','c2000000-0000-4000-8000-000000000001','call_id',tw),'processed') returning id into ev;
-  if public.accept_assignment_verified('b2000000-0000-4000-8000-000000000001',asg,ev) then raise exception 'FAIL accepted without a placed call'; end if;
-  update public.calls set external_id='CA'||repeat('b',32) where id=tw;
-  insert into public.dispatch_ledger(family_id,person_id,idempotency_key,provider,action,call_id,status,provider_ref)
-    values('b2000000-0000-4000-8000-000000000001','c2000000-0000-4000-8000-000000000001','dispatch:acc:a1','twilio','twilio.create_call',tw,'dispatched','CA'||repeat('b',32));
-  if public.accept_assignment_verified('b2000000-0000-4000-8000-000000000002',asg,ev) then raise exception 'FAIL cross-family accept'; end if;
-  if not public.accept_assignment_verified('b2000000-0000-4000-8000-000000000001',asg,ev) then raise exception 'FAIL valid accept'; end if;
-  if (select status from public.assignments where id=asg)<>'accepted' then raise exception 'FAIL assignment status'; end if;
-  if public.accept_assignment_verified('b2000000-0000-4000-8000-000000000001',asg,ev) then raise exception 'FAIL replay accept'; end if;
-  begin
-    insert into public.assignments(family_id,incident_id,person_id,expires_at,status,accepted_at,verified_by_provider_event)
-      values('b2000000-0000-4000-8000-000000000001',inc,'c2000000-0000-4000-8000-000000000001',now()+interval '1 hour','accepted',now(),ev);
-    raise exception 'FAIL one event verified two assignments';
-  exception when unique_violation then null; end;
-end $$;
-
--- recording metadata: consent rechecked in SQL at write time, multiple recordings keep the first
-do $$ declare fam uuid := 'b2000000-0000-4000-8000-000000000001'; cid uuid := 'd2000000-0000-4000-8000-000000000002';
+-- ---------------------------------------------------------------- recording metadata, first-recording policy, purge
+do $$ declare fam uuid := 'b2000000-0000-4000-8000-000000000001'; cid uuid := 'd2000000-0000-4000-8000-000000000004';
   pid uuid := 'c2000000-0000-4000-8000-000000000001'; yes uuid; gyes uuid; p1 text; p2 text; h1 text := repeat('1',64); h2 text := repeat('2',64); begin
   p1 := fam||'/calls/'||cid||'/'||repeat('1',32)||'.wav'; p2 := fam||'/calls/'||cid||'/'||repeat('2',32)||'.wav';
-  begin perform public.put_call_recording(fam,cid,gen_random_uuid(),p1,now()+interval '30 days',h1); raise exception 'FAIL no consent';
-  exception when insufficient_privilege then null; end;
+  begin perform public.put_call_recording(fam,cid,gen_random_uuid(),p1,now()+interval '30 days',h1); raise exception 'FAIL no consent'; exception when insufficient_privilege then null; end;
   insert into public.consents(family_id,person_id,call_id,purpose,question,answer,version,created_at) values
    (fam,pid,null,'call_recording','Synthetic?',true,'v1',now()-interval '3 hours') returning id into gyes;
-  begin perform public.put_call_recording(fam,cid,gyes,p1,now()+interval '30 days',h1); raise exception 'FAIL global yes granted';
-  exception when insufficient_privilege then null; end;
+  begin perform public.put_call_recording(fam,cid,gyes,p1,now()+interval '30 days',h1); raise exception 'FAIL global yes granted'; exception when insufficient_privilege then null; end;
   insert into public.consents(family_id,person_id,call_id,purpose,question,answer,version,created_at) values
    (fam,pid,cid,'call_recording','Synthetic?',true,'v1',now()-interval '2 hours') returning id into yes;
-  begin perform public.put_call_recording(fam,cid,yes,'../'||p1,now()+interval '30 days',h1); raise exception 'FAIL bad path';
-  exception when invalid_parameter_value then null; end;
-  begin perform public.put_call_recording(fam,cid,yes,p1,now()+interval '900 days',h1); raise exception 'FAIL retention cap';
-  exception when invalid_parameter_value then null; end;
-  begin perform public.put_call_recording('b2000000-0000-4000-8000-000000000002',cid,yes,p1,now()+interval '30 days',h1); raise exception 'FAIL cross-family';
-  exception when insufficient_privilege or invalid_parameter_value then null; end;
+  begin perform public.put_call_recording(fam,cid,yes,'../'||p1,now()+interval '30 days',h1); raise exception 'FAIL bad path'; exception when invalid_parameter_value then null; end;
+  begin perform public.put_call_recording(fam,cid,yes,p1,now()+interval '900 days',h1); raise exception 'FAIL retention cap'; exception when invalid_parameter_value then null; end;
+  begin perform public.put_call_recording('b2000000-0000-4000-8000-000000000002',cid,yes,p1,now()+interval '30 days',h1); raise exception 'FAIL cross-family'; exception when insufficient_privilege or invalid_parameter_value then null; end;
   if public.get_call_recording_slot(fam,cid,h1)<>'none' then raise exception 'FAIL slot none'; end if;
   if public.put_call_recording(fam,cid,yes,p1,now()+interval '30 days',h1)<>'stored' then raise exception 'FAIL stored'; end if;
   if public.put_call_recording(fam,cid,yes,p1,now()+interval '30 days',h1)<>'already_stored' then raise exception 'FAIL idempotent'; end if;
   if public.put_call_recording(fam,cid,yes,p2,now()+interval '30 days',h2)<>'ignored_additional' then raise exception 'FAIL additional'; end if;
   if public.get_call_recording_slot(fam,cid,h1)<>'same' or public.get_call_recording_slot(fam,cid,h2)<>'other' then raise exception 'FAIL slot'; end if;
-  if (select c.recording_object_path from sahaj_private.call_content c where c.family_id=fam and c.call_id=cid)<>p1 then raise exception 'FAIL first kept'; end if;
   if (public.get_call_media_metadata(fam,cid)->>'consent_id')::uuid<>yes then raise exception 'FAIL media metadata link'; end if;
+  -- nothing to purge while retention and consent hold
+  if exists(select 1 from public.list_recording_purge_candidates(100,null) where call_id=cid) then raise exception 'FAIL premature purge candidate'; end if;
+  -- retention: the injected clock is capped at the database clock
+  update sahaj_private.call_content set expires_at=now()+interval '1 day' where family_id=fam and call_id=cid;
+  if exists(select 1 from public.list_recording_purge_candidates(100,now()+interval '30 days') where call_id=cid) then raise exception 'FAIL fast clock over-purge'; end if;
+  update sahaj_private.call_content set expires_at=now()-interval '1 minute' where family_id=fam and call_id=cid;
+  if not exists(select 1 from public.list_recording_purge_candidates(100,null) where call_id=cid and object_path=p1 and reason='retention') then raise exception 'FAIL expired candidate'; end if;
+  if public.finish_recording_purge(fam,cid,p2) then raise exception 'FAIL purged other path'; end if;
+  if public.finish_recording_purge('b2000000-0000-4000-8000-000000000002',cid,p1) then raise exception 'FAIL purged other tenant'; end if;
+  if not public.finish_recording_purge(fam,cid,p1) then raise exception 'FAIL purge'; end if;
+  if public.finish_recording_purge(fam,cid,p1) then raise exception 'FAIL purge replay'; end if;
+  if public.get_call_recording_slot(fam,cid,h1)<>'purged' then raise exception 'FAIL purged slot'; end if;
+  if public.put_call_recording(fam,cid,yes,p1,now()+interval '30 days',h1)<>'purged' then raise exception 'FAIL restored after purge'; end if;
+  if (public.get_call_media_metadata(fam,cid)->>'recording_object_path') is not null then raise exception 'FAIL path still exposed'; end if;
 end $$;
-do $$ declare fam uuid := 'b2000000-0000-4000-8000-000000000001'; cid uuid := 'd2000000-0000-4000-8000-000000000001';
-  pid uuid := 'c2000000-0000-4000-8000-000000000001'; yes uuid; p text := 'b2000000-0000-4000-8000-000000000001/calls/d2000000-0000-4000-8000-000000000001/'||repeat('3',32)||'.wav'; begin
+do $$ declare fam uuid := 'b2000000-0000-4000-8000-000000000001'; cid uuid := 'd2000000-0000-4000-8000-000000000005';
+  pid uuid := 'c2000000-0000-4000-8000-000000000001'; yes uuid; p text := 'b2000000-0000-4000-8000-000000000001/calls/d2000000-0000-4000-8000-000000000005/'||repeat('3',32)||'.wav'; begin
   insert into public.consents(family_id,person_id,call_id,purpose,question,answer,version,created_at) values
    (fam,pid,cid,'call_recording','Synthetic?',true,'v1',now()-interval '2 hours') returning id into yes;
+  if public.put_call_recording(fam,cid,yes,p,now()+interval '30 days',repeat('3',64))<>'stored' then raise exception 'FAIL store before revoke'; end if;
   insert into public.consents(family_id,person_id,call_id,purpose,question,answer,version,created_at) values
    (fam,pid,null,'call_recording','Synthetic withdrawal',false,'v1',now()-interval '1 hour');
-  begin perform public.put_call_recording(fam,cid,yes,p,now()+interval '30 days',repeat('3',64)); raise exception 'FAIL refusal ignored';
+  if not exists(select 1 from public.list_recording_purge_candidates(100,null) where call_id=cid and reason='consent') then raise exception 'FAIL revoked candidate'; end if;
+  if not public.finish_recording_purge(fam,cid,p) then raise exception 'FAIL revoke purge'; end if;
+end $$;
+do $$ declare fam uuid := 'b2000000-0000-4000-8000-000000000001'; cid uuid := 'd2000000-0000-4000-8000-000000000001';
+  pid uuid := 'c2000000-0000-4000-8000-000000000001'; yes uuid; p text := 'b2000000-0000-4000-8000-000000000001/calls/d2000000-0000-4000-8000-000000000001/'||repeat('4',32)||'.wav'; begin
+  -- a refusal newer than the yes blocks the writer (global refusal from the previous block still applies to this person)
+  insert into public.consents(family_id,person_id,call_id,purpose,question,answer,version,created_at) values
+   (fam,pid,cid,'call_recording','Synthetic?',true,'v1',now()-interval '30 minutes') returning id into yes;
+  begin perform public.put_call_recording(fam,cid,yes,p,now()+interval '30 days',repeat('4',64)); raise exception 'FAIL refusal ignored';
   exception when insufficient_privilege then null; end;
 end $$;
 rollback;

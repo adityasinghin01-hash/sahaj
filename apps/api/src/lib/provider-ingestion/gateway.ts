@@ -64,7 +64,12 @@ async function consentFor(store: ProviderStore, call: CallRow | null, who: Ident
   return consentId ? { callId: call.callId, consentId } : null;
 }
 
-export interface SarvamConfig { appId: string; agentDigits: string; deploymentId?: string; consentVersion?: string }
+export interface SarvamConfig {
+  appId: string; agentDigits: string; deploymentId?: string; consentVersion?: string;
+  /** Off by default. When true, an effective exact-call recording consent queues one retrieval request per interaction. */
+  recordingRetrieval?: boolean;
+}
+export const SARVAM_RETRIEVAL_EVENT = "sarvam.recording.retrieval_requested";
 export interface TeleCmiConfig { appId: number; virtualDigits: string }
 export interface TwilioConfig { accountSid: string; authToken: string; statusUrl?: string; recordingUrl?: string; gatherUrl?: string; consentVersion?: string }
 export interface GatewayResult { status: number; body: Record<string, unknown> }
@@ -146,6 +151,20 @@ export async function handleSarvam(raw: Buffer, cfg: SarvamConfig, getStore: () 
       payload: { app_id: e.appId, deployment_id: e.deploymentId, interaction_id: e.interactionId, duration_seconds: e.durationSeconds, started_at: e.startedAt, ended_at: e.endedAt, ...retained, ...review },
       ...(consent ?? {}), review: flag,
     });
+  }
+  // Optional: queue a recording retrieval. Only for a connected outbound attempt or an inbound call, with AI disclosed and an
+  // effective call_recording consent for this exact call. The request names ids already stored or sent by Sarvam; nothing is invented.
+  const interactionId = e.interactionId;
+  if (cfg.recordingRetrieval === true && interactionId && (!("attemptId" in e) || e.status === "connected")) {
+    const call = await store.findCall("sarvam", callRef);
+    const recording = call && call.aiDisclosed ? await consentFor(store, call, identity, "call_recording", cfg.consentVersion) : null;
+    if (recording) {
+      await store.ingest({
+        source: "sarvam", id: `${e.appId}:recording:${interactionId}:requested`, type: SARVAM_RETRIEVAL_EVENT, status: "completed", ...identity,
+        payload: { app_id: e.appId, call_ref: callRef, interaction_id: interactionId, status: "completed", call_id: recording.callId, consent_id: recording.consentId },
+        ...recording,
+      });
+    }
   }
   return accepted();
 }

@@ -24,7 +24,7 @@ export async function sarvamPostCall(request: Request, { params }: Params) {
   if (!appId || !agentDigits) return notConfigured();
   try {
     const raw = await readWebhookBody(request, LIMITS.sarvam);
-    return send(await handleSarvam(raw, { appId, agentDigits, deploymentId: deploymentId || undefined, consentVersion: process.env.CALL_CONSENT_VERSION || undefined }, providerStore));
+    return send(await handleSarvam(raw, { appId, agentDigits, deploymentId: deploymentId || undefined, consentVersion: process.env.CALL_CONSENT_VERSION || undefined, recordingRetrieval: process.env.SARVAM_RECORDING_RETRIEVAL === "true" }, providerStore));
   } catch (error) { return send(toResult(error)); }
 }
 

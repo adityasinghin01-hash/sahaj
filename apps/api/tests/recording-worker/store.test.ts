@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { readRawEvent, recordingStorage, recordingStore, type RecordingDb } from "../../src/lib/recording-worker";
+import { purgeStore, readRawEvent, recordingStorage, recordingStore, type RecordingDb } from "../../src/lib/recording-worker";
 import { CALL, CONSENT, FAMILY, PERSON } from "./helpers";
 
 type Err = { code?: string; message?: string; statusCode?: string | number } | null;
@@ -84,5 +84,31 @@ describe("readRawEvent", () => {
     expect(await readRawEvent(f.db, "e1")).toEqual({ id: "e1", familyId: FAMILY, source: "twilio", providerEventId: "p", eventType: "t", metadata: { a: 1 }, payloadCiphertext: "v1.x" });
     expect(await readRawEvent(fakeDb().db, "e1")).toBeNull();
     await expect(readRawEvent(fakeDb({ error: { message: "x" } }).db, "e1")).rejects.toMatchObject({ retryable: true });
+  });
+});
+
+describe("purge store", () => {
+  const asOf = new Date("2026-11-14T12:00:00Z");
+  it("lists candidates through the single bounded RPC and drops malformed rows", async () => {
+    const f = fakeDb({ rpc: { data: [
+      { family_id: FAMILY, call_id: CALL, object_path: "p.wav", reason: "retention" },
+      { family_id: FAMILY, call_id: CALL, object_path: "q.wav", reason: "consent" },
+      { family_id: FAMILY, call_id: CALL, object_path: "r.wav", reason: "because" },
+      { family_id: 1, call_id: CALL, object_path: "s.wav", reason: "consent" },
+    ] } });
+    const rows = await purgeStore(f.db).listCandidates(10, asOf);
+    expect(rows.map((r) => r.objectPath)).toEqual(["p.wav", "q.wav"]);
+    expect(f.rpcCalls[0]).toEqual({ name: "list_recording_purge_candidates", args: { p_limit: 10, p_as_of: "2026-11-14T12:00:00.000Z" } });
+  });
+  it("finish is one compare-and-set RPC scoped by family, call and exact path", async () => {
+    const f = fakeDb({ rpc: { data: true } });
+    expect(await purgeStore(f.db).finish(FAMILY, CALL, "p.wav", asOf)).toBe(true);
+    expect(f.rpcCalls[0]).toEqual({ name: "finish_recording_purge", args: { p_family_id: FAMILY, p_call_id: CALL, p_object_path: "p.wav", p_as_of: "2026-11-14T12:00:00.000Z" } });
+    expect(await purgeStore(fakeDb({ rpc: { data: false } }).db).finish(FAMILY, CALL, "p.wav", asOf)).toBe(false);
+  });
+  it("database errors are retryable and non-array results fail closed", async () => {
+    await expect(purgeStore(fakeDb({ rpc: { error: { code: "XX000" } } }).db).listCandidates(1, asOf)).rejects.toMatchObject({ retryable: true });
+    await expect(purgeStore(fakeDb({ rpc: { data: "nope" } }).db).listCandidates(1, asOf)).rejects.toMatchObject({ retryable: true });
+    await expect(purgeStore(fakeDb({ rpc: { error: { code: "XX000" } } }).db).finish(FAMILY, CALL, "p.wav", asOf)).rejects.toMatchObject({ retryable: true });
   });
 });
