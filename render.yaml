@@ -1,0 +1,157 @@
+# Render Blueprint for Sahaj Shield (@sahaj/shield-api + cron worker + Postgres 16)
+# Spec reference: https://render.com/docs/blueprint-spec
+#
+# Cheapest always-on (non-sleeping) plan pricing (Render Hobby workspace = $0/mo):
+#   - Web service `sahaj-shield-api` (`starter`: 0.5 CPU, 512 MB RAM) ........ $7/mo
+#     (Free web tier sleeps after 15 min idle, breaking Meta/Sarvam webhooks, and
+#      `preDeployCommand` requires a paid plan.)
+#   - Background worker `sahaj-shield-cron` (`starter`: 0.5 CPU, 512 MB) .... $7/mo
+#     (Background workers have no free tier.)
+#   - Postgres 16 `sahaj-shield-db` (`basic-256mb`: 0.1 CPU, 256 MB, 1 GB) .. $6/mo
+#     (Free Postgres expires after 30 days; $0.30/GB/mo extra storage.)
+#   Total baseline compute on Hobby workspace: $20/mo (prorated by the second).
+# Pricing reference: https://render.com/pricing
+
+databases:
+  - name: sahaj-shield-db
+    plan: basic-256mb
+    postgresMajorVersion: "16"
+    region: singapore
+    databaseName: sahaj_shield
+    user: sahaj_shield
+
+services:
+  - type: web
+    name: sahaj-shield-api
+    runtime: node
+    region: singapore
+    plan: starter
+    buildCommand: >-
+      corepack enable &&
+      NODE_ENV=development pnpm install --frozen-lockfile --config.strict-dep-builds=false &&
+      pnpm -F @sahaj/shield-api build
+    preDeployCommand: node apps/shield-api/scripts/migrate.mjs
+    startCommand: pnpm -F @sahaj/shield-api start:prod
+    healthCheckPath: /api/health
+    envVars:
+      - key: NODE_VERSION
+        value: "22"
+      - key: DATABASE_URL
+        fromDatabase:
+          name: sahaj-shield-db
+          property: connectionString
+
+      # --- Core server secrets (required) ---
+      - key: SHIELD_DEVICE_PAIRING_SECRET
+        sync: false
+      - key: DEV_ADMIN_TOKEN
+        sync: false
+      - key: SARVAM_TOOL_TOKEN
+        sync: false
+      - key: CRON_SECRET
+        sync: false
+
+      # --- Demo / live feature settings ---
+      # Note: ALLOW_ANY_TOOL_IP is intentionally omitted in production so the Sarvam IP allowlist stays active.
+      # Note: OPENPHISH_FEED and RDAP_LOOKUP are intentionally omitted (unset = live link checks enabled).
+      - key: DEMO_TIMER_SCALE
+        value: "60"
+
+      # --- LLM router + Safe Browsing + Langfuse ---
+      - key: ANTHROPIC_API_KEY
+        sync: false
+      - key: MUSE_API_KEY
+        sync: false
+      - key: MUSE_BASE_URL
+        sync: false
+      - key: MUSE_MODEL
+        sync: false
+      - key: GEMINI_API_KEY
+        sync: false
+      - key: SAFE_BROWSING_KEY
+        sync: false
+      - key: LANGFUSE_PUBLIC_KEY
+        sync: false
+      - key: LANGFUSE_SECRET_KEY
+        sync: false
+      - key: LANGFUSE_BASE_URL
+        sync: false
+
+      # --- WhatsApp Cloud API ---
+      - key: WHATSAPP_TOKEN
+        sync: false
+      - key: WHATSAPP_PHONE_NUMBER_ID
+        sync: false
+      - key: WHATSAPP_GRAPH_VERSION
+        sync: false
+      - key: WHATSAPP_VERIFY_TOKEN
+        sync: false
+      - key: WHATSAPP_APP_SECRET
+        sync: false
+
+      # --- Keypad helpline / SMS / Call gateway ---
+      - key: AASHA_DIDI_LINE_ID
+        sync: false
+      - key: SMS_GATEWAY_SECRET
+        sync: false
+      - key: CALL_GATEWAY_ENABLED
+        sync: false
+
+      # --- Sarvam webhooks & outbound calls ---
+      - key: SARVAM_WEBHOOK_SECRET
+        sync: false
+      - key: SARVAM_OUTBOUND_ENABLED
+        sync: false
+      - key: SARVAM_API_KEY
+        sync: false
+      - key: SARVAM_ORG_ID
+        sync: false
+      - key: SARVAM_WORKSPACE_ID
+        sync: false
+      - key: SARVAM_AGENT_ID_RESPONDER
+        sync: false
+      - key: SARVAM_AGENT_ID_CALLBACK
+        sync: false
+      - key: SARVAM_AGENT_ID_CHECKIN
+        sync: false
+      - key: SARVAM_AGENT_ID_EXPERIENCE
+        sync: false
+      - key: SARVAM_AGENT_VERSION
+        sync: false
+      - key: SARVAM_CONNECTION_ID
+        sync: false
+      - key: SARVAM_AGENT_PHONE_NUMBER
+        sync: false
+      - key: SARVAM_WEBHOOK_URL
+        sync: false
+
+      # --- Mobile app auth, CORS & Expo push ---
+      - key: SUPABASE_JWT_SECRET
+        sync: false
+      - key: APP_ALLOWED_ORIGINS
+        sync: false
+      - key: EXPO_PUSH_ENABLED
+        sync: false
+      - key: EXPO_ACCESS_TOKEN
+        sync: false
+
+  - type: worker
+    name: sahaj-shield-cron
+    runtime: node
+    region: singapore
+    plan: starter
+    buildCommand: >-
+      corepack enable &&
+      pnpm install --frozen-lockfile --config.strict-dep-builds=false
+    startCommand: pnpm -F @sahaj/shield-api cron-worker
+    envVars:
+      - key: NODE_VERSION
+        value: "22"
+      - key: SHIELD_API_URL
+        fromService:
+          type: web
+          name: sahaj-shield-api
+          property: hostport
+      - key: CRON_SECRET
+        sync: false
+
