@@ -11,6 +11,7 @@ import {
   type RuleInstallEvent,
   type RuleNotificationEvent,
   type RuleSmsEvent,
+  type RuleVoiceReportEvent,
   type Timestamp,
 } from "./patterns";
 import { isOtp } from "./otp";
@@ -43,6 +44,8 @@ export interface VerdictInput {
   whatsapp_call_unsaved?: boolean;
   call_seconds?: number;
   duration_ms?: number;
+  long_vs_normal?: boolean;
+  claimed_bank?: boolean;
   ended_at?: Timestamp;
   attachment_apk?: boolean;
   cancelled?: boolean;
@@ -84,6 +87,8 @@ const REASONS: Record<string, ReasonText> = (() => {
   r[RULES.patterns.P2.id] = RULES.patterns.P2.reason;
   r[RULES.patterns.P3.id] = RULES.patterns.P3.reason;
   r[RULES.patterns.P4.id] = RULES.patterns.P4.reason;
+  r[RULES.patterns.P6.id] = RULES.patterns.P6.reason;
+  r[RULES.patterns.P7.id] = RULES.patterns.P7.reason;
   r[RULES.patterns.P9.id] = RULES.patterns.P9.reason;
   return r;
 })();
@@ -106,6 +111,12 @@ function readNumber(inputVal: unknown, ctx: Record<string, unknown> | undefined,
   return typeof v === "number" && Number.isFinite(v) ? v : undefined;
 }
 
+function readTimestamp(inputVal: unknown, ctx: Record<string, unknown> | undefined, key: string): Timestamp | undefined {
+  if (typeof inputVal === "string" || (typeof inputVal === "number" && Number.isFinite(inputVal))) return inputVal;
+  const v = ctx?.[key];
+  return typeof v === "string" || (typeof v === "number" && Number.isFinite(v)) ? v : undefined;
+}
+
 function buildDirectPhase2Event(
   input: VerdictInput,
   at: Timestamp,
@@ -119,6 +130,9 @@ function buildDirectPhase2Event(
   const whatsappUnsaved = readBoolean(input.whatsapp_call_unsaved, ctx, "whatsapp_call_unsaved");
   const callSeconds = readNumber(input.call_seconds, ctx, "call_seconds");
   const durationMs = readNumber(input.duration_ms, ctx, "duration_ms");
+  const longVsNormal = readBoolean(input.long_vs_normal, ctx, "long_vs_normal");
+  const claimedBank = readBoolean(input.claimed_bank, ctx, "claimed_bank");
+  const endedAt = readTimestamp(input.ended_at, ctx, "ended_at") ?? readTimestamp(undefined, ctx, "call_ended_at");
   const attachmentApk = readBoolean(input.attachment_apk, ctx, "attachment_apk");
   const cancelled = readBoolean(input.cancelled, ctx, "cancelled");
   const onCallWithUnsaved = readBoolean(input.on_call_with_unsaved, ctx, "on_call_with_unsaved");
@@ -150,7 +164,7 @@ function buildDirectPhase2Event(
       call_seconds: callSeconds,
       attachment_apk: attachmentApk,
       cancelled,
-      ended_at: input.ended_at,
+      ended_at: endedAt,
       saved_contact: callerSaved,
       caller_type: cType,
       text,
@@ -171,22 +185,54 @@ function buildDirectPhase2Event(
     };
     return evt;
   }
-  if (
-    (input.kind === "call_in" || input.kind === "call_out" || input.kind === "call_state" || input.caller !== undefined || input.caller_type !== undefined || input.caller_saved !== undefined) &&
-    (video !== undefined || durationMs !== undefined || input.ended_at !== undefined || cancelled !== undefined)
-  ) {
+  if (input.kind === "voice_report") {
+    const evt: RuleVoiceReportEvent = {
+      kind: "voice_report",
+      at,
+      number: input.caller,
+      caller_type: input.caller_type,
+      saved_contact: callerSaved,
+      claimed_bank: claimedBank,
+      text,
+    };
+    return evt;
+  }
+  const isCallKind = input.kind === "call_in" || input.kind === "call_out" || input.kind === "call_state";
+  const hasCallIdentity = input.caller !== undefined || input.caller_type !== undefined || callerSaved !== undefined;
+  const hasCallSignal =
+    video !== undefined ||
+    durationMs !== undefined ||
+    endedAt !== undefined ||
+    cancelled !== undefined ||
+    longVsNormal !== undefined ||
+    claimedBank !== undefined;
+  if (isCallKind || (hasCallIdentity && hasCallSignal)) {
     const evt: RuleCallEvent = {
       kind: "call",
       at,
-      ended_at: input.ended_at,
+      ended_at: endedAt,
       number: input.caller,
       caller_type: input.caller_type,
-      saved_contact: input.caller_saved,
+      saved_contact: callerSaved,
       video,
       source,
       whatsapp_call_unsaved: whatsappUnsaved,
       duration_ms: durationMs,
+      long_vs_normal: longVsNormal,
+      claimed_bank: claimedBank,
       cancelled,
+    };
+    return evt;
+  }
+  if (input.kind === undefined && claimedBank !== undefined) {
+    const evt: RuleVoiceReportEvent = {
+      kind: "voice_report",
+      at,
+      number: input.caller,
+      caller_type: input.caller_type,
+      saved_contact: callerSaved,
+      claimed_bank: claimedBank,
+      text,
     };
     return evt;
   }
@@ -197,11 +243,12 @@ function round2(n: number): number {
   return Math.round(n * 100) / 100;
 }
 
-function confidenceFor(level: AlertLevel, score: number, forced: boolean, needsAi: boolean): number {
+function confidenceFor(level: AlertLevel, score: number, forced: boolean, needsAi: boolean, floor: AlertLevel): number {
   const { red_at, yellow_at, max_score } = RULES.thresholds;
   let c: number;
   if (forced) c = 0.95;
   else if (level === "red") c = 0.7 + 0.25 * Math.min(1, (score - red_at) / Math.max(1, max_score - red_at));
+  else if (level === "yellow" && floor === "yellow" && score < yellow_at) c = 0.75;
   else if (level === "yellow") c = 0.5 + 0.2 * ((score - yellow_at) / Math.max(1, red_at - yellow_at));
   else c = 0.9 - 0.4 * (score / Math.max(1, yellow_at));
   if (needsAi) c = Math.min(c, 0.6);
@@ -215,8 +262,12 @@ function confidenceFor(level: AlertLevel, score: number, forced: boolean, needsA
 export function buildVerdict(input: VerdictInput): RuleVerdict {
   const hits: RuleHit[] = [];
   const reasonIds: string[] = [];
+  const infoReasonIds: string[] = [];
   const addReason = (id: string) => {
     if (REASONS[id] && !reasonIds.includes(id)) reasonIds.push(id);
+  };
+  const addInfoReason = (id: string) => {
+    if (REASONS[id] && !infoReasonIds.includes(id)) infoReasonIds.push(id);
   };
 
   const text = input.text?.trim() ? input.text : undefined;
@@ -255,18 +306,38 @@ export function buildVerdict(input: VerdictInput): RuleVerdict {
     }
   }
 
-  // 3. caller (active call)
+  // 3. caller (active call or voice report caller)
+  const ctx = input.context && typeof input.context === "object" ? input.context : undefined;
+  const callerSaved = input.caller_saved ?? readBoolean(undefined, ctx, "saved_contact");
   let cType: CallerType | undefined;
   const currentCall: RuleCallEvent | null =
-    input.caller !== undefined || input.caller_type || input.caller_saved
-      ? { kind: "call", at, number: input.caller, caller_type: input.caller_type, saved_contact: input.caller_saved }
+    input.caller !== undefined || input.caller_type || callerSaved
+      ? { kind: "call", at, number: input.caller, caller_type: input.caller_type, saved_contact: callerSaved }
       : null;
   if (currentCall) {
-    cType = input.caller_saved ? "saved_contact" : (input.caller_type ?? callerType(input.caller));
+    cType = callerSaved ? "saved_contact" : (input.caller_type ?? callerType(input.caller));
     const rule = callerRule(cType);
     if (rule) {
       hits.push({ rule_id: rule.id, weight: rule.score });
       if (rule.score > 0) addReason(rule.id);
+      if (cType === "series_1600") addInfoReason(rule.id);
+    }
+  } else if (!text && input.events?.length) {
+    const lastCallOrVr = [...input.events].reverse().find(
+      (e): e is RuleCallEvent | RuleVoiceReportEvent => e.kind === "call" || e.kind === "voice_report",
+    );
+    if (lastCallOrVr && (lastCallOrVr.number !== undefined || lastCallOrVr.caller_type || lastCallOrVr.saved_contact)) {
+      const evtCType = lastCallOrVr.saved_contact
+        ? "saved_contact"
+        : (lastCallOrVr.caller_type ?? callerType(lastCallOrVr.number));
+      if (evtCType === "series_1600") {
+        cType = "series_1600";
+        const rule = callerRule("series_1600");
+        if (rule) {
+          hits.push({ rule_id: rule.id, weight: rule.score });
+          addInfoReason(rule.id);
+        }
+      }
     }
   }
 
@@ -284,7 +355,7 @@ export function buildVerdict(input: VerdictInput): RuleVerdict {
       sender_saved: input.sender_saved,
     };
     const calls = (input.events ?? []).filter((e): e is RuleCallEvent => e.kind === "call");
-    if (currentCall) {
+    if (currentCall && input.kind !== "voice_report") {
       // the call is active right now; its start is unknown, so treat it as started at epoch 0
       calls.push({ ...currentCall, at: 0 });
     }
@@ -320,15 +391,19 @@ export function buildVerdict(input: VerdictInput): RuleVerdict {
           ? RULES.patterns.P3
           : hit.id === "P4"
             ? RULES.patterns.P4
-            : hit.id === "P9"
-              ? RULES.patterns.P9
-              : null;
+            : hit.id === "P6"
+              ? RULES.patterns.P6
+              : hit.id === "P7"
+                ? RULES.patterns.P7
+                : hit.id === "P9"
+                  ? RULES.patterns.P9
+                  : null;
     if (!cfg) continue;
     firedPatterns.push(cfg.id);
     hits.push({ rule_id: cfg.id, weight: 0, scam_type: cfg.scam_type });
     addReason(cfg.id);
     floor = maxLevel(floor, cfg.level);
-    forced = true;
+    if (cfg.level === "red") forced = true;
     if (!patternType && cfg.scam_type !== "unknown") patternType = cfg.scam_type;
   }
 
@@ -353,14 +428,16 @@ export function buildVerdict(input: VerdictInput): RuleVerdict {
     new Set(hits.map((h) => (h.detail && h.detail !== "total" && h.rule_id.startsWith("script.") ? `${h.rule_id}:${h.detail}` : h.rule_id))),
   );
 
+  const finalReasonIds = level === "green" ? infoReasonIds : Array.from(new Set([...reasonIds, ...infoReasonIds]));
+
   return {
     level,
     scam_type,
-    reasons: level === "green" ? [] : reasonIds.map((id) => ({ rule_id: id, ...(REASONS[id] as ReasonText) })),
+    reasons: finalReasonIds.map((id) => ({ rule_id: id, ...(REASONS[id] as ReasonText) })),
     checks_fired: Array.from(new Set([...checks_fired, ...firedPatterns])),
     ai_used: false,
     models_agreed: [],
-    confidence: confidenceFor(level, score, forced, needs_ai),
+    confidence: confidenceFor(level, score, forced, needs_ai, floor),
     actions,
     needs_ai,
     score,

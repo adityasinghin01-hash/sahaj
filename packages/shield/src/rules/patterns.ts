@@ -32,7 +32,19 @@ export interface RuleCallEvent {
   source?: string;
   whatsapp_call_unsaved?: boolean;
   duration_ms?: number;
+  long_vs_normal?: boolean;
+  claimed_bank?: boolean;
   cancelled?: boolean;
+}
+
+export interface RuleVoiceReportEvent {
+  kind: "voice_report";
+  at: Timestamp;
+  number?: string;
+  caller_type?: CallerType;
+  saved_contact?: boolean;
+  claimed_bank?: boolean;
+  text?: string;
 }
 
 export interface RuleAppOpenEvent {
@@ -72,7 +84,8 @@ export type RuleEvent =
   | RuleCallEvent
   | RuleAppOpenEvent
   | RuleNotificationEvent
-  | RuleInstallEvent;
+  | RuleInstallEvent
+  | RuleVoiceReportEvent;
 
 export interface PatternHit {
   id: PatternId;
@@ -226,13 +239,57 @@ export function checkP4Install(install: RuleInstallEvent): boolean {
   return RULES.patterns.P4.packages.includes(install.package);
 }
 
+/** P6: unusually long voice call with an unsaved caller (video/WhatsApp calls stay P2). */
+export function checkP6(call: RuleCallEvent, evalAt?: Timestamp): boolean {
+  const P6 = RULES.patterns.P6;
+  if (call.cancelled || call.video === true) return false;
+  if (checkP2Call(call, evalAt)) return false;
+  if (!isAllowedUnknownCaller(P6.caller_types, call.saved_contact, call.caller_type, call.number)) return false;
+  if (call.long_vs_normal === true) return true;
+  const evalAtMs = evalAt !== undefined ? toMs(evalAt) : undefined;
+  const duration = callDurationMs(call, evalAtMs);
+  return duration !== null && duration >= P6.min_duration_ms;
+}
+
+function isTrustedBankCaller(savedContact?: boolean, explicitType?: CallerType, number?: string): boolean {
+  if (explicitType === "series_1600") return true;
+  const ct = savedContact ? "saved_contact" : (explicitType ?? callerType(number));
+  return RULES.patterns.P7.trusted_caller_types.includes(ct);
+}
+
+/** P7: call or voice_report claiming to be a bank from a non-1600 caller. */
+export function checkP7(event: RuleCallEvent | RuleVoiceReportEvent): boolean {
+  if (event.claimed_bank !== true) return false;
+  if (event.kind === "call" && event.cancelled) return false;
+  return !isTrustedBankCaller(event.saved_contact, event.caller_type, event.number);
+}
+
+/** S4: informational green note when caller is a registered 1600-series bank number. */
+export function checkS4(event: { caller_type?: CallerType; number?: string; saved_contact?: boolean }): boolean {
+  if (event.caller_type === "series_1600") return true;
+  if (event.saved_contact) return false;
+  return (event.caller_type ?? callerType(event.number)) === "series_1600";
+}
+
 /** Detailed pattern hits for Phase 2 signal/sequence evaluation (excluding SMS P1/P5). */
 export function evaluatePhase2Patterns(events: RuleEvent[], evalAt?: Timestamp): PatternHit[] {
   const calls = events.filter((e): e is RuleCallEvent => e.kind === "call");
   const hits: PatternHit[] = [];
   events.forEach((e, i) => {
-    if (e.kind === "call" && checkP2Call(e, evalAt)) {
-      hits.push({ id: "P2", rule_id: RULES.patterns.P2.id, level: RULES.patterns.P2.level, event_index: i });
+    if (e.kind === "call") {
+      if (checkP2Call(e, evalAt)) {
+        hits.push({ id: "P2", rule_id: RULES.patterns.P2.id, level: RULES.patterns.P2.level, event_index: i });
+      }
+      if (checkP6(e, evalAt)) {
+        hits.push({ id: "P6", rule_id: RULES.patterns.P6.id, level: RULES.patterns.P6.level, event_index: i });
+      }
+      if (checkP7(e)) {
+        hits.push({ id: "P7", rule_id: RULES.patterns.P7.id, level: RULES.patterns.P7.level, event_index: i });
+      }
+    } else if (e.kind === "voice_report") {
+      if (checkP7(e)) {
+        hits.push({ id: "P7", rule_id: RULES.patterns.P7.id, level: RULES.patterns.P7.level, event_index: i });
+      }
     } else if (e.kind === "app_open" && checkP9(e, calls)) {
       hits.push({ id: "P9", rule_id: RULES.patterns.P9.id, level: RULES.patterns.P9.level, event_index: i });
     } else if (e.kind === "notification") {

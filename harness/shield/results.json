@@ -1,4 +1,5 @@
 {
+  "generated_at": "2026-11-14T14:00:13.544Z",
   "mode": "rules_only",
   "ai_eval": {
     "executed": false,
@@ -12,8 +13,8 @@
     "false_alarms": 0,
     "normal_total": 30,
     "masking_violations": 0,
-    "sequences_right": 21,
-    "sequences_total": 21
+    "sequences_right": 31,
+    "sequences_total": 31
   },
   "missed_scams": [],
   "false_alarm_details": [],
@@ -1150,6 +1151,18 @@
       "actual_patterns": [
         "P1"
       ],
+      "reasons": [
+        {
+          "rule_id": "pattern.P1",
+          "hi": "अनजान नंबर से कॉल चल रही है और उसी समय OTP आया — यह OTP किसी को न बताएं, कॉल काट दें",
+          "en": "An OTP arrived during a call with an unknown number — do not read it out, hang up"
+        },
+        {
+          "rule_id": "otp.present",
+          "hi": "इस संदेश में OTP है — OTP किसी को न बताएं",
+          "en": "This message contains an OTP — never share it"
+        }
+      ],
       "checks_fired": [
         "sender.business_header",
         "pattern.P1",
@@ -1168,6 +1181,18 @@
       "actual_patterns": [
         "P1"
       ],
+      "reasons": [
+        {
+          "rule_id": "pattern.P1",
+          "hi": "अनजान नंबर से कॉल चल रही है और उसी समय OTP आया — यह OTP किसी को न बताएं, कॉल काट दें",
+          "en": "An OTP arrived during a call with an unknown number — do not read it out, hang up"
+        },
+        {
+          "rule_id": "otp.present",
+          "hi": "इस संदेश में OTP है — OTP किसी को न बताएं",
+          "en": "This message contains an OTP — never share it"
+        }
+      ],
       "checks_fired": [
         "sender.business_header",
         "pattern.P1",
@@ -1184,6 +1209,7 @@
       },
       "actual_level": "green",
       "actual_patterns": [],
+      "reasons": [],
       "checks_fired": [
         "sender.business_header",
         "otp.present"
@@ -1199,6 +1225,7 @@
       },
       "actual_level": "green",
       "actual_patterns": [],
+      "reasons": [],
       "checks_fired": [
         "sender.business_header",
         "otp.present"
@@ -1214,6 +1241,7 @@
       },
       "actual_level": "green",
       "actual_patterns": [],
+      "reasons": [],
       "checks_fired": [
         "sender.business_header",
         "otp.present"
@@ -1230,6 +1258,28 @@
       "actual_level": "red",
       "actual_patterns": [
         "P5"
+      ],
+      "reasons": [
+        {
+          "rule_id": "link.present",
+          "hi": "संदेश में लिंक है",
+          "en": "Message contains a link"
+        },
+        {
+          "rule_id": "link.look_alike",
+          "hi": "लिंक असली कंपनी जैसा दिखता है पर उसकी आधिकारिक वेबसाइट नहीं है",
+          "en": "Link imitates a brand but is not its official website"
+        },
+        {
+          "rule_id": "sender.mobile_claims_brand",
+          "hi": "बैंक/बिजली/कूरियर की बात आम मोबाइल नंबर से की गई है — असली कंपनी ऐसे नंबर से SMS नहीं भेजती",
+          "en": "Bank/electricity/courier message from an ordinary mobile number — real companies use registered headers"
+        },
+        {
+          "rule_id": "pattern.P5.red",
+          "hi": "आम मोबाइल नंबर से बैंक/बिजली/कूरियर के नाम पर लिंक भेजा गया है — लिंक न खोलें",
+          "en": "Link about bank/electricity/courier sent from an ordinary mobile number — do not open it"
+        }
       ],
       "checks_fired": [
         "link.present",
@@ -1252,6 +1302,23 @@
       "actual_patterns": [
         "P5"
       ],
+      "reasons": [
+        {
+          "rule_id": "link.present",
+          "hi": "संदेश में लिंक है",
+          "en": "Message contains a link"
+        },
+        {
+          "rule_id": "link.shortener",
+          "hi": "छोटा किया हुआ (short) लिंक — असली जगह छिपी है",
+          "en": "Shortened link hides the real destination"
+        },
+        {
+          "rule_id": "pattern.P5.yellow",
+          "hi": "संदेश में लिंक है और एक संदिग्ध संकेत है — लिंक खोलने से पहले पूछ लें",
+          "en": "Message has a link plus one warning sign — check before opening"
+        }
+      ],
       "checks_fired": [
         "link.present",
         "link.shortener",
@@ -1270,6 +1337,28 @@
       "actual_level": "red",
       "actual_patterns": [
         "P5"
+      ],
+      "reasons": [
+        {
+          "rule_id": "script.wedding_invite_apk",
+          "hi": "यह शादी के कार्ड के नाम पर ऐप (.apk) भेजने वाली ठगी जैसा है",
+          "en": "Looks like a wedding-invitation APK scam"
+        },
+        {
+          "rule_id": "link.present",
+          "hi": "संदेश में लिंक है",
+          "en": "Message contains a link"
+        },
+        {
+          "rule_id": "link.apk",
+          "hi": ".apk फ़ाइल — इसे इंस्टॉल करने से फ़ोन हैक हो सकता है",
+          "en": ".apk file — installing it can take over the phone"
+        },
+        {
+          "rule_id": "pattern.P5.yellow",
+          "hi": "संदेश में लिंक है और एक संदिग्ध संकेत है — लिंक खोलने से पहले पूछ लें",
+          "en": "Message has a link plus one warning sign — check before opening"
+        }
       ],
       "checks_fired": [
         "script.wedding_invite_apk:shaadi ka card",
@@ -1293,6 +1382,18 @@
       "actual_patterns": [
         "P9"
       ],
+      "reasons": [
+        {
+          "rule_id": "caller.mobile_10",
+          "hi": "अनजान 10 अंकों वाले मोबाइल नंबर से कॉल",
+          "en": "Call from an unknown 10-digit mobile number"
+        },
+        {
+          "rule_id": "pattern.P9",
+          "hi": "अनजान कॉल के दौरान बैंक या UPI ऐप खोला गया है — कॉल पर रहते हुए पेमेंट न करें",
+          "en": "A bank or UPI app was opened during an unknown call — do not make any payment while on the call"
+        }
+      ],
       "checks_fired": [
         "caller.mobile_10",
         "pattern.P9"
@@ -1310,6 +1411,18 @@
       "actual_patterns": [
         "P2"
       ],
+      "reasons": [
+        {
+          "rule_id": "caller.international",
+          "hi": "विदेशी नंबर से कॉल",
+          "en": "Call from an international number"
+        },
+        {
+          "rule_id": "pattern.P2",
+          "hi": "लंबे समय से अनजान नंबर से वीडियो कॉल चल रही है — सरकारी अफसर या पुलिस कभी वीडियो कॉल पर पैसे नहीं मांगते",
+          "en": "Long video call with an unknown number — police and officers never ask for money on a video call"
+        }
+      ],
       "checks_fired": [
         "caller.international",
         "pattern.P2"
@@ -1325,6 +1438,7 @@
       },
       "actual_level": "green",
       "actual_patterns": [],
+      "reasons": [],
       "checks_fired": [],
       "ok": true
     },
@@ -1337,6 +1451,7 @@
       },
       "actual_level": "green",
       "actual_patterns": [],
+      "reasons": [],
       "checks_fired": [
         "caller.mobile_10"
       ],
@@ -1351,6 +1466,7 @@
       },
       "actual_level": "green",
       "actual_patterns": [],
+      "reasons": [],
       "checks_fired": [],
       "ok": true
     },
@@ -1363,6 +1479,7 @@
       },
       "actual_level": "green",
       "actual_patterns": [],
+      "reasons": [],
       "checks_fired": [],
       "ok": true
     },
@@ -1376,6 +1493,13 @@
       "actual_level": "red",
       "actual_patterns": [
         "P2"
+      ],
+      "reasons": [
+        {
+          "rule_id": "pattern.P2",
+          "hi": "लंबे समय से अनजान नंबर से वीडियो कॉल चल रही है — सरकारी अफसर या पुलिस कभी वीडियो कॉल पर पैसे नहीं मांगते",
+          "en": "Long video call with an unknown number — police and officers never ask for money on a video call"
+        }
       ],
       "checks_fired": [
         "pattern.P2"
@@ -1391,6 +1515,7 @@
       },
       "actual_level": "green",
       "actual_patterns": [],
+      "reasons": [],
       "checks_fired": [
         "caller.mobile_10"
       ],
@@ -1405,6 +1530,7 @@
       },
       "actual_level": "green",
       "actual_patterns": [],
+      "reasons": [],
       "checks_fired": [],
       "ok": true
     },
@@ -1418,6 +1544,13 @@
       "actual_level": "red",
       "actual_patterns": [
         "P3"
+      ],
+      "reasons": [
+        {
+          "rule_id": "pattern.P3",
+          "hi": "मैसेज में ऐप फाइल (.apk) भेजी गई है या Play Store के बाहर से ऐप इंस्टॉल हुई है — इसे न खोलें",
+          "en": "An app file (.apk) was sent or installed outside the Play Store — do not open or install it"
+        }
       ],
       "checks_fired": [
         "pattern.P3"
@@ -1433,6 +1566,7 @@
       },
       "actual_level": "green",
       "actual_patterns": [],
+      "reasons": [],
       "checks_fired": [],
       "ok": true
     },
@@ -1446,6 +1580,13 @@
       "actual_level": "red",
       "actual_patterns": [
         "P4"
+      ],
+      "reasons": [
+        {
+          "rule_id": "pattern.P4",
+          "hi": "फ़ोन की स्क्रीन देखने वाला ऐप मिला है — अनजान व्यक्ति के कहने पर स्क्रीन शेयर न करें",
+          "en": "A screen-sharing or remote-control app was detected — never share your screen with a stranger"
+        }
       ],
       "checks_fired": [
         "pattern.P4"
@@ -1463,8 +1604,250 @@
       "actual_patterns": [
         "P3"
       ],
+      "reasons": [
+        {
+          "rule_id": "pattern.P3",
+          "hi": "मैसेज में ऐप फाइल (.apk) भेजी गई है या Play Store के बाहर से ऐप इंस्टॉल हुई है — इसे न खोलें",
+          "en": "An app file (.apk) was sent or installed outside the Play Store — do not open or install it"
+        }
+      ],
       "checks_fired": [
         "pattern.P3"
+      ],
+      "ok": true
+    },
+    {
+      "id": "seq_22",
+      "name": "P6 positive: unsaved call flagged long_vs_normal=true (yellow)",
+      "expect": {
+        "level": "yellow",
+        "pattern": "P6"
+      },
+      "actual_level": "yellow",
+      "actual_patterns": [
+        "P6"
+      ],
+      "reasons": [
+        {
+          "rule_id": "caller.mobile_10",
+          "hi": "अनजान 10 अंकों वाले मोबाइल नंबर से कॉल",
+          "en": "Call from an unknown 10-digit mobile number"
+        },
+        {
+          "rule_id": "pattern.P6",
+          "hi": "अनजान नंबर से बहुत लंबी कॉल चल रही है — अगर कोई डराए या पैसे मांगे तो परिवार से पूछ लें",
+          "en": "Unusually long call with an unsaved number — check with family if anyone pressures you or asks for money"
+        }
+      ],
+      "checks_fired": [
+        "caller.mobile_10",
+        "pattern.P6"
+      ],
+      "ok": true
+    },
+    {
+      "id": "seq_23",
+      "name": "P6 positive: unsaved call duration_ms >= 20 min without flag (yellow)",
+      "expect": {
+        "level": "yellow",
+        "pattern": "P6"
+      },
+      "actual_level": "yellow",
+      "actual_patterns": [
+        "P6"
+      ],
+      "reasons": [
+        {
+          "rule_id": "caller.mobile_10",
+          "hi": "अनजान 10 अंकों वाले मोबाइल नंबर से कॉल",
+          "en": "Call from an unknown 10-digit mobile number"
+        },
+        {
+          "rule_id": "pattern.P6",
+          "hi": "अनजान नंबर से बहुत लंबी कॉल चल रही है — अगर कोई डराए या पैसे मांगे तो परिवार से पूछ लें",
+          "en": "Unusually long call with an unsaved number — check with family if anyone pressures you or asks for money"
+        }
+      ],
+      "checks_fired": [
+        "caller.mobile_10",
+        "pattern.P6"
+      ],
+      "ok": true
+    },
+    {
+      "id": "seq_24",
+      "name": "P6 negative: saved contact long call stays green",
+      "expect": {
+        "level": "green",
+        "pattern": null
+      },
+      "actual_level": "green",
+      "actual_patterns": [],
+      "reasons": [],
+      "checks_fired": [],
+      "ok": true
+    },
+    {
+      "id": "seq_25",
+      "name": "P6 negative: short unsaved call (5 min) stays green",
+      "expect": {
+        "level": "green",
+        "pattern": null
+      },
+      "actual_level": "green",
+      "actual_patterns": [],
+      "reasons": [],
+      "checks_fired": [
+        "caller.mobile_10"
+      ],
+      "ok": true
+    },
+    {
+      "id": "seq_26",
+      "name": "P6 negative: long unknown video call triggers P2 red, not P6",
+      "expect": {
+        "level": "red",
+        "pattern": "P2",
+        "not_patterns": [
+          "P6"
+        ]
+      },
+      "actual_level": "red",
+      "actual_patterns": [
+        "P2"
+      ],
+      "reasons": [
+        {
+          "rule_id": "caller.mobile_10",
+          "hi": "अनजान 10 अंकों वाले मोबाइल नंबर से कॉल",
+          "en": "Call from an unknown 10-digit mobile number"
+        },
+        {
+          "rule_id": "pattern.P2",
+          "hi": "लंबे समय से अनजान नंबर से वीडियो कॉल चल रही है — सरकारी अफसर या पुलिस कभी वीडियो कॉल पर पैसे नहीं मांगते",
+          "en": "Long video call with an unknown number — police and officers never ask for money on a video call"
+        }
+      ],
+      "checks_fired": [
+        "caller.mobile_10",
+        "pattern.P2"
+      ],
+      "ok": true
+    },
+    {
+      "id": "seq_27",
+      "name": "P7 positive: voice_report claimed_bank=true with mobile_10 caller (yellow)",
+      "expect": {
+        "level": "yellow",
+        "pattern": "P7"
+      },
+      "actual_level": "yellow",
+      "actual_patterns": [
+        "P7"
+      ],
+      "reasons": [
+        {
+          "rule_id": "caller.mobile_10",
+          "hi": "अनजान 10 अंकों वाले मोबाइल नंबर से कॉल",
+          "en": "Call from an unknown 10-digit mobile number"
+        },
+        {
+          "rule_id": "pattern.P7",
+          "hi": "Bank ke asli phone 1600 se shuru hote hain",
+          "en": "Real bank calls come from 1600 numbers"
+        }
+      ],
+      "checks_fired": [
+        "caller.mobile_10",
+        "pattern.P7"
+      ],
+      "ok": true
+    },
+    {
+      "id": "seq_28",
+      "name": "P7 positive: call_in claimed_bank=true with non-1600 caller (yellow)",
+      "expect": {
+        "level": "yellow",
+        "pattern": "P7"
+      },
+      "actual_level": "yellow",
+      "actual_patterns": [
+        "P7"
+      ],
+      "reasons": [
+        {
+          "rule_id": "caller.mobile_10",
+          "hi": "अनजान 10 अंकों वाले मोबाइल नंबर से कॉल",
+          "en": "Call from an unknown 10-digit mobile number"
+        },
+        {
+          "rule_id": "pattern.P7",
+          "hi": "Bank ke asli phone 1600 se shuru hote hain",
+          "en": "Real bank calls come from 1600 numbers"
+        }
+      ],
+      "checks_fired": [
+        "caller.mobile_10",
+        "pattern.P7"
+      ],
+      "ok": true
+    },
+    {
+      "id": "seq_29",
+      "name": "P7 negative: 1600 caller with claimed_bank=true stays green with S4 note",
+      "expect": {
+        "level": "green",
+        "pattern": null,
+        "reason_includes": "registered bank number"
+      },
+      "actual_level": "green",
+      "actual_patterns": [],
+      "reasons": [
+        {
+          "rule_id": "caller.series_1600",
+          "hi": "1600 वाला रजिस्टर्ड बैंक नंबर — असली बैंक/बीमा कंपनी की कॉल",
+          "en": "1600-series registered bank number — official bank/insurer caller"
+        }
+      ],
+      "checks_fired": [
+        "caller.series_1600"
+      ],
+      "ok": true
+    },
+    {
+      "id": "seq_30",
+      "name": "S4 green note: series_1600 call stays green with informational reason",
+      "expect": {
+        "level": "green",
+        "pattern": null,
+        "reason_includes": "registered bank number"
+      },
+      "actual_level": "green",
+      "actual_patterns": [],
+      "reasons": [
+        {
+          "rule_id": "caller.series_1600",
+          "hi": "1600 वाला रजिस्टर्ड बैंक नंबर — असली बैंक/बीमा कंपनी की कॉल",
+          "en": "1600-series registered bank number — official bank/insurer caller"
+        }
+      ],
+      "checks_fired": [
+        "caller.series_1600"
+      ],
+      "ok": true
+    },
+    {
+      "id": "seq_31",
+      "name": "Negative: malformed P6/P7 context and spoofed client claims do not fire",
+      "expect": {
+        "level": "green",
+        "pattern": null
+      },
+      "actual_level": "green",
+      "actual_patterns": [],
+      "reasons": [],
+      "checks_fired": [
+        "caller.mobile_10"
       ],
       "ok": true
     }

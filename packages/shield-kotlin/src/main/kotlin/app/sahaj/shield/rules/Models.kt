@@ -82,7 +82,18 @@ sealed interface SignalEvent {
         val source: String? = null,
         val whatsappCallUnsaved: Boolean = false,
         val durationMs: Long? = null,
+        val longVsNormal: Boolean = false,
+        val claimedBank: Boolean = false,
         val cancelled: Boolean = false,
+    ) : SignalEvent
+
+    data class VoiceReport(
+        override val atMs: Long,
+        val number: String? = null,
+        val callerType: String? = null,
+        val savedContact: Boolean = false,
+        val claimedBank: Boolean = false,
+        val text: String? = null,
     ) : SignalEvent
 
     data class AppOpen(
