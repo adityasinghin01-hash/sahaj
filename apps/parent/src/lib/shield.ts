@@ -14,10 +14,20 @@ import SahajShield, {
   type ShieldFeatures,
   type ShieldPairing,
   type ShieldStatus,
+  type SignedRequestHeaders,
 } from '../../modules/sahaj-shield';
 
 export { SHIELD_FEATURES } from '../../modules/sahaj-shield';
-export type { AfterCallAnswer, GatewayStatus, LastCall, LocalVerdictEvent, ShieldFeature, ShieldFeatures, ShieldStatus };
+export type {
+  AfterCallAnswer,
+  GatewayStatus,
+  LastCall,
+  LocalVerdictEvent,
+  ShieldFeature,
+  ShieldFeatures,
+  ShieldStatus,
+  SignedRequestHeaders,
+};
 
 export const shieldAvailable = Platform.OS === 'android';
 
@@ -41,6 +51,7 @@ async function safeAsync<T>(fn: () => Promise<T>, fallback: T): Promise<T> {
 
 export const shield = {
   getServerAddress: () => safe(() => SahajShield.getServerAddress(), ''),
+  signRequest: (body: string): SignedRequestHeaders | null => safe(() => SahajShield.signRequest(body), null),
   getUiPreferences: () => safe(() => SahajShield.getUiPreferences(), { lang: 'en', size: 'large' }),
   setUiPreferences: (lang: 'en' | 'hi', size: 'large' | 'xlarge') =>
     safe(() => SahajShield.setUiPreferences(lang, size), undefined),

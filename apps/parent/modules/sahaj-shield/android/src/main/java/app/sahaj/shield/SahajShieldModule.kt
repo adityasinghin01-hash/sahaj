@@ -15,6 +15,7 @@ import app.sahaj.shield.core.Feature
 import app.sahaj.shield.core.LocalLevel
 import app.sahaj.shield.core.LocalVerdict
 import app.sahaj.shield.core.Pairing
+import app.sahaj.shield.core.Signer
 import expo.modules.kotlin.Promise
 import expo.modules.kotlin.exception.CodedException
 import expo.modules.kotlin.modules.Module
@@ -91,6 +92,11 @@ class SahajShieldModule : Module() {
     }
 
     Function("getServerAddress") { shield.secure.load()?.baseUrl ?: "" }
+
+    Function("signRequest") { body: String ->
+      val p = shield.secure.load() ?: return@Function null
+      Signer.headers(p.deviceId, p.deviceSecret, System.currentTimeMillis(), body)
+    }
 
     // Non-sensitive display choices only. Device credentials remain in SecureStore.
     Function("getUiPreferences") {

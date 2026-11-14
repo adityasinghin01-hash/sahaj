@@ -12,12 +12,15 @@ import type {
   ShieldFeatures,
   ShieldPairing,
   ShieldStatus,
+  SignedRequestHeaders,
 } from './SahajShield.types';
 
 declare class SahajShieldModule extends NativeModule<SahajShieldModuleEvents> {
   getStatus(): ShieldStatus;
   /** Public origin only, from encrypted pairing storage. */
   getServerAddress(): string;
+  /** Signs a Core 1 Maa HTTP request body using stored paired-device HMAC credentials. */
+  signRequest(body: string): SignedRequestHeaders | null;
   getUiPreferences(): { lang: string; size: string };
   setUiPreferences(lang: 'en' | 'hi', size: 'large' | 'xlarge'): void;
   requestSmsPermission(): Promise<boolean>;

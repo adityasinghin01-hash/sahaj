@@ -124,6 +124,12 @@ export type ShieldPairing = {
   parentId?: string;
 };
 
+export type SignedRequestHeaders = {
+  'x-shield-device': string;
+  'x-shield-ts': string;
+  'x-shield-sig': string;
+};
+
 export type SahajShieldModuleEvents = {
   onVerdict: (verdict: LocalVerdictEvent) => void;
 };
