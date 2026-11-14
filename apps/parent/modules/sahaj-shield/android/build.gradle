@@ -43,7 +43,7 @@ android {
   }
   sourceSets {
     main {
-      res.srcDir warningClipResources
+      res.srcDir warningClipResources.get().asFile
       java.srcDirs += shieldKotlinSrc
     }
   }
