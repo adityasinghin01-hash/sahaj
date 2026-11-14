@@ -113,13 +113,13 @@ export async function listFamilyChildPushTokens(
 ): Promise<string[]> {
   const { data: members } = await db
     .from('family_memberships')
-    .select('auth_user_id')
+    .select('user_id')
     .eq('family_id', familyId)
     .eq('role', 'child')
     .is('revoked_at', null);
 
-  const userIds = ((members ?? []) as Array<{ auth_user_id: string | null }>)
-    .map((m) => m.auth_user_id)
+  const userIds = ((members ?? []) as Array<{ user_id: string | null }>)
+    .map((m) => m.user_id)
     .filter((id): id is string => typeof id === 'string' && id.length > 0);
 
   let query = db.from('app_push_tokens').select('expo_token').eq('family_id', familyId);
