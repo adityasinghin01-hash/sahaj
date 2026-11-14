@@ -6,6 +6,7 @@ import { createPairingCode, handleShieldEvent, handleShieldPair, type ShieldServ
 import { scheduledShieldTools, handleShieldToolJob, isShieldJobName, FamilyCheckJobPayload, type ShieldJobDeps, type ScheduledToolDeps } from "../jobs";
 import { isShieldToolName, type ShieldToolName, type ShieldTool, type ToolCtx, type ShieldDeps } from "../tools";
 import { createShieldRuntimePg } from "./pg";
+import { handleSmsGateway, type SmsGatewayDeps } from "../gateway";
 import { evaluateRules, scoreVoiceText } from "./rules";
 import type { ShieldRuntimePorts, ShieldRuntimeTestPorts, ShieldRuntimeDb } from "./types";
 
@@ -71,6 +72,14 @@ export function createShieldRuntime(ports: ShieldRuntimePorts | ShieldRuntimeTes
     db: db.server, env: ports.env, clock: ports.clock, waitUntil: ports.waitUntil.bind(ports), log: ports.log,
     // The real event handler registers this promise with waitUntil before returning 200.
     atlas: { async enqueueShieldEvent({ eventId }) { await runBrainForEvent(eventId); } },
+  };
+
+  const missingGateway = async (): Promise<never> => { throw new Error("Shield gateway storage is not configured"); };
+  const gatewayDeps: SmsGatewayDeps = {
+    db: db.gateway ?? { findParentByPhoneHash: missingGateway, insertGatewayEvent: missingGateway },
+    // Same path as a phone event: the handler gives this promise to waitUntil before returning 200.
+    brain: { runForEvent: eventId => runBrainForEvent(eventId) },
+    waitUntil: ports.waitUntil.bind(ports), env: ports.env, log: ports.log,
   };
 
   function toolDeps(ctx: ToolCtx): ShieldJobDeps & ScheduledToolDeps {
@@ -141,6 +150,7 @@ export function createShieldRuntime(ports: ShieldRuntimePorts | ShieldRuntimeTes
   return {
     handleShieldPair: (request: Request) => handleShieldPair(request, serverDeps),
     handleShieldEvent: (request: Request) => handleShieldEvent(request, serverDeps),
+    handleSmsGateway: (request: Request) => handleSmsGateway(request, gatewayDeps),
     createPairingCode: (input: { familyId: string; userId: string }) => createPairingCode(serverDeps, input),
     shieldTools: { run } satisfies BoundShieldTools,
     async handleScheduledJob(name: string, payload: unknown) {

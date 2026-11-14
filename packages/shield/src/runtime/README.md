@@ -66,6 +66,7 @@ interface Ports {
     SHIELD_DEVICE_PAIRING_SECRET: string; // >= 32 characters
     SAFE_BROWSING_KEY?: string;
     DEMO_TIMER_SCALE?: string;
+    SMS_GATEWAY_SECRET?: string;          // >= 32 characters; needed only for /api/sms/gateway
   };
   clock: { now(): Date };
   cache: {
@@ -102,6 +103,7 @@ type VoiceTimelineEntry = {
 ```ts
 shield.handleShieldPair(req: Request): Promise<Response>
 shield.handleShieldEvent(req: Request): Promise<Response>
+shield.handleSmsGateway(req: Request): Promise<Response>
 shield.createPairingCode({ familyId, userId }): Promise<CreatePairingCodeResult>
 shield.shieldTools.run(name, ctx, input): Promise<ToolOutputForName>
 shield.handleScheduledJob(name: string, payload: unknown): Promise<void | ShieldJobResult>
@@ -110,7 +112,7 @@ shield.runBrainForEvent(eventId: string): Promise<{ verdict: Verdict; verdictId?
 
 `ctx = { familyId: string; parentId: string }`. The generic `run` preserves each tool's input/output type and uses the original Zod validation/fixed safe fallback. Names: `classify_scam`, `check_message`, `family_check`, `family_check_result`, `check_code_word`, `money_sent`. A runtime-invalid name throws. Inputs/outputs remain those exported by `src/tools`; there is no second JSON envelope to translate.
 
-Singhal adds these **four one-line Next.js route exports**, each in its own `route.ts`, with `shield` imported from his server-only runtime singleton. For tools import `isShieldToolName` from Shield. These examples use native `Response.json`.
+Singhal adds these **five one-line Next.js route exports**, each in its own `route.ts`, with `shield` imported from his server-only runtime singleton. For tools import `isShieldToolName` from Shield. These examples use native `Response.json`.
 
 ```ts
 // /api/shield/pair
@@ -119,11 +121,24 @@ export const POST = (req: Request) => shield.handleShieldPair(req);
 export const POST = async (req: Request) => Response.json(await shield.createPairingCode(await requireChildFamily(req)));
 // /api/shield/event
 export const POST = (req: Request) => shield.handleShieldEvent(req);
+// /api/sms/gateway
+export const POST = (req: Request) => shield.handleSmsGateway(req);
 // /api/sarvam/tool/[name]
 export const POST = async (req: Request, route: { params: Promise<{ name: string }> }) => { const { name } = await route.params; if (!isShieldToolName(name)) return Response.json({ error: "unknown_tool" }, { status: 404 }); return Response.json(await shield.shieldTools.run(name, await requireSarvamCtx(req), await req.json())); };
 ```
 
 `requireChildFamily(req): Promise<{ familyId: string; userId: string }>` authenticates the logged-in child and authorizes their family; derive ids from the session/membership, not request JSON. `requireSarvamCtx(req): Promise<{ familyId: string; parentId: string }>` authenticates the provider webhook and resolves its active call/session to the family and parent. These two auth helpers and the server-only singleton belong to the host. The runtime independently checks that tool parents belong to their family. Phone events authenticate with `SHIELD_HEADERS` and the shared raw-body HMAC rule. Pairing exchanges a single-use code for a device secret.
+
+## SMS gateway: `/api/sms/gateway`
+
+A spare Android phone in gateway mode forwards every SMS that a keypad parent forwards to "1 Sahaj SMS".
+
+- Auth: header `x-sahaj-gateway-secret` must equal env `SMS_GATEWAY_SECRET` (compared in constant time over SHA-256 digests). Wrong or missing → `401 {error:"unauthorized"}`. A missing or short env secret → `500`, nothing accepted.
+- Body (JSON, ≤ 16 KB): `{ from: string, body: string, received_at: ISO-8601 with offset | unix ms, gateway_id: [A-Za-z0-9._-]{1,64} }`.
+- `from` is looked up only as `hex(SHA-256(last 10 digits))` in `public.shield_gateway_parents` (migration `20261114000500_shield_gateway.sql`, service role only). Not registered → `200 {ignored:true}` and nothing is stored. The host's onboarding inserts `(phone_hash, family_id, parent_id)`; `numberFingerprint()` computes the hash.
+- The body is masked with the rules `mask()` (plus the digit mask as a second pass) before storage; the raw body and number are never stored or logged. The event is `channel: "gateway_sms", kind: "sms"`, no device. Idempotency key = `sha256(gateway_id + "\n" + received_at as UTC ISO + "\n" + masked body)`.
+- New event → `200 {ok:true, event_id}` after one lookup and one insert; `runBrainForEvent` runs through `waitUntil`. Replay → `200 {ok:true, duplicate:true}`, no second brain run.
+- With `ports.sql` the runtime uses `createGatewayPg`; offline test storage may set `ShieldRuntimeDb.gateway`.
 
 ## Workflows and durable jobs
 

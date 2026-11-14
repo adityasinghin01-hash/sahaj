@@ -8,4 +8,5 @@ export * from "./jobs";
 export * from "./messages";
 export * from "./busy";
 export * from "./warnings";
+export * from "./gateway";
 export * from "./runtime";
