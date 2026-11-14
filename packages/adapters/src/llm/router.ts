@@ -1,10 +1,10 @@
 import { z } from "zod";
-import { ProviderError, type Attempt, type ErrorKind, type Model, type Result,
-  type RouterOptions, type UnderstandRequest } from "./types.js";
+import { ProviderError, readUsage, type Attempt, type ErrorKind, type Model, type Result,
+  type RouterOptions, type TokenUsage, type UnderstandRequest } from "./types.js";
 
-/** Also covers decimal digits in Hindi and other scripts. Tokens get no exemption. */
+/** Also covers decimal digits in Hindi and other scripts, including short-separated runs. Tokens get no exemption. */
 export function isMasked(text: string): boolean {
-  return !/\p{Decimal_Number}{4,}/u.test(text);
+  return !/\p{Decimal_Number}(?:[\s\-.,/()]{0,2}\p{Decimal_Number}){3,}/u.test(text);
 }
 
 const blocked = <T>(): Result<T> => ({ ok: false, reason: "input_not_masked", attempts: [] });
@@ -25,6 +25,7 @@ export function createRouter(options: RouterOptions) {
     let timer: ReturnType<typeof setTimeout> | undefined;
     let errorKind: ErrorKind | undefined;
     let validationError: string | undefined;
+    let usage: TokenUsage | undefined;
     let data!: T;
     try {
       const timeout = new Promise<never>((_, reject) => {
@@ -37,6 +38,7 @@ export function createRouter(options: RouterOptions) {
         Promise.resolve().then(() => options[model]({ ...req, effort: req.effort ?? "low", timeoutMs, signal: controller.signal })),
         timeout,
       ]);
+      usage = readUsage(output);
       if (output.kind === "parsed") {
         // The Claude SDK has already run this exact schema. Do not run transforms twice.
         data = output.data;
@@ -61,6 +63,7 @@ export function createRouter(options: RouterOptions) {
     const trace: Attempt = {
       model, task: req.task, ms: Math.max(0, now() - started), ok: errorKind === undefined,
       ...(errorKind ? { errorKind } : {}),
+      ...(usage ? { usage } : {}),
     };
     try { options.onTrace?.({ ...trace }); } catch { /* Logging must not break routing. */ }
     return {

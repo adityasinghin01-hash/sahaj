@@ -333,6 +333,244 @@ class JsonRulesEngine(rulesJson: String) : RulesEngine {
         return Level.YELLOW
     }
 
+    fun p9Packages(): Set<String> = cfg.p9.packages
+    fun p4Packages(): Set<String> = cfg.p4.packages
+    fun p9PollMs(): Long = cfg.p9.pollMs
+    fun p2MinDurationMs(): Long = cfg.p2.minDurationMs
+
+    private fun resolveCallType(call: SignalEvent.Call): String =
+        if (call.savedContact) "saved_contact" else (call.callerType ?: callerType(call.number))
+
+    private fun callDurationMs(call: SignalEvent.Call, evalAtMs: Long?): Long? {
+        call.durationMs?.takeIf { it >= 0L }?.let { return it }
+        if (call.endedAtMs != null) {
+            return if (call.endedAtMs >= call.atMs) call.endedAtMs - call.atMs else null
+        }
+        if (evalAtMs != null && evalAtMs >= call.atMs) {
+            return evalAtMs - call.atMs
+        }
+        return null
+    }
+
+    fun checkP2Call(call: SignalEvent.Call, evalAtMs: Long? = null): Boolean {
+        if (call.cancelled) return false
+        if (!cfg.p2.callerTypes.contains(resolveCallType(call))) return false
+        val isVideoOrWa = call.video || call.whatsappCallUnsaved || call.source == "whatsapp"
+        if (cfg.p2.requireVideoOrWhatsApp && !isVideoOrWa) return false
+        val duration = callDurationMs(call, evalAtMs) ?: return false
+        return duration >= cfg.p2.minDurationMs
+    }
+
+    fun checkP2Notification(notif: SignalEvent.Notification): Boolean {
+        if (notif.cancelled || notif.endedAtMs != null) return false
+        if (notif.savedContact) return false
+        if (notif.callerType != null && !cfg.p2.callerTypes.contains(notif.callerType)) return false
+        if (!notif.whatsappCallUnsaved) return false
+        val sec = notif.callSeconds ?: return false
+        if (sec < 0L) return false
+        return sec * 1000L >= cfg.p2.minDurationMs
+    }
+
+    fun checkP9(appOpen: SignalEvent.AppOpen, calls: List<SignalEvent.Call>): Boolean {
+        val pkg = appOpen.packageName ?: return false
+        if (!cfg.p9.packages.contains(pkg)) return false
+        if (appOpen.savedContact) return false
+        if (appOpen.callerType != null && !cfg.p9.callerTypes.contains(appOpen.callerType)) return false
+        if (calls.isNotEmpty()) {
+            return calls.any { c ->
+                if (!cfg.p9.callerTypes.contains(resolveCallType(c))) return@any false
+                val end = c.endedAtMs ?: Long.MAX_VALUE
+                appOpen.atMs >= c.atMs && appOpen.atMs <= end
+            }
+        }
+        return appOpen.onCallWithUnsaved
+    }
+
+    fun checkP3Notification(notif: SignalEvent.Notification): Boolean =
+        !notif.cancelled && notif.attachmentApk
+
+    fun checkP3Install(install: SignalEvent.Install): Boolean {
+        if (install.isSystem) return false
+        val inst = install.installer?.trim().orEmpty()
+        if (inst.isEmpty() || cfg.p3.playStoreInstallers.contains(inst)) return false
+        val hours = install.installedHoursAgo ?: return false
+        if (!hours.isFinite() || hours < 0.0) return false
+        return hours <= cfg.p3.recentInstallHours.toDouble()
+    }
+
+    fun checkP4Install(install: SignalEvent.Install): Boolean {
+        val pkg = install.packageName?.trim().orEmpty()
+        return pkg.isNotEmpty() && cfg.p4.packages.contains(pkg)
+    }
+
+    private fun checkP1OverCalls(sms: SignalEvent.Sms, calls: List<SignalEvent.Call>): Boolean {
+        if (!isOtp(sms.text)) return false
+        return calls.any { c ->
+            if (!cfg.p1.callerTypes.contains(resolveCallType(c))) return@any false
+            val maxAt = if (c.endedAtMs == null) Long.MAX_VALUE else c.endedAtMs + cfg.p1.windowAfterCallMs
+            sms.atMs >= c.atMs && sms.atMs <= maxAt
+        }
+    }
+
+    private fun firedPhase2Ids(events: List<SignalEvent>, evalAtMs: Long?): Set<String> {
+        val calls = events.filterIsInstance<SignalEvent.Call>()
+        val ids = linkedSetOf<String>()
+        for (e in events) {
+            when (e) {
+                is SignalEvent.Call -> if (checkP2Call(e, evalAtMs)) ids.add("P2")
+                is SignalEvent.AppOpen -> if (checkP9(e, calls)) ids.add("P9")
+                is SignalEvent.Notification -> {
+                    if (checkP2Notification(e)) ids.add("P2")
+                    if (checkP3Notification(e)) ids.add("P3")
+                }
+                is SignalEvent.Install -> {
+                    if (checkP3Install(e)) ids.add("P3")
+                    if (checkP4Install(e)) ids.add("P4")
+                }
+                is SignalEvent.Sms -> Unit
+            }
+        }
+        return ids
+    }
+
+    fun findPatterns(events: List<SignalEvent>, evalAtMs: Long? = null): List<String> {
+        val calls = events.filterIsInstance<SignalEvent.Call>()
+        val ids = linkedSetOf<String>()
+        ids.addAll(firedPhase2Ids(events, evalAtMs))
+        for (e in events) {
+            if (e !is SignalEvent.Sms) continue
+            if (checkP1OverCalls(e, calls)) ids.add("P1")
+            if (checkP5(e.sender, e.text, e.senderSaved, e.senderType) != null) ids.add("P5")
+        }
+        val order = listOf("P1", "P2", "P3", "P4", "P5", "P6", "P7", "P8", "P9")
+        return order.filter { ids.contains(it) }
+    }
+
+    /**
+     * Evaluate a sequence of events against TS-identical rules.
+     * Any spoofed client `localLevel` or `clientMatchedRules` are intentionally ignored.
+     */
+    fun evaluateSequence(
+        events: List<SignalEvent>,
+        evalAtMs: Long? = null,
+        @Suppress("UNUSED_PARAMETER") localLevel: Level? = null,
+        @Suppress("UNUSED_PARAMETER") clientMatchedRules: List<String> = emptyList(),
+    ): SequenceVerdict {
+        val hits = mutableListOf<RuleHit>()
+        val reasonIds = mutableListOf<String>()
+        fun addReason(id: String) {
+            if (cfg.reasonsById.containsKey(id) && !reasonIds.contains(id)) reasonIds.add(id)
+        }
+
+        val lastSmsIdx = events.indexOfLast { it is SignalEvent.Sms }
+        val lastSms = if (lastSmsIdx >= 0) events[lastSmsIdx] as SignalEvent.Sms else null
+        val text = lastSms?.text?.takeIf { it.trim().isNotEmpty() }
+        val lastCall = events.lastOrNull { it is SignalEvent.Call } as? SignalEvent.Call
+        val effectiveEvalAt = evalAtMs ?: events.lastOrNull()?.atMs
+
+        var floor = Level.GREEN
+        val ts = text?.let { scoreText(it) }
+        if (ts != null) {
+            hits.addAll(ts.hits)
+            for (h in ts.hits) {
+                if (h.weight > 0) addReason(h.ruleId)
+            }
+            if (ts.apk) floor = maxLevel(floor, cfg.links.apkForceLevel)
+        }
+
+        if (lastSms != null && (lastSms.sender != null || lastSms.senderType != null || lastSms.senderSaved)) {
+            val sType = if (lastSms.senderSaved) "saved_contact" else (lastSms.senderType ?: senderType(lastSms.sender))
+            val sRule = cfg.senderRules.find { it.type == sType }
+            if (sRule != null) {
+                hits.add(RuleHit(sRule.id, if (text != null) sRule.score else 0))
+                if (text != null && sRule.score > 0) addReason(sRule.id)
+            }
+            if (sType == "saved_contact" && text != null) {
+                hits.add(RuleHit(cfg.savedContact.id, cfg.savedContact.score))
+            }
+            if (sType == "mobile_10" && ts?.topic == true) {
+                hits.add(RuleHit(cfg.mobileClaimsBrand.id, cfg.mobileClaimsBrand.score))
+                addReason(cfg.mobileClaimsBrand.id)
+            }
+        }
+
+        if (lastSms == null && lastCall != null) {
+            val cType = resolveCallType(lastCall)
+            val cRule = cfg.callerRules.find { it.type == cType }
+            if (cRule != null) {
+                hits.add(RuleHit(cRule.id, cRule.score))
+                if (cRule.score > 0) addReason(cRule.id)
+            }
+        }
+
+        val firedPatternIds = mutableListOf<String>()
+        var patternType: String? = null
+        if (lastSms != null && text != null) {
+            val priorCalls = events.subList(0, lastSmsIdx).filterIsInstance<SignalEvent.Call>()
+            if (checkP1OverCalls(lastSms, priorCalls)) {
+                firedPatternIds.add(cfg.p1.id)
+                hits.add(RuleHit(cfg.p1.id, 0, scamType = cfg.p1.scamType))
+                addReason(cfg.p1.id)
+                floor = maxLevel(floor, cfg.p1.level)
+                patternType = cfg.p1.scamType
+            }
+            val p5Level = checkP5(lastSms.sender, text, lastSms.senderSaved, lastSms.senderType)
+            if (p5Level != null) {
+                firedPatternIds.add(cfg.p5.id)
+                val rid = "${cfg.p5.id}.${p5Level.wireName}"
+                hits.add(RuleHit(rid, 0))
+                addReason(rid)
+                floor = maxLevel(floor, p5Level)
+            }
+        }
+
+        for (pid in firedPhase2Ids(events, effectiveEvalAt)) {
+            val (ruleId, level, scam) = when (pid) {
+                "P2" -> Triple(cfg.p2.id, cfg.p2.level, cfg.p2.scamType)
+                "P3" -> Triple(cfg.p3.id, cfg.p3.level, cfg.p3.scamType)
+                "P4" -> Triple(cfg.p4.id, cfg.p4.level, cfg.p4.scamType)
+                "P9" -> Triple(cfg.p9.id, cfg.p9.level, cfg.p9.scamType)
+                else -> continue
+            }
+            firedPatternIds.add(ruleId)
+            hits.add(RuleHit(ruleId, 0, scamType = scam))
+            addReason(ruleId)
+            floor = maxLevel(floor, level)
+            if (patternType == null && scam != "unknown") patternType = scam
+        }
+
+        val score = clampScore(hits.sumOf { it.weight })
+        val scoreLevel = when {
+            score >= cfg.thresholds.redAt -> Level.RED
+            score >= cfg.thresholds.yellowAt -> Level.YELLOW
+            else -> Level.GREEN
+        }
+        val level = maxLevel(scoreLevel, floor)
+        if (text != null && isOtp(text)) {
+            hits.add(RuleHit(cfg.otp.id, 0))
+            if (level != Level.GREEN) addReason(cfg.otp.id)
+        }
+
+        var scamType = ts?.scamType ?: "unknown"
+        if (scamType == "unknown" && patternType != null) scamType = patternType
+
+        val matchedRules = (hits.map { h ->
+            if (h.detail != null && h.detail != "total" && h.ruleId.startsWith("script.")) {
+                "${h.ruleId}:${h.detail}"
+            } else {
+                h.ruleId
+            }
+        } + firedPatternIds).distinct()
+
+        return SequenceVerdict(
+            level = level,
+            scamType = scamType,
+            patterns = findPatterns(events, effectiveEvalAt),
+            matchedRules = matchedRules,
+            reasons = if (level == Level.GREEN) emptyList() else reasonIds.mapNotNull { cfg.reasonsById[it]?.hi },
+        )
+    }
+
     private fun linkHits(text: String, links: List<FoundLink>): List<RuleHit> {
         val l = cfg.links
         val hits = mutableListOf<RuleHit>()

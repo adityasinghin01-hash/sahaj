@@ -16,6 +16,7 @@ export interface SandboxOptions {
 }
 
 export function isPublicAddress(address: string): boolean {
+  if (address.includes("%")) return false;
   try {
     const parsed = ipaddr.parse(address);
     // Mapped IPv4 is normalized for socket comparisons, but never accepted as a target.
@@ -49,7 +50,15 @@ export const pinnedRequest: SandboxTransport = (url, options) => new Promise((re
     signal: options.signal,
     // Keep the original URL hostname for Host, TLS SNI and certificate verification.
     // Connect only to the already validated address, even if DNS changes now.
-    lookup: (_hostname, _lookupOptions, callback) => callback(null, options.address, options.family),
+    lookup: (_hostname, lookupOptions, callback) => {
+      if (lookupOptions && typeof lookupOptions === "object" && "all" in lookupOptions && lookupOptions.all) {
+        (callback as (err: NodeJS.ErrnoException | null, addresses: { address: string; family: number }[]) => void)(null, [
+          { address: options.address, family: options.family },
+        ]);
+        return;
+      }
+      callback(null, options.address, options.family);
+    },
     headers: { "user-agent": "SahajShield-LinkCheck", accept: "*/*" },
   }, response => {
     if (!verified) {

@@ -359,13 +359,102 @@
       "risky_sender_types": ["mobile_10", "international"],
       "red": { "level": "red", "reason": { "hi": "आम मोबाइल नंबर से बैंक/बिजली/कूरियर के नाम पर लिंक भेजा गया है — लिंक न खोलें", "en": "Link about bank/electricity/courier sent from an ordinary mobile number — do not open it" } },
       "yellow": { "level": "yellow", "reason": { "hi": "संदेश में लिंक है और एक संदिग्ध संकेत है — लिंक खोलने से पहले पूछ लें", "en": "Message has a link plus one warning sign — check before opening" } } },
-    "P2": { "phase": 2, "id": "pattern.P2", "description": "placeholder" },
-    "P3": { "phase": 2, "id": "pattern.P3", "description": "placeholder" },
-    "P4": { "phase": 2, "id": "pattern.P4", "description": "placeholder" },
+    "P2": {
+      "phase": 2,
+      "id": "pattern.P2",
+      "level": "red",
+      "scam_type": "digital_arrest",
+      "description": "Video or WhatsApp call with an unknown number running 10 minutes or longer",
+      "caller_types": ["mobile_10", "international", "series_140", "unknown"],
+      "min_duration_ms": 600000,
+      "min_duration_seconds": 600,
+      "require_video_or_whatsapp": true,
+      "reason": {
+        "hi": "लंबे समय से अनजान नंबर से वीडियो कॉल चल रही है — सरकारी अफसर या पुलिस कभी वीडियो कॉल पर पैसे नहीं मांगते",
+        "en": "Long video call with an unknown number — police and officers never ask for money on a video call"
+      }
+    },
+    "P3": {
+      "phase": 2,
+      "id": "pattern.P3",
+      "level": "red",
+      "scam_type": "remote_access",
+      "description": "APK file sent in a message or WhatsApp, or a non-system app installed outside the Play Store within 24 hours",
+      "play_store_installers": ["com.android.vending"],
+      "recent_install_hours": 24,
+      "reason": {
+        "hi": "मैसेज में ऐप फाइल (.apk) भेजी गई है या Play Store के बाहर से ऐप इंस्टॉल हुई है — इसे न खोलें",
+        "en": "An app file (.apk) was sent or installed outside the Play Store — do not open or install it"
+      }
+    },
+    "P4": {
+      "phase": 2,
+      "id": "pattern.P4",
+      "level": "red",
+      "scam_type": "remote_access",
+      "description": "Screen-sharing or remote-control app installed on the phone",
+      "packages": [
+        "com.teamviewer.quicksupport.market",
+        "com.teamviewer.teamviewer.market.mobile",
+        "com.anydesk.anydeskandroid",
+        "com.anydesk.adcontrol.ad1",
+        "us.zoom.videomeetings",
+        "com.sand.airdroid",
+        "com.rsupport.mvagent",
+        "com.apowersoft.mirror"
+      ],
+      "reason": {
+        "hi": "फ़ोन की स्क्रीन देखने वाला ऐप मिला है — अनजान व्यक्ति के कहने पर स्क्रीन शेयर न करें",
+        "en": "A screen-sharing or remote-control app was detected — never share your screen with a stranger"
+      }
+    },
     "P6": { "phase": 2, "id": "pattern.P6", "description": "placeholder" },
     "P7": { "phase": 2, "id": "pattern.P7", "description": "placeholder" },
-    "P8": { "phase": 2, "id": "pattern.P8", "description": "placeholder" },
-    "P9": { "phase": 2, "id": "pattern.P9", "description": "placeholder" }
+    "P8": {
+      "phase": 2,
+      "id": "pattern.P8",
+      "level": "red",
+      "description": "User chose to pause/cancel a callback to an unknown flagged number; remembered locally on phone for 24 hours",
+      "local_only": true,
+      "keep_hours": 24,
+      "max_numbers": 300,
+      "reason": {
+        "hi": "यह वही अनजान नंबर है जिस पर पहले चेतावनी दी गई थी — कॉल करने से पहले परिवार से पूछ लें",
+        "en": "This is the same unknown number flagged earlier — check with family before calling back"
+      }
+    },
+    "P9": {
+      "phase": 2,
+      "id": "pattern.P9",
+      "level": "red",
+      "scam_type": "unknown",
+      "description": "Banking or UPI app opened while a call with an unknown number is active",
+      "caller_types": ["mobile_10", "international", "series_140", "unknown"],
+      "poll_ms": 2000,
+      "packages": [
+        "com.phonepe.app",
+        "com.google.android.apps.nbu.paisa.user",
+        "net.one97.paytm",
+        "in.org.npci.upiapp",
+        "com.csam.icici.bank.imobile",
+        "com.sbi.lotusintouch",
+        "com.sbi.SBIFreedomPlus",
+        "com.snapwork.hdfc",
+        "com.axis.mobile",
+        "com.msf.kbank.mobile",
+        "com.dreamplug.androidapp",
+        "com.freecharge.android",
+        "com.mobikwik_new",
+        "com.whatsapp.w4b",
+        "in.amazon.mShop.android.shopping",
+        "com.mycompany.AxisMobile",
+        "com.hdfcbank.hdfcbankquickpay"
+      ],
+      "reason": {
+        "hi": "अनजान कॉल के दौरान बैंक या UPI ऐप खोला गया है — कॉल पर रहते हुए पेमेंट न करें",
+        "en": "A bank or UPI app was opened during an unknown call — do not make any payment while on the call"
+      }
+    }
   },
 
   "thresholds": {

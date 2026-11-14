@@ -1,0 +1,179 @@
+[
+  {
+    "id": "seq_01",
+    "name": "OTP SMS during active unknown 10-digit call",
+    "events": [
+      { "kind": "call", "at": 1763114400000, "number": "9800000301", "direction": "in" },
+      { "kind": "sms", "at": 1763114460000, "sender": "AX-HDFCBK-S", "text": "482913 is your OTP for HDFC Bank NetBanking. Do not share with anyone." }
+    ],
+    "expect": { "level": "red", "pattern": "P1" }
+  },
+  {
+    "id": "seq_02",
+    "name": "OTP SMS 3 minutes after international call ended",
+    "events": [
+      { "kind": "call", "at": 1763114400000, "ended_at": 1763114520000, "number": "+14155550199", "direction": "in" },
+      { "kind": "sms", "at": 1763114700000, "sender": "VM-SBIBNK-S", "text": "839201 is your SBI YONO OTP for Rs 5000. Do not share." }
+    ],
+    "expect": { "level": "red", "pattern": "P1" }
+  },
+  {
+    "id": "seq_03",
+    "name": "OTP SMS 10 minutes after unknown call ended (outside 5-min window)",
+    "events": [
+      { "kind": "call", "at": 1763114400000, "ended_at": 1763114460000, "number": "9800000302", "direction": "in" },
+      { "kind": "sms", "at": 1763115060000, "sender": "AX-HDFCBK-S", "text": "112233 is your OTP for HDFC Bank login. Do not share." }
+    ],
+    "expect": { "level": "green", "pattern": null }
+  },
+  {
+    "id": "seq_04",
+    "name": "OTP SMS during saved contact call",
+    "events": [
+      { "kind": "call", "at": 1763114400000, "number": "9800000101", "saved_contact": true, "direction": "in" },
+      { "kind": "sms", "at": 1763114430000, "sender": "JD-ICICIB-S", "text": "554433 is your OTP for ICICI Bank transaction. Do not share." }
+    ],
+    "expect": { "level": "green", "pattern": null }
+  },
+  {
+    "id": "seq_05",
+    "name": "Normal bank OTP with no call",
+    "events": [
+      { "kind": "sms", "at": 1763114400000, "sender": "VM-SBIBNK-S", "text": "902184 is your OTP for SBI NetBanking login. Do not share." }
+    ],
+    "expect": { "level": "green", "pattern": null }
+  },
+  {
+    "id": "seq_06",
+    "name": "Link + bank/KYC topic from 10-digit mobile number (P5 red)",
+    "events": [
+      { "kind": "sms", "at": 1763114400000, "sender": "9800000303", "text": "Your HDFC bank account needs update today: hdfc-verify-26.top/open" }
+    ],
+    "expect": { "level": "red", "pattern": "P5" }
+  },
+  {
+    "id": "seq_07",
+    "name": "Shortened link from business header without scam script (P5 yellow)",
+    "events": [
+      { "kind": "sms", "at": 1763114400000, "sender": "AX-COURIER-S", "text": "Track your parcel delivery status here: bit.ly/dlv26" }
+    ],
+    "expect": { "level": "yellow", "pattern": "P5" }
+  },
+  {
+    "id": "seq_08",
+    "name": "APK invitation received on WhatsApp / mobile sender",
+    "events": [
+      { "kind": "sms", "at": 1763114400000, "sender": "9800000304", "text": "Shaadi ka card bheja hai, open file: http://cards-26.xyz/wedding.apk" }
+    ],
+    "expect": { "level": "red", "pattern": "P5" }
+  },
+  {
+    "id": "seq_09",
+    "name": "Banking app opened during active unknown call (Phase 2 P9)",
+    "events": [
+      { "kind": "call", "at": 1763114400000, "number": "9800000305", "direction": "in" },
+      { "kind": "app_open", "at": 1763114490000, "package": "com.phonepe.app" }
+    ],
+    "expect": { "level": "red", "pattern": "P9" }
+  },
+  {
+    "id": "seq_10",
+    "name": "Long unknown video call > 20 min (Phase 2 P2 red spec)",
+    "events": [
+      { "kind": "call", "at": 1763114400000, "ended_at": 1763115900000, "number": "+447911000202", "direction": "in", "video": true }
+    ],
+    "expect": { "level": "red", "pattern": "P2" }
+  },
+  {
+    "id": "seq_11",
+    "name": "Negative: Banking app opened during saved contact call",
+    "events": [
+      { "kind": "call", "at": 1763114400000, "number": "9800000101", "saved_contact": true, "direction": "in" },
+      { "kind": "app_open", "at": 1763114490000, "package": "com.phonepe.app" }
+    ],
+    "expect": { "level": "green", "pattern": null }
+  },
+  {
+    "id": "seq_12",
+    "name": "Negative: Banking app opened after unknown call already ended",
+    "events": [
+      { "kind": "call", "at": 1763114400000, "ended_at": 1763114460000, "number": "9800000306", "direction": "in" },
+      { "kind": "app_open", "at": 1763114490000, "package": "com.phonepe.app" }
+    ],
+    "expect": { "level": "green", "pattern": null }
+  },
+  {
+    "id": "seq_13",
+    "name": "Boundary: WhatsApp unknown call at 9m59s (below 10 min P2 threshold)",
+    "events": [
+      { "kind": "notification", "at": 1763114999000, "source": "whatsapp", "whatsapp_call_unsaved": true, "call_seconds": 599 }
+    ],
+    "expect": { "level": "green", "pattern": null }
+  },
+  {
+    "id": "seq_14",
+    "name": "Negative: WhatsApp call notification cancelled/removed after 12 min",
+    "events": [
+      { "kind": "notification", "at": 1763115120000, "source": "whatsapp", "whatsapp_call_unsaved": true, "call_seconds": 720, "cancelled": true }
+    ],
+    "expect": { "level": "green", "pattern": null }
+  },
+  {
+    "id": "seq_15",
+    "name": "Boundary: WhatsApp unknown call hits 10m00s (600s P2 red)",
+    "events": [
+      { "kind": "notification", "at": 1763115000000, "source": "whatsapp", "whatsapp_call_unsaved": true, "call_seconds": 600 }
+    ],
+    "expect": { "level": "red", "pattern": "P2" }
+  },
+  {
+    "id": "seq_16",
+    "name": "Negative: Non-banking app opened during active unknown call",
+    "events": [
+      { "kind": "call", "at": 1763114400000, "number": "9800000307", "direction": "in" },
+      { "kind": "app_open", "at": 1763114490000, "package": "com.whatsapp" }
+    ],
+    "expect": { "level": "green", "pattern": null }
+  },
+  {
+    "id": "seq_17",
+    "name": "Security: Spoofed client local_level/matched_rules rejected when no real evidence",
+    "events": [
+      { "kind": "app_open", "at": 1763114490000, "package": "com.whatsapp", "on_call_with_unsaved": true, "local_level": "red", "matched_rules": ["pattern.P9"] }
+    ],
+    "expect": { "level": "green", "pattern": null }
+  },
+  {
+    "id": "seq_18",
+    "name": "WhatsApp APK attachment notification triggers P3 red",
+    "events": [
+      { "kind": "notification", "at": 1763114400000, "source": "whatsapp", "attachment_apk": true }
+    ],
+    "expect": { "level": "red", "pattern": "P3" }
+  },
+  {
+    "id": "seq_19",
+    "name": "Negative: Malformed or missing Phase 2 context does not trigger",
+    "events": [
+      { "kind": "app_open", "at": 1763114400000, "on_call_with_unsaved": true },
+      { "kind": "install", "at": 1763114410000, "installer": "" }
+    ],
+    "expect": { "level": "green", "pattern": null }
+  },
+  {
+    "id": "seq_20",
+    "name": "Remote-control app installed (Phase 2 P4 red)",
+    "events": [
+      { "kind": "install", "at": 1763114400000, "package": "com.anydesk.anydeskandroid", "installer": "com.android.vending", "installed_hours_ago": 1 }
+    ],
+    "expect": { "level": "red", "pattern": "P4" }
+  },
+  {
+    "id": "seq_21",
+    "name": "Sideloaded non-Play-Store app installed within 24h (Phase 2 P3 red)",
+    "events": [
+      { "kind": "install", "at": 1763114400000, "package": "com.example.weddingcard", "installer": "com.whatsapp", "installed_hours_ago": 2, "is_system": false }
+    ],
+    "expect": { "level": "red", "pattern": "P3" }
+  }
+]

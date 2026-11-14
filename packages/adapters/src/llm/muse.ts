@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { ProviderError, type Provider } from "./types.js";
+import { attachUsage, ProviderError, type Provider, type TokenUsage } from "./types.js";
 
 export const MUSE_BASE_URL = "https://api.meta.ai/v1";
 export const MUSE_MODEL = "muse-spark-1.3";
@@ -9,6 +9,11 @@ const Completion = z.object({
     finish_reason: z.string().nullable().optional(),
     message: z.object({ content: z.string().nullable().optional(), refusal: z.string().nullable().optional() }),
   })),
+  usage: z.object({
+    prompt_tokens: z.number().optional(),
+    completion_tokens: z.number().optional(),
+    total_tokens: z.number().optional(),
+  }).optional(),
 });
 
 /** Meta has no dedicated SDK; this uses its documented Chat Completions REST API. */
@@ -38,6 +43,16 @@ export function createMuseProvider(options: {
     if (choice?.message.refusal || choice?.finish_reason === "content_filter") throw new ProviderError("refusal");
     if (choice?.finish_reason === "length") throw new ProviderError("max_tokens");
     if (!choice?.message.content) throw new ProviderError("validation");
-    return { kind: "text", text: choice.message.content };
+    const output = { kind: "text" as const, text: choice.message.content };
+    const u = envelope.data.usage;
+    if (u) {
+      const usage: TokenUsage = {
+        ...(typeof u.prompt_tokens === "number" ? { inputTokens: u.prompt_tokens } : {}),
+        ...(typeof u.completion_tokens === "number" ? { outputTokens: u.completion_tokens } : {}),
+        ...(typeof u.total_tokens === "number" ? { totalTokens: u.total_tokens } : {}),
+      };
+      attachUsage(output, usage);
+    }
+    return output;
   };
 }

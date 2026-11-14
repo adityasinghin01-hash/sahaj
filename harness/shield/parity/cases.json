@@ -1,0 +1,975 @@
+[
+  {
+    "id": "m_scam_01",
+    "sender": "9800000001",
+    "body": "CBI officer calling: your Aadhaar is linked to money laundering. An arrest warrant is out. Stay on video call and do not disconnect the call.",
+    "label": "scam",
+    "level": "red",
+    "scam_type": "digital_arrest",
+    "matched_rule_ids": [
+      "script.digital_arrest:do not disconnect the call",
+      "script.digital_arrest:stay on video call",
+      "script.digital_arrest:money laundering",
+      "script.digital_arrest:arrest warrant",
+      "script.digital_arrest:cbi officer",
+      "script.digital_arrest",
+      "sender.mobile_10",
+      "sender.mobile_claims_brand"
+    ],
+    "masked_text": "CBI officer calling: your Aadhaar is linked to money laundering. An arrest warrant is out. Stay on video call and do not disconnect the call."
+  },
+  {
+    "id": "m_scam_02",
+    "sender": "+14155550101",
+    "body": "Mumbai Crime Branch: aapke khilaf case darj hua hai, digital arrest se bachne ke liye video call par rahein aur verification ke liye paise transfer karein.",
+    "label": "scam",
+    "level": "red",
+    "scam_type": "digital_arrest",
+    "matched_rule_ids": [
+      "script.digital_arrest:verification ke liye paise transfer",
+      "script.digital_arrest:aapke khilaf case darj",
+      "script.digital_arrest:video call par rahein",
+      "script.digital_arrest:digital arrest",
+      "script.digital_arrest",
+      "signal.money_ask",
+      "sender.international"
+    ],
+    "masked_text": "Mumbai Crime Branch: aapke khilaf case darj hua hai, digital arrest se bachne ke liye video call par rahein aur verification ke liye paise transfer karein."
+  },
+  {
+    "id": "m_scam_03",
+    "sender": "9800000002",
+    "body": "ईडी अधिकारी का नोटिस: मनी लॉन्ड्रिंग में आपका नाम आया है। अरेस्ट वारंट जारी है, वीडियो कॉल पर रहें और कॉल मत काटना।",
+    "label": "scam",
+    "level": "red",
+    "scam_type": "digital_arrest",
+    "matched_rule_ids": [
+      "script.digital_arrest:वीडियो कॉल पर रहें",
+      "script.digital_arrest:मनी लॉन्ड्रिंग",
+      "script.digital_arrest:अरेस्ट वारंट",
+      "script.digital_arrest:कॉल मत काटना",
+      "script.digital_arrest",
+      "sender.mobile_10"
+    ],
+    "masked_text": "ईडी अधिकारी का नोटिस: मनी लॉन्ड्रिंग में आपका नाम आया है। अरेस्ट वारंट जारी है, वीडियो कॉल पर रहें और कॉल मत काटना।"
+  },
+  {
+    "id": "m_scam_04",
+    "sender": "9800000003",
+    "body": "Dear SBI customer, your KYC has expired and your account will be blocked today. Update your KYC immediately at bit.ly/sbi-kyc26",
+    "label": "scam",
+    "level": "red",
+    "scam_type": "kyc_block",
+    "matched_rule_ids": [
+      "script.kyc_block:account will be blocked",
+      "script.kyc_block:update your kyc",
+      "script.kyc_block:kyc",
+      "script.kyc_block",
+      "signal.urgency",
+      "link.present",
+      "link.shortener",
+      "sender.mobile_10",
+      "sender.mobile_claims_brand",
+      "pattern.P5.red",
+      "pattern.P5"
+    ],
+    "masked_text": "Dear SBI customer, your KYC has expired and your account will be blocked today. Update your KYC immediately at <URL:bit.ly>"
+  },
+  {
+    "id": "m_scam_05",
+    "sender": "9800000004",
+    "body": "HDFC Bank alert: aapka khata band hone wala hai. Turant PAN card link karein aur KYC update karein: hdfc-kyc-help.top/verify",
+    "label": "scam",
+    "level": "red",
+    "scam_type": "kyc_block",
+    "matched_rule_ids": [
+      "script.kyc_block:pan card link karein",
+      "script.kyc_block:kyc update karein",
+      "script.kyc_block:khata band",
+      "script.kyc_block",
+      "signal.urgency",
+      "link.present",
+      "link.look_alike",
+      "sender.mobile_10",
+      "sender.mobile_claims_brand",
+      "pattern.P5.red",
+      "pattern.P5"
+    ],
+    "masked_text": "HDFC Bank alert: aapka khata band hone wala hai. Turant PAN card link karein aur KYC update karein: <URL:hdfc-kyc-help.top>"
+  },
+  {
+    "id": "m_scam_06",
+    "sender": "9800000005",
+    "body": "प्रिय ग्राहक, आपका पीएनबी केवाईसी समाप्त हो गया है। आज ही केवाईसी अपडेट करें वरना खाता बंद कर दिया जाएगा: tinyurl.com/pnbkyc1",
+    "label": "scam",
+    "level": "red",
+    "scam_type": "kyc_block",
+    "matched_rule_ids": [
+      "script.kyc_block:केवाईसी समाप्त",
+      "script.kyc_block:केवाईसी अपडेट",
+      "script.kyc_block:खाता बंद",
+      "script.kyc_block",
+      "signal.urgency",
+      "link.present",
+      "link.shortener",
+      "sender.mobile_10",
+      "sender.mobile_claims_brand",
+      "pattern.P5.red",
+      "pattern.P5"
+    ],
+    "masked_text": "प्रिय ग्राहक, आपका पीएनबी केवाईसी समाप्त हो गया है। आज ही केवाईसी अपडेट करें वरना खाता बंद कर दिया जाएगा: <URL:tinyurl.com>"
+  },
+  {
+    "id": "m_scam_07",
+    "sender": "9800000006",
+    "body": "Dear consumer, your electricity connection will be cut tonight at 9:30 PM because your previous month bill was not updated. Contact electricity officer urgently: t.ly/power26",
+    "label": "scam",
+    "level": "red",
+    "scam_type": "electricity_cut",
+    "matched_rule_ids": [
+      "script.electricity_cut:previous month bill was not updated",
+      "script.electricity_cut:electricity connection will be cut",
+      "script.electricity_cut:contact electricity officer",
+      "script.electricity_cut",
+      "signal.urgency",
+      "link.present",
+      "link.shortener",
+      "sender.mobile_10",
+      "sender.mobile_claims_brand",
+      "pattern.P5.red",
+      "pattern.P5"
+    ],
+    "masked_text": "Dear consumer, your electricity connection will be cut tonight at 9:30 PM because your previous month bill was not updated. Contact electricity officer urgently: <URL:t.ly>"
+  },
+  {
+    "id": "m_scam_08",
+    "sender": "9800000007",
+    "body": "BSES notice: aapka bijli bill update nahi hua hai, aaj raat bijli kat jayegi. Turant bijli officer se baat karein: cutt.ly/bsespay",
+    "label": "scam",
+    "level": "red",
+    "scam_type": "electricity_cut",
+    "matched_rule_ids": [
+      "script.electricity_cut:bijli bill update nahi",
+      "script.electricity_cut:bijli kat jayegi",
+      "script.electricity_cut:aaj raat bijli",
+      "script.electricity_cut:bijli officer",
+      "script.electricity_cut",
+      "signal.urgency",
+      "link.present",
+      "link.shortener",
+      "sender.mobile_10",
+      "sender.mobile_claims_brand",
+      "pattern.P5.red",
+      "pattern.P5"
+    ],
+    "masked_text": "BSES notice: aapka bijli bill update nahi hua hai, aaj raat bijli kat jayegi. Turant bijli officer se baat karein: <URL:cutt.ly>"
+  },
+  {
+    "id": "m_scam_09",
+    "sender": "9800000008",
+    "body": "सूचना: पिछले महीने का बिल अपडेट नहीं होने से आज रात बिजली काट दी जाएगी। तुरंत बिजली अधिकारी से संपर्क करें: bses-bill-desk.xyz/pay",
+    "label": "scam",
+    "level": "red",
+    "scam_type": "electricity_cut",
+    "matched_rule_ids": [
+      "script.electricity_cut:बिजली काट दी जाएगी",
+      "script.electricity_cut:बिल अपडेट नहीं",
+      "script.electricity_cut:बिजली अधिकारी",
+      "script.electricity_cut:आज रात बिजली",
+      "script.electricity_cut",
+      "signal.urgency",
+      "link.present",
+      "link.look_alike",
+      "sender.mobile_10",
+      "sender.mobile_claims_brand",
+      "pattern.P5.red",
+      "pattern.P5"
+    ],
+    "masked_text": "सूचना: पिछले महीने का बिल अपडेट नहीं होने से आज रात बिजली काट दी जाएगी। तुरंत बिजली अधिकारी से संपर्क करें: <URL:bses-bill-desk.xyz>"
+  },
+  {
+    "id": "m_scam_10",
+    "sender": "+447911000102",
+    "body": "FedEx alert: your parcel has been seized by Mumbai Customs as drugs found inside. Pay customs duty to clear hold: rb.gy/fdx26",
+    "label": "scam",
+    "level": "red",
+    "scam_type": "parcel_customs",
+    "matched_rule_ids": [
+      "script.parcel_customs:your parcel has been seized",
+      "script.parcel_customs:customs duty",
+      "script.parcel_customs:drugs found",
+      "script.parcel_customs:pay customs",
+      "script.parcel_customs",
+      "link.present",
+      "link.shortener",
+      "sender.international",
+      "pattern.P5.red",
+      "pattern.P5"
+    ],
+    "masked_text": "FedEx alert: your parcel has been seized by Mumbai Customs as drugs found inside. Pay customs duty to clear hold: <URL:rb.gy>"
+  },
+  {
+    "id": "m_scam_11",
+    "sender": "9800000009",
+    "body": "India Post: aapka parcel ruka hua hai kyunki address incomplete hai. Redelivery fee bharne ke liye link kholein: indiapost-track.top/re",
+    "label": "scam",
+    "level": "red",
+    "scam_type": "parcel_customs",
+    "matched_rule_ids": [
+      "script.parcel_customs:parcel ruka hua hai",
+      "script.parcel_customs:address incomplete",
+      "script.parcel_customs:redelivery fee",
+      "script.parcel_customs",
+      "link.present",
+      "link.look_alike",
+      "sender.mobile_10",
+      "sender.mobile_claims_brand",
+      "pattern.P5.red",
+      "pattern.P5"
+    ],
+    "masked_text": "India Post: aapka parcel ruka hua hai kyunki address incomplete hai. Redelivery fee bharne ke liye link kholein: <URL:indiapost-track.top>"
+  },
+  {
+    "id": "m_scam_12",
+    "sender": "9800000010",
+    "body": "कस्टम विभाग: आपके नाम का पार्सल जब्त हुआ है, पार्सल में ड्रग्स मिले हैं। जांच के लिए कस्टम ड्यूटी तुरंत भरें: bit.ly/custm1",
+    "label": "scam",
+    "level": "red",
+    "scam_type": "parcel_customs",
+    "matched_rule_ids": [
+      "script.parcel_customs:पार्सल में ड्रग्स",
+      "script.parcel_customs:कस्टम ड्यूटी",
+      "script.parcel_customs:पार्सल जब्त",
+      "script.parcel_customs",
+      "signal.urgency",
+      "link.present",
+      "link.shortener",
+      "sender.mobile_10",
+      "sender.mobile_claims_brand",
+      "pattern.P5.red",
+      "pattern.P5"
+    ],
+    "masked_text": "कस्टम विभाग: आपके नाम का पार्सल जब्त हुआ है, पार्सल में ड्रग्स मिले हैं। जांच के लिए कस्टम ड्यूटी तुरंत भरें: <URL:bit.ly>"
+  },
+  {
+    "id": "m_scam_13",
+    "sender": "9800000011",
+    "body": "Congratulations you have won Rs 25,00,000 in KBC lucky draw! Claim your prize by paying a small processing fee at kbc-winner26.vip/claim",
+    "label": "scam",
+    "level": "red",
+    "scam_type": "lottery_prize",
+    "matched_rule_ids": [
+      "script.lottery_prize:congratulations you have won",
+      "script.lottery_prize:claim your prize",
+      "script.lottery_prize:processing fee",
+      "script.lottery_prize:lucky draw",
+      "script.lottery_prize:kbc",
+      "script.lottery_prize",
+      "link.present",
+      "sender.mobile_10",
+      "pattern.P5.yellow",
+      "pattern.P5"
+    ],
+    "masked_text": "Congratulations you have won Rs 25,00,000 in KBC lucky draw! Claim your prize by paying a small processing fee at <URL:kbc-winner26.vip>"
+  },
+  {
+    "id": "m_scam_14",
+    "sender": "9800000012",
+    "body": "Badhai ho! Kaun Banega Crorepati mein aapne jeeta hai 25 lakh ka inaam. Registration fee bharein aur lottery claim karein: is.gd/kbcwin",
+    "label": "scam",
+    "level": "red",
+    "scam_type": "lottery_prize",
+    "matched_rule_ids": [
+      "script.lottery_prize:registration fee bharein",
+      "script.lottery_prize:kaun banega crorepati",
+      "script.lottery_prize:aapne jeeta",
+      "script.lottery_prize:lottery",
+      "script.lottery_prize",
+      "link.present",
+      "link.shortener",
+      "sender.mobile_10",
+      "pattern.P5.yellow",
+      "pattern.P5"
+    ],
+    "masked_text": "Badhai ho! Kaun Banega Crorepati mein aapne jeeta hai 25 lakh ka inaam. Registration fee bharein aur lottery claim karein: <URL:is.gd>"
+  },
+  {
+    "id": "m_scam_15",
+    "sender": "9800000013",
+    "body": "बधाई हो! लकी ड्रा में आपने जीता है कौन बनेगा करोड़पति का बड़ा इनाम। लॉटरी राशि पाने के लिए अभी संपर्क करें: cutt.ly/inaam26",
+    "label": "scam",
+    "level": "red",
+    "scam_type": "lottery_prize",
+    "matched_rule_ids": [
+      "script.lottery_prize:कौन बनेगा करोड़पति",
+      "script.lottery_prize:आपने जीता",
+      "script.lottery_prize:लकी ड्रा",
+      "script.lottery_prize:लॉटरी",
+      "script.lottery_prize:इनाम",
+      "script.lottery_prize",
+      "signal.urgency",
+      "link.present",
+      "link.shortener",
+      "sender.mobile_10",
+      "pattern.P5.yellow",
+      "pattern.P5"
+    ],
+    "masked_text": "बधाई हो! लकी ड्रा में आपने जीता है कौन बनेगा करोड़पति का बड़ा इनाम। लॉटरी राशि पाने के लिए अभी संपर्क करें: <URL:cutt.ly>"
+  },
+  {
+    "id": "m_scam_16",
+    "sender": "9800000014",
+    "body": "Part time job work from home! Like YouTube videos for daily earning Rs 2000-5000. Complete prepaid task and deposit to withdraw: bit.ly/ytjob26",
+    "label": "scam",
+    "level": "red",
+    "scam_type": "job_task",
+    "matched_rule_ids": [
+      "script.job_task:like youtube videos",
+      "script.job_task:work from home",
+      "script.job_task:part time job",
+      "script.job_task:daily earning",
+      "script.job_task:prepaid task",
+      "script.job_task",
+      "link.present",
+      "link.shortener",
+      "sender.mobile_10",
+      "pattern.P5.yellow",
+      "pattern.P5"
+    ],
+    "masked_text": "Part time job work from home! Like YouTube videos for daily earning Rs <NUM>-<NUM>. Complete prepaid task and deposit to withdraw: <URL:bit.ly>"
+  },
+  {
+    "id": "m_scam_17",
+    "sender": "9800000015",
+    "body": "Ghar baithe kamaye roz 3000! Sirf hotel review task aur video like karke task complete karein. Join Telegram: rb.gy/task26",
+    "label": "scam",
+    "level": "red",
+    "scam_type": "job_task",
+    "matched_rule_ids": [
+      "script.job_task:ghar baithe kamaye",
+      "script.job_task:hotel review task",
+      "script.job_task",
+      "link.present",
+      "link.shortener",
+      "sender.mobile_10",
+      "pattern.P5.yellow",
+      "pattern.P5"
+    ],
+    "masked_text": "Ghar baithe kamaye roz <NUM>! Sirf hotel review task aur video like karke task complete karein. Join Telegram: <URL:rb.gy>"
+  },
+  {
+    "id": "m_scam_18",
+    "sender": "9800000016",
+    "body": "पार्ट टाइम जॉब: घर बैठे कमाएं रोज़ 4000 रुपये। वीडियो लाइक और टेलीग्राम टास्क पूरा करें, प्रीपेड टास्क में तुरंत फायदा: tinyurl.com/jobhi26",
+    "label": "scam",
+    "level": "red",
+    "scam_type": "job_task",
+    "matched_rule_ids": [
+      "script.job_task:पार्ट टाइम जॉब",
+      "script.job_task:घर बैठे कमाएं",
+      "script.job_task",
+      "signal.urgency",
+      "link.present",
+      "link.shortener",
+      "sender.mobile_10",
+      "pattern.P5.yellow",
+      "pattern.P5"
+    ],
+    "masked_text": "पार्ट टाइम जॉब: घर बैठे कमाएं रोज़ <NUM> रुपये। वीडियो लाइक और टेलीग्राम टास्क पूरा करें, प्रीपेड टास्क में तुरंत फायदा: <URL:tinyurl.com>"
+  },
+  {
+    "id": "m_scam_19",
+    "sender": "9800000017",
+    "body": "Maa this is my new number, my phone is damaged. I am in trouble in the hospital after a road mishap, please send money urgently!",
+    "label": "scam",
+    "level": "red",
+    "scam_type": "family_in_trouble",
+    "matched_rule_ids": [
+      "script.family_in_trouble:this is my new number",
+      "script.family_in_trouble:i am in trouble",
+      "script.family_in_trouble",
+      "signal.urgency",
+      "signal.money_ask",
+      "sender.mobile_10"
+    ],
+    "masked_text": "Maa this is my new number, my phone is damaged. I am in trouble in the hospital after a road mishap, please send money urgently!"
+  },
+  {
+    "id": "m_scam_20",
+    "sender": "9800000018",
+    "body": "Papa mera naya number hai, mera accident ho gaya hai aur police ne pakad liya hai. Kisi ko mat batana, urgent paise bhejo!",
+    "label": "scam",
+    "level": "red",
+    "scam_type": "family_in_trouble",
+    "matched_rule_ids": [
+      "script.family_in_trouble:mera naya number hai",
+      "script.family_in_trouble:police ne pakad liya",
+      "script.family_in_trouble:urgent paise bhejo",
+      "script.family_in_trouble:accident ho gaya",
+      "script.family_in_trouble",
+      "signal.urgency",
+      "signal.secrecy",
+      "signal.money_ask",
+      "sender.mobile_10"
+    ],
+    "masked_text": "Papa mera naya number hai, mera accident ho gaya hai aur police ne pakad liya hai. Kisi ko mat batana, urgent paise bhejo!"
+  },
+  {
+    "id": "m_scam_21",
+    "sender": "9800000019",
+    "body": "मम्मी मेरा नया नंबर सेव कर लो, अभी एक्सीडेंट हो गया और अस्पताल में भर्ती हूं। किसी को मत बताना, जल्दी पैसे भेजो!",
+    "label": "scam",
+    "level": "red",
+    "scam_type": "family_in_trouble",
+    "matched_rule_ids": [
+      "script.family_in_trouble:एक्सीडेंट हो गया",
+      "script.family_in_trouble:मेरा नया नंबर",
+      "script.family_in_trouble",
+      "signal.urgency",
+      "signal.secrecy",
+      "signal.money_ask",
+      "sender.mobile_10"
+    ],
+    "masked_text": "मम्मी मेरा नया नंबर सेव कर लो, अभी एक्सीडेंट हो गया और अस्पताल में भर्ती हूं। किसी को मत बताना, जल्दी पैसे भेजो!"
+  },
+  {
+    "id": "m_scam_22",
+    "sender": "9800000020",
+    "body": "Warm wedding invitation from Sharma family! Please download invitation app and install wedding card to see venue: http://sharma-wedding.top/invite.apk",
+    "label": "scam",
+    "level": "red",
+    "scam_type": "wedding_invite_apk",
+    "matched_rule_ids": [
+      "script.wedding_invite_apk:wedding invitation",
+      "script.wedding_invite_apk:wedding card",
+      "script.wedding_invite_apk",
+      "link.present",
+      "link.apk",
+      "sender.mobile_10",
+      "pattern.P5.yellow",
+      "pattern.P5"
+    ],
+    "masked_text": "Warm wedding invitation from Sharma family! Please download invitation app and install wedding card to see venue: <URL:sharma-wedding.top> [.apk]"
+  },
+  {
+    "id": "m_scam_23",
+    "sender": "9800000021",
+    "body": "Namaste ji, bhai ki shaadi ka card bheja hai. Photo aur address dekhne ke liye card install karein: http://shaadi-card.xyz/Nimantran.apk",
+    "label": "scam",
+    "level": "red",
+    "scam_type": "wedding_invite_apk",
+    "matched_rule_ids": [
+      "script.wedding_invite_apk:shaadi ka card",
+      "script.wedding_invite_apk",
+      "link.present",
+      "link.apk",
+      "sender.mobile_10",
+      "pattern.P5.yellow",
+      "pattern.P5"
+    ],
+    "masked_text": "Namaste ji, bhai ki shaadi ka card bheja hai. Photo aur address dekhne ke liye card install karein: <URL:shaadi-card.xyz> [.apk]"
+  },
+  {
+    "id": "m_scam_24",
+    "sender": "9800000022",
+    "body": "सादर निमंत्रण पत्र! शादी का कार्ड देखने के लिए कृपया शादी कार्ड ऐप और कार्ड डाउनलोड करें: http://vivah-card.icu/card.apk",
+    "label": "scam",
+    "level": "red",
+    "scam_type": "wedding_invite_apk",
+    "matched_rule_ids": [
+      "script.wedding_invite_apk:शादी का कार्ड",
+      "script.wedding_invite_apk:निमंत्रण पत्र",
+      "script.wedding_invite_apk",
+      "link.present",
+      "link.apk",
+      "sender.mobile_10",
+      "pattern.P5.yellow",
+      "pattern.P5"
+    ],
+    "masked_text": "सादर निमंत्रण पत्र! शादी का कार्ड देखने के लिए कृपया शादी कार्ड ऐप और कार्ड डाउनलोड करें: <URL:vivah-card.icu> [.apk]"
+  },
+  {
+    "id": "m_scam_25",
+    "sender": "9800000023",
+    "body": "Your Income Tax refund of Rs 14,850 is approved! Claim your refund and enter UPI PIN to receive money now: incometax-refund-in.top/go",
+    "label": "scam",
+    "level": "red",
+    "scam_type": "refund_cashback",
+    "matched_rule_ids": [
+      "script.refund_cashback:claim your refund",
+      "script.refund_cashback:income tax refund",
+      "script.refund_cashback",
+      "signal.money_ask",
+      "link.present",
+      "link.look_alike",
+      "sender.mobile_10",
+      "sender.mobile_claims_brand",
+      "pattern.P5.red",
+      "pattern.P5"
+    ],
+    "masked_text": "Your Income Tax refund of Rs 14,850 is approved! Claim your refund and enter UPI PIN to receive money now: <URL:incometax-refund-in.top>"
+  },
+  {
+    "id": "m_scam_26",
+    "sender": "9800000024",
+    "body": "PhonePe cashback paane ke liye QR scan karein aur refund ke liye PIN enter karein, turant Rs 2000 milenge: bit.ly/ppcb26",
+    "label": "scam",
+    "level": "red",
+    "scam_type": "refund_cashback",
+    "matched_rule_ids": [
+      "script.refund_cashback:cashback paane ke liye",
+      "script.refund_cashback:refund ke liye pin",
+      "script.refund_cashback",
+      "signal.urgency",
+      "link.present",
+      "link.shortener",
+      "sender.mobile_10",
+      "sender.mobile_claims_brand",
+      "pattern.P5.red",
+      "pattern.P5"
+    ],
+    "masked_text": "PhonePe cashback paane ke liye QR scan karein aur refund ke liye PIN enter karein, turant Rs <NUM> milenge: <URL:bit.ly>"
+  },
+  {
+    "id": "m_scam_27",
+    "sender": "9800000025",
+    "body": "बधाई! आपका जीएसटी और इनकम टैक्स रिफंड मंजूर हो गया है। कैशबैक पाएं, पैसे लेने के लिए पिन दर्ज करें: paytm-refund-claim.xyz/p",
+    "label": "scam",
+    "level": "red",
+    "scam_type": "refund_cashback",
+    "matched_rule_ids": [
+      "script.refund_cashback:कैशबैक",
+      "script.refund_cashback:रिफंड",
+      "script.refund_cashback",
+      "link.present",
+      "link.look_alike",
+      "sender.mobile_10",
+      "sender.mobile_claims_brand",
+      "pattern.P5.red",
+      "pattern.P5"
+    ],
+    "masked_text": "बधाई! आपका जीएसटी और इनकम टैक्स रिफंड मंजूर हो गया है। कैशबैक पाएं, पैसे लेने के लिए पिन दर्ज करें: <URL:paytm-refund-claim.xyz>"
+  },
+  {
+    "id": "m_scam_28",
+    "sender": "9800000026",
+    "body": "We recorded your private video call. Pay Rs 25000 immediately to delete your video or we will upload on YouTube and send to your contacts.",
+    "label": "scam",
+    "level": "red",
+    "scam_type": "sextortion_threat",
+    "matched_rule_ids": [
+      "script.sextortion_threat:send to your contacts",
+      "script.sextortion_threat:your private video",
+      "script.sextortion_threat",
+      "signal.urgency",
+      "sender.mobile_10"
+    ],
+    "masked_text": "We recorded your private video call. Pay Rs <NUM> immediately to delete your video or we will upload on YouTube and send to your contacts."
+  },
+  {
+    "id": "m_scam_29",
+    "sender": "9800000027",
+    "body": "Tumhara video mere paas hai. Video delete karne ke liye abhi paise bhejo warna video viral kar denge aur parivar ko bhej denge.",
+    "label": "scam",
+    "level": "red",
+    "scam_type": "sextortion_threat",
+    "matched_rule_ids": [
+      "script.sextortion_threat:video viral kar denge",
+      "script.sextortion_threat:tumhara video",
+      "script.sextortion_threat",
+      "signal.money_ask",
+      "sender.mobile_10"
+    ],
+    "masked_text": "Tumhara video mere paas hai. Video delete karne ke liye abhi paise bhejo warna video viral kar denge aur parivar ko bhej denge."
+  },
+  {
+    "id": "m_scam_30",
+    "sender": "9800000028",
+    "body": "आपका निजी वीडियो हमारे पास सुरक्षित है। तुरंत पैसे भेजो वरना वीडियो वायरल करके आपके परिवार को भेज देंगे और बदनाम कर देंगे।",
+    "label": "scam",
+    "level": "red",
+    "scam_type": "sextortion_threat",
+    "matched_rule_ids": [
+      "script.sextortion_threat:बदनाम कर देंगे",
+      "script.sextortion_threat:वीडियो वायरल",
+      "script.sextortion_threat",
+      "signal.urgency",
+      "signal.money_ask",
+      "sender.mobile_10"
+    ],
+    "masked_text": "आपका निजी वीडियो हमारे पास सुरक्षित है। तुरंत पैसे भेजो वरना वीडियो वायरल करके आपके परिवार को भेज देंगे और बदनाम कर देंगे।"
+  },
+  {
+    "id": "m_norm_01",
+    "sender": "AX-HDFCBK-S",
+    "body": "391847 is your OTP for HDFC Bank NetBanking login. Valid for 5 minutes. Do not share this OTP with anyone.",
+    "label": "normal",
+    "level": "green",
+    "scam_type": "unknown",
+    "matched_rule_ids": [
+      "sender.business_header",
+      "otp.present"
+    ],
+    "masked_text": "****** is your OTP for HDFC Bank NetBanking login. Valid for 5 minutes. Do not share this OTP with anyone."
+  },
+  {
+    "id": "m_norm_02",
+    "sender": "VM-SBIBNK-S",
+    "body": "OTP is 604219 for SBI YONO UPI transaction of Rs 850.00. Never share OTP with anyone including bank staff.",
+    "label": "normal",
+    "level": "green",
+    "scam_type": "unknown",
+    "matched_rule_ids": [
+      "sender.business_header",
+      "otp.present"
+    ],
+    "masked_text": "OTP is ****** for SBI YONO UPI transaction of Rs 850.00. Never share OTP with anyone including bank staff."
+  },
+  {
+    "id": "m_norm_03",
+    "sender": "JD-ICICIB-S",
+    "body": "728194 is your one time password for ICICI Bank debit card purchase of INR 1,499 at BigBasket. Do not share.",
+    "label": "normal",
+    "level": "green",
+    "scam_type": "unknown",
+    "matched_rule_ids": [
+      "sender.business_header",
+      "otp.present"
+    ],
+    "masked_text": "****** is your one time password for ICICI Bank debit card purchase of INR 1,499 at BigBasket. Do not share."
+  },
+  {
+    "id": "m_norm_04",
+    "sender": "AD-AXISBK-S",
+    "body": "482019 is your verification code for Axis Mobile login. For security reasons please do not share it.",
+    "label": "normal",
+    "level": "green",
+    "scam_type": "unknown",
+    "matched_rule_ids": [
+      "sender.business_header",
+      "otp.present"
+    ],
+    "masked_text": "****** is your verification code for Axis Mobile login. For security reasons please do not share it."
+  },
+  {
+    "id": "m_norm_05",
+    "sender": "BP-KOTAKB-S",
+    "body": "आपका कोटक बैंक लेनदेन का ओटीपी 519304 है। कृपया इसे किसी के साथ साझा न करें।",
+    "label": "normal",
+    "level": "green",
+    "scam_type": "unknown",
+    "matched_rule_ids": [
+      "sender.business_header",
+      "otp.present"
+    ],
+    "masked_text": "आपका कोटक बैंक लेनदेन का ओटीपी ****** है। कृपया इसे किसी के साथ साझा न करें।"
+  },
+  {
+    "id": "m_norm_06",
+    "sender": "JK-PNBSMS-S",
+    "body": "884120 is your PNB ATM PIN generation OTP. Do not share with anyone.",
+    "label": "normal",
+    "level": "green",
+    "scam_type": "unknown",
+    "matched_rule_ids": [
+      "sender.business_header",
+      "otp.present"
+    ],
+    "masked_text": "****** is your PNB ATM PIN generation OTP. Do not share with anyone."
+  },
+  {
+    "id": "m_norm_07",
+    "sender": "VM-SBIBNK-S",
+    "body": "Dear Customer, Rs 18,500.00 Pension credited to A/c XX4321 on 14-Nov-26. Available balance Rs 42,190.50.",
+    "label": "normal",
+    "level": "green",
+    "scam_type": "unknown",
+    "matched_rule_ids": [
+      "sender.business_header"
+    ],
+    "masked_text": "Dear Customer, Rs 18,500.00 Pension credited to A/c XX<NUM> on 14-Nov-26. Available balance Rs 42,190.50."
+  },
+  {
+    "id": "m_norm_08",
+    "sender": "AX-HDFCBK-S",
+    "body": "Rs 1,240.00 debited from HDFC Bank A/c XX8812 via UPI to GUPTA MEDICAL on 14-Nov-26. Not you? Call 18002026161.",
+    "label": "normal",
+    "level": "green",
+    "scam_type": "unknown",
+    "matched_rule_ids": [
+      "sender.business_header"
+    ],
+    "masked_text": "Rs 1,240.00 debited from HDFC Bank A/c XX<NUM> via UPI to GUPTA MEDICAL on 14-Nov-26. Not you? Call <NUM>."
+  },
+  {
+    "id": "m_norm_09",
+    "sender": "JD-ICICIB-S",
+    "body": "Your ICICI Bank monthly e-statement for Oct 2026 is available. Login safely at icicibank.com to view.",
+    "label": "normal",
+    "level": "green",
+    "scam_type": "unknown",
+    "matched_rule_ids": [
+      "link.present",
+      "sender.business_header"
+    ],
+    "masked_text": "Your ICICI Bank monthly e-statement for Oct <NUM> is available. Login safely at <URL:icicibank.com> to view."
+  },
+  {
+    "id": "m_norm_10",
+    "sender": "AD-AXISBK-S",
+    "body": "Thank you for your SIP payment of Rs 2,000.00 on 14-Nov-26. Track your folio at axisbank.com.",
+    "label": "normal",
+    "level": "green",
+    "scam_type": "unknown",
+    "matched_rule_ids": [
+      "link.present",
+      "sender.business_header"
+    ],
+    "masked_text": "Thank you for your SIP payment of Rs 2,000.00 on 14-Nov-26. Track your folio at <URL:axisbank.com>."
+  },
+  {
+    "id": "m_norm_11",
+    "sender": "VM-IPPBNK-S",
+    "body": "आपके इंडिया पोस्ट पेमेंट्स बैंक खाते में 3,000 रुपये जमा हुए हैं। किसी को ओटीपी या पिन न बताएं।",
+    "label": "normal",
+    "level": "green",
+    "scam_type": "unknown",
+    "matched_rule_ids": [
+      "sender.business_header"
+    ],
+    "masked_text": "आपके इंडिया पोस्ट पेमेंट्स बैंक खाते में 3,000 रुपये जमा हुए हैं। किसी को ओटीपी या पिन न बताएं।"
+  },
+  {
+    "id": "m_norm_12",
+    "sender": "AX-SBIYNO-S",
+    "body": "Your SBI Fixed Deposit XX9012 matures on 30-Nov-26 and will auto-renew as per your standing instruction.",
+    "label": "normal",
+    "level": "green",
+    "scam_type": "unknown",
+    "matched_rule_ids": [
+      "sender.business_header"
+    ],
+    "masked_text": "Your SBI Fixed Deposit XX<NUM> matures on 30-Nov-26 and will auto-renew as per your standing instruction."
+  },
+  {
+    "id": "m_norm_13",
+    "sender": "AD-BLUDRT-S",
+    "body": "Blue Dart: Your package AWB 882104512 is out for delivery today. Share delivery code 4192 only at doorstep.",
+    "label": "normal",
+    "level": "green",
+    "scam_type": "unknown",
+    "matched_rule_ids": [
+      "sender.business_header",
+      "otp.present"
+    ],
+    "masked_text": "Blue Dart: Your package AWB <NUM> is out for delivery today. Share delivery code ****** only at doorstep."
+  },
+  {
+    "id": "m_norm_14",
+    "sender": "BZ-DLHVRY-T",
+    "body": "Delhivery update: Your 1mg medicine order is arriving today before 6 PM. Track at delhivery.com/track",
+    "label": "normal",
+    "level": "green",
+    "scam_type": "unknown",
+    "matched_rule_ids": [
+      "link.present",
+      "sender.business_header"
+    ],
+    "masked_text": "Delhivery update: Your 1mg medicine order is arriving today before 6 PM. Track at <URL:delhivery.com>"
+  },
+  {
+    "id": "m_norm_15",
+    "sender": "JD-DTDCEX-S",
+    "body": "DTDC parcel delivered at reception and signed by security guard. Thank you for using dtdc.in.",
+    "label": "normal",
+    "level": "green",
+    "scam_type": "unknown",
+    "matched_rule_ids": [
+      "link.present",
+      "sender.business_header"
+    ],
+    "masked_text": "DTDC parcel delivered at reception and signed by security guard. Thank you for using <URL:dtdc.in>."
+  },
+  {
+    "id": "m_norm_16",
+    "sender": "IN-INDPST-S",
+    "body": "India Post Speed Post item ED123456IN dispatched from New Delhi sorting hub. Track at indiapost.gov.in.",
+    "label": "normal",
+    "level": "green",
+    "scam_type": "unknown",
+    "matched_rule_ids": [
+      "link.present",
+      "sender.business_header"
+    ],
+    "masked_text": "India Post Speed Post item ED<NUM>IN dispatched from New Delhi sorting hub. Track at <URL:indiapost.gov.in>."
+  },
+  {
+    "id": "m_norm_17",
+    "sender": "VK-BSESDL-T",
+    "body": "BSES Rajdhani: Your monthly electricity bill of Rs 1,680 is generated. Pay on bsesdelhi.com before 24-Nov.",
+    "label": "normal",
+    "level": "green",
+    "scam_type": "unknown",
+    "matched_rule_ids": [
+      "link.present",
+      "sender.business_header"
+    ],
+    "masked_text": "BSES Rajdhani: Your monthly electricity bill of Rs 1,680 is generated. Pay on <URL:bsesdelhi.com> before 24-Nov."
+  },
+  {
+    "id": "m_norm_18",
+    "sender": "QP-AIRTEL-S",
+    "body": "Airtel: Your prepaid plan recharged with Rs 299 successfully. Unlimited calls and 1.5GB/day active.",
+    "label": "normal",
+    "level": "green",
+    "scam_type": "unknown",
+    "matched_rule_ids": [
+      "sender.business_header"
+    ],
+    "masked_text": "Airtel: Your prepaid plan recharged with Rs 299 successfully. Unlimited calls and 1.5GB/day active."
+  },
+  {
+    "id": "m_norm_19",
+    "sender": "9800000101",
+    "body": "Maa main metro se utar gayi hoon, 15 minute mein ghar pahunch rahi hoon. Chai rakh dena.",
+    "label": "normal",
+    "level": "green",
+    "scam_type": "unknown",
+    "matched_rule_ids": [
+      "sender.mobile_10"
+    ],
+    "masked_text": "Maa main metro se utar gayi hoon, 15 minute mein ghar pahunch rahi hoon. Chai rakh dena."
+  },
+  {
+    "id": "m_norm_20",
+    "sender": "9800000102",
+    "body": "माँ, आज शाम को मैं सब्जी और फल लेकर आऊंगी। आप समय पर दवाई खा लेना।",
+    "label": "normal",
+    "level": "green",
+    "scam_type": "unknown",
+    "matched_rule_ids": [
+      "sender.mobile_10"
+    ],
+    "masked_text": "माँ, आज शाम को मैं सब्जी और फल लेकर आऊंगी। आप समय पर दवाई खा लेना।"
+  },
+  {
+    "id": "m_norm_21",
+    "sender": "9800000103",
+    "body": "Mom, Dr. Verma confirmed the clinic appointment for Tuesday 11 AM. I will drive you there.",
+    "label": "normal",
+    "level": "green",
+    "scam_type": "unknown",
+    "matched_rule_ids": [
+      "sender.mobile_10"
+    ],
+    "masked_text": "Mom, Dr. Verma confirmed the clinic appointment for Tuesday 11 AM. I will drive you there."
+  },
+  {
+    "id": "m_norm_22",
+    "sender": "9800000104",
+    "body": "Bua ji, didi ki shaadi 12 December ko Jaipur mein hai. Aapko aur chacha ji ko zaroor aana hai.",
+    "label": "normal",
+    "level": "green",
+    "scam_type": "unknown",
+    "matched_rule_ids": [
+      "sender.mobile_10"
+    ],
+    "masked_text": "Bua ji, didi ki shaadi 12 December ko Jaipur mein hai. Aapko aur chacha ji ko zaroor aana hai."
+  },
+  {
+    "id": "m_norm_23",
+    "sender": "9800000105",
+    "body": "Maa, Rohit reached Pune safely and called me just now. Will talk to you tonight.",
+    "label": "normal",
+    "level": "green",
+    "scam_type": "unknown",
+    "matched_rule_ids": [
+      "sender.mobile_10"
+    ],
+    "masked_text": "Maa, Rohit reached Pune safely and called me just now. Will talk to you tonight."
+  },
+  {
+    "id": "m_norm_24",
+    "sender": "9800000106",
+    "body": "आंटी जी, गुप्ता अंकल की दुकान से ताज़ा पनीर आ गया है, मैं शाम को भिजवा दूंगी।",
+    "label": "normal",
+    "level": "green",
+    "scam_type": "unknown",
+    "matched_rule_ids": [
+      "sender.mobile_10"
+    ],
+    "masked_text": "आंटी जी, गुप्ता अंकल की दुकान से ताज़ा पनीर आ गया है, मैं शाम को भिजवा दूंगी।"
+  },
+  {
+    "id": "m_norm_25",
+    "sender": "9800000201",
+    "body": "Happy Diwali to you and the entire family! Wishing you good health and peace.",
+    "label": "normal",
+    "level": "green",
+    "scam_type": "unknown",
+    "matched_rule_ids": [
+      "sender.mobile_10"
+    ],
+    "masked_text": "Happy Diwali to you and the entire family! Wishing you good health and peace."
+  },
+  {
+    "id": "m_norm_26",
+    "sender": "9800000202",
+    "body": "दीपावली की हार्दिक शुभकामनाएं! माँ लक्ष्मी आपके घर में सुख, शांति और स्वास्थ्य लाएं।",
+    "label": "normal",
+    "level": "green",
+    "scam_type": "unknown",
+    "matched_rule_ids": [
+      "sender.mobile_10"
+    ],
+    "masked_text": "दीपावली की हार्दिक शुभकामनाएं! माँ लक्ष्मी आपके घर में सुख, शांति और स्वास्थ्य लाएं।"
+  },
+  {
+    "id": "m_norm_27",
+    "sender": "9800000203",
+    "body": "Holi ki bahut bahut shubhkamnayein! Sab milkar shaam ko gujiya khane aayenge.",
+    "label": "normal",
+    "level": "green",
+    "scam_type": "unknown",
+    "matched_rule_ids": [
+      "sender.mobile_10"
+    ],
+    "masked_text": "Holi ki bahut bahut shubhkamnayein! Sab milkar shaam ko gujiya khane aayenge."
+  },
+  {
+    "id": "m_norm_28",
+    "sender": "9800000204",
+    "body": "Eid Mubarak! Duaon mein yaad rakhna, sham ko sewaiyan bhijwa raha hoon.",
+    "label": "normal",
+    "level": "green",
+    "scam_type": "unknown",
+    "matched_rule_ids": [
+      "sender.mobile_10"
+    ],
+    "masked_text": "Eid Mubarak! Duaon mein yaad rakhna, sham ko sewaiyan bhijwa raha hoon."
+  },
+  {
+    "id": "m_norm_29",
+    "sender": "9800000205",
+    "body": "Gurpurab di lakh lakh vadhaiyan ji! Satnam Waheguru.",
+    "label": "normal",
+    "level": "green",
+    "scam_type": "unknown",
+    "matched_rule_ids": [
+      "sender.mobile_10"
+    ],
+    "masked_text": "Gurpurab di lakh lakh vadhaiyan ji! Satnam Waheguru."
+  },
+  {
+    "id": "m_norm_30",
+    "sender": "9800000206",
+    "body": "सुप्रभात! आपका दिन शुभ और मंगलमय हो।",
+    "label": "normal",
+    "level": "green",
+    "scam_type": "unknown",
+    "matched_rule_ids": [
+      "sender.mobile_10"
+    ],
+    "masked_text": "सुप्रभात! आपका दिन शुभ और मंगलमय हो।"
+  }
+]

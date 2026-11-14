@@ -104,7 +104,8 @@ export async function handleShieldEvent(req: Request, deps: ShieldServerDeps): P
     // 5. respond
     return json(200, { ok: true, event_id: inserted.id });
   } catch (err) {
-    deps.log?.error("shield.event.failed", { error: err instanceof Error ? err.message : String(err) });
+    const code = typeof (err as { code?: unknown })?.code === "string" ? (err as { code: string }).code : undefined;
+    deps.log?.error("shield.event.failed", { error: err instanceof Error ? err.name : "unknown", ...(code ? { code } : {}) });
     return json(500, { error: "server_error" });
   }
 }

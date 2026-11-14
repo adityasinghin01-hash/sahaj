@@ -10,9 +10,9 @@ object Masker {
   const val MASK = "[num]"
   const val MAX_LEN = 2000 // ShieldEvent.masked_text max
 
-  private val digitGroup = Regex("""\p{Nd}(?:[\s\-.,/]*\p{Nd})*""")
+  private val digitGroup = Regex("""\p{Nd}(?:[\s\-.,/()]*\p{Nd})*""")
   private val digit = Regex("""\p{Nd}""")
-  private val longRun = Regex("""\p{Nd}{4,}""")
+  private val longRun = Regex("""\p{Nd}(?:[\s\-.,/()]{0,2}\p{Nd}){3,}""")
 
   fun mask(text: String): String {
     val masked = digitGroup.replace(text) { m ->

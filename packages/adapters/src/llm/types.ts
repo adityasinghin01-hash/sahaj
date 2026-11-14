@@ -5,6 +5,12 @@ export type ErrorKind = "invalid_json" | "validation" | "refusal" | "max_tokens"
   "timeout" | "rate_limit" | "connection" | "authentication" | "api" |
   "not_configured" | "unknown";
 
+export type TokenUsage = {
+  inputTokens?: number;
+  outputTokens?: number;
+  totalTokens?: number;
+};
+
 /** Contains metadata only: never prompts, responses, or provider error messages. */
 export type Attempt = {
   model: Model;
@@ -12,6 +18,7 @@ export type Attempt = {
   ms: number;
   ok: boolean;
   errorKind?: ErrorKind;
+  usage?: TokenUsage;
 };
 
 export type Result<T> =
@@ -35,7 +42,21 @@ export type ProviderRequest<T> = UnderstandRequest<T> & {
 };
 
 /** `parsed` is reserved for providers that already validated with req.schema. */
-export type ProviderOutput<T> = { kind: "text"; text: string } | { kind: "parsed"; data: T };
+export type ProviderOutput<T> = ({ kind: "text"; text: string } | { kind: "parsed"; data: T }) & {
+  usage?: TokenUsage;
+};
+
+const outputUsage = new WeakMap<object, TokenUsage>();
+
+export function attachUsage<T extends object>(output: T, usage: TokenUsage | undefined): T {
+  if (usage && Object.keys(usage).length > 0) outputUsage.set(output, usage);
+  return output;
+}
+
+export function readUsage<T>(output: ProviderOutput<T>): TokenUsage | undefined {
+  return output.usage ?? outputUsage.get(output);
+}
+
 export type Provider = <T>(req: ProviderRequest<T>) => Promise<ProviderOutput<T>>;
 
 export type TraceOptions = {

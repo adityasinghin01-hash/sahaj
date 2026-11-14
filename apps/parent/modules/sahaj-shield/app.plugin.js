@@ -77,7 +77,7 @@ function applyManifest(androidManifest) {
   });
 
   upsertByName(app.receiver, {
-    $: { 'android:name': `${PKG}.BootReceiver`, 'android:exported': 'true' },
+    $: { 'android:name': `${PKG}.BootReceiver`, 'android:exported': 'false' },
     'intent-filter': [
       {
         action: [

@@ -78,7 +78,7 @@ internal class ShieldRuntime private constructor(val app: Context) {
   /** Sends whatever is due now, then schedules itself for the next retry time. */
   fun kickSender() {
     worker.execute {
-      val r = runCatching { sender.drainDue() }.onFailure { Log.w(TAG, "drain failed", it) }.getOrNull()
+      val r = runCatching { sender.drainDue() }.onFailure { Log.w(TAG, "drain failed: ${it.javaClass.simpleName}") }.getOrNull()
       val next = r?.nextDueAtMs ?: return@execute
       synchronized(this) {
         scheduledDrain?.cancel(false)

@@ -10,8 +10,29 @@ export { isOtp, findOtpCodes } from "./otp";
 export { mask } from "./mask";
 export { scoreText, hasTopicWords } from "./score";
 export type { TextScore, RuleHit } from "./score";
-export { findPatterns, evaluatePatterns, checkP1, checkP5 } from "./patterns";
-export type { RuleEvent, RuleSmsEvent, RuleCallEvent, PatternHit, Timestamp } from "./patterns";
+export {
+  findPatterns,
+  evaluatePatterns,
+  evaluatePhase2Patterns,
+  checkP1,
+  checkP5,
+  checkP2Call,
+  checkP2Notification,
+  checkP3Notification,
+  checkP3Install,
+  checkP4Install,
+  checkP9,
+} from "./patterns";
+export type {
+  RuleEvent,
+  RuleSmsEvent,
+  RuleCallEvent,
+  RuleAppOpenEvent,
+  RuleNotificationEvent,
+  RuleInstallEvent,
+  PatternHit,
+  Timestamp,
+} from "./patterns";
 export { buildVerdict } from "./verdict";
 export type { VerdictInput, RuleVerdict } from "./verdict";
 
