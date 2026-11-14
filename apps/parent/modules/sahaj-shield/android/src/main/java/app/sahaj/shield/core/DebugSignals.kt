@@ -19,8 +19,8 @@ class DebugEvents(private val max: Int = 50, private val clock: () -> Long = Sys
 
 /** T4: what the CallRedirectionService logs about one outgoing call. The number itself is never included. */
 object RedirectionLog {
-  fun line(savedContact: Boolean?): String =
-    "T4 redirection seen · saved_contact=${yesNoUnknown(savedContact)} · placed unmodified"
+  fun line(savedContact: Boolean?, paused: Boolean = false): String =
+    "T4 redirection seen · saved_contact=${yesNoUnknown(savedContact)} · ${if (paused) "P8 paused" else "placed unmodified"}"
 }
 
 /**

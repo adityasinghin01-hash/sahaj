@@ -27,15 +27,29 @@ class CallStateTracker(private val clock: () -> Long = System::currentTimeMillis
   private var startedAtMs: Long? = null
   private var p1 = false
   private val listeners = java.util.concurrent.CopyOnWriteArrayList<Listener>()
+  private val changeListeners = java.util.concurrent.CopyOnWriteArrayList<(Snapshot) -> Unit>()
 
   fun addListener(l: Listener) { listeners.add(l) }
   fun removeListener(l: Listener) { listeners.remove(l) }
 
+  /** Phase 2 (P9): called after every call-state change with the new snapshot. */
+  fun addChangeListener(l: (Snapshot) -> Unit) { changeListeners.add(l) }
+
+  /**
+   * From the CallRedirectionService (P8/P9), just before an outgoing call starts. Uses the same
+   * "next call is saved / unsaved" slot as incoming screening, so P9 also covers calls she dials.
+   */
+  fun onOutgoingDialled(isSavedContact: Boolean) = onIncomingScreened(isSavedContact)
+
   /** From CallScreeningService, before the phone rings. */
-  fun onIncomingScreened(isSavedContact: Boolean) = synchronized(lock) {
-    lastScreenedUnsaved = !isSavedContact
-    lastScreenedAtMs = clock()
-    if (state != State.IDLE) unsaved = unsaved || !isSavedContact // call waiting
+  fun onIncomingScreened(isSavedContact: Boolean) {
+    val duringCall = synchronized(lock) {
+      lastScreenedUnsaved = !isSavedContact
+      lastScreenedAtMs = clock()
+      if (state != State.IDLE) unsaved = unsaved || !isSavedContact // call waiting
+      state != State.IDLE
+    }
+    if (duringCall) { val snap = snapshot(); changeListeners.forEach { runCatching { it(snap) } } }
   }
 
   fun onCallState(newState: State) {
@@ -65,6 +79,8 @@ class CallStateTracker(private val clock: () -> Long = System::currentTimeMillis
       state = newState
     }
     if (ended) listeners.forEach { it.onCallEnded(wasP1) }
+    val snap = snapshot()
+    changeListeners.forEach { runCatching { it(snap) } }
   }
 
   fun markP1() = synchronized(lock) { if (state != State.IDLE) p1 = true }

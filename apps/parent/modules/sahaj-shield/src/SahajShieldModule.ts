@@ -3,6 +3,8 @@ import { NativeModule, requireNativeModule } from 'expo';
 import type {
   CallRedirectionResult,
   SahajShieldModuleEvents,
+  ShieldFeature,
+  ShieldFeatures,
   ShieldPairing,
   ShieldStatus,
 } from './SahajShield.types';
@@ -10,7 +12,7 @@ import type {
 declare class SahajShieldModule extends NativeModule<SahajShieldModuleEvents> {
   getStatus(): ShieldStatus;
   requestSmsPermission(): Promise<boolean>;
-  /** READ_PHONE_STATE + READ_CONTACTS (+ POST_NOTIFICATIONS on Android 13+). */
+  /** READ_PHONE_STATE + READ_CONTACTS + CALL_PHONE (+ POST_NOTIFICATIONS on Android 13+). */
   requestPhonePermissions(): Promise<boolean>;
   requestCallScreeningRole(): Promise<boolean>;
   /** ROLE_CALL_REDIRECTION: opens the system role dialog (T4). */
@@ -31,6 +33,14 @@ declare class SahajShieldModule extends NativeModule<SahajShieldModuleEvents> {
   /** Opens the OEM autostart screen when known (Xiaomi/Oppo/Realme/Vivo/OnePlus), else app details. */
   openAutostartSettings(): string;
   setPairing(pairing: ShieldPairing): Promise<boolean>;
+  /** Phase 2 switches (persisted on the phone). */
+  getFeatures(): ShieldFeatures;
+  setFeature(name: ShieldFeature, on: boolean): ShieldFeatures;
+  setDemoScale(scale: number): ShieldFeatures;
+  /** Feeds fake signals through the same code path. "off" when the switch is off. */
+  simulateFeature(name: ShieldFeature): string;
+  /** Real installed-app scan now; resolves the number of NEW flags (0 when the switch is off). */
+  runInstalledAppScan(): Promise<number>;
   testRedScreen(): boolean;
 }
 

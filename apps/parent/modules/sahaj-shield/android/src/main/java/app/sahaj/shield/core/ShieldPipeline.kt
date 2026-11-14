@@ -15,6 +15,8 @@ class ShieldPipeline(
   private val identity: () -> EventIdentity?,
   private val kickSender: () -> Unit,
   private val onVerdict: (LocalVerdict) -> Unit = {},
+  /** Phase 2 (P8): every YELLOW/RED SMS, raw, in memory. Phase2Shield keeps only number hashes, and only if P8 is on. */
+  private val onFlagged: (SmsInput, LocalVerdict) -> Unit = { _, _ -> },
   private val newKey: () -> String = { java.util.UUID.randomUUID().toString() },
   private val clock: () -> Long = System::currentTimeMillis,
 ) {
@@ -33,6 +35,8 @@ class ShieldPipeline(
 
     // GREEN: stop here. Nothing is stored and nothing leaves the phone.
     if (verdict.level == LocalLevel.GREEN) return Outcome.GREEN_DROPPED
+
+    runCatching { onFlagged(input, verdict) }
 
     if (verdict.level == LocalLevel.RED) {
       if (ctx.onCallWithUnsaved && verdict.matchedRules.any { it in LocalVerdict.P1_RULE_IDS }) calls.markP1()

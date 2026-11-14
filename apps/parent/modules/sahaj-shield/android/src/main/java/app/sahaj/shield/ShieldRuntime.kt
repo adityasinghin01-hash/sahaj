@@ -1,8 +1,21 @@
 package app.sahaj.shield
 
+import android.Manifest
 import android.content.Context
+import android.content.Intent
 import android.content.pm.ApplicationInfo
+import android.content.pm.PackageManager
+import android.net.Uri
+import android.telecom.TelecomManager
 import android.util.Log
+import app.sahaj.shield.core.Cancellable
+import app.sahaj.shield.core.EventFactory
+import app.sahaj.shield.core.FeatureSwitches
+import app.sahaj.shield.core.FileFlaggedAppStore
+import app.sahaj.shield.core.FlaggedNumberStore
+import app.sahaj.shield.core.Phase2Shield
+import app.sahaj.shield.core.Scheduler
+import app.sahaj.shield.core.fromSignal
 import app.sahaj.shield.core.CallStateTracker
 import app.sahaj.shield.core.DebugEvents
 import app.sahaj.shield.core.EventSender
@@ -29,7 +42,7 @@ internal class ShieldRuntime private constructor(val app: Context) {
   val secure = SecureStore(app)
   val calls = CallStateTracker()
   val queue = FileEventQueue(File(app.noBackupFilesDir, "sahaj_shield/queue"))
-  val alerts = AlertController(app, { secure.load() })
+  val alerts = AlertController(app, { secure.load() }, { a, d -> registerPause(a, d) })
   val verdictListeners = CopyOnWriteArrayList<(LocalVerdict) -> Unit>()
 
   /** Single worker thread for SMS handling and sending, so ordering is simple. */
@@ -61,15 +74,92 @@ internal class ShieldRuntime private constructor(val app: Context) {
     identity = { secure.load()?.identity },
     kickSender = { kickSender() },
     onVerdict = { v -> verdictListeners.forEach { runCatching { it(v) } } },
+    onFlagged = { input, v -> phase2.onFlaggedSms(input, v) },
   )
 
   private val callMonitor = CallStateMonitor(app, calls)
+
+  // ---- Phase 2 (P8, P9, P2, P3, installed apps). All OFF until setFeature(id, true). ----
+  private val shieldDir = File(app.noBackupFilesDir, "sahaj_shield")
+  val features = FeatureSwitches(File(shieldDir, "features.properties"))
+
+  /** P9 polling and P2 timers. Separate from [worker] so a slow send never delays a poll. */
+  private val watchExecutor = Executors.newSingleThreadScheduledExecutor { r -> Thread(r, "sahaj-shield-watch").apply { isDaemon = true } }
+  private val scheduler = object : Scheduler {
+    override fun schedule(delayMs: Long, task: () -> Unit): Cancellable {
+      val f = watchExecutor.schedule({ runCatching(task).onFailure { Log.w(TAG, "timer failed", it) } }, delayMs, TimeUnit.MILLISECONDS)
+      return Cancellable { f.cancel(false) }
+    }
+    override fun every(periodMs: Long, task: () -> Unit): Cancellable {
+      val f = watchExecutor.scheduleWithFixedDelay({ runCatching(task).onFailure { Log.w(TAG, "poll failed", it) } }, 0, periodMs, TimeUnit.MILLISECONDS)
+      return Cancellable { f.cancel(false) }
+    }
+  }
+
+  val phase2 = Phase2Shield(
+    switches = features,
+    numbers = FlaggedNumberStore(File(shieldDir, "p8_numbers.txt")),
+    alerts = alerts,
+    events = { kind, rule, ctx -> enqueueSignal(kind, rule, ctx) },
+    scheduler = scheduler,
+    foreground = { since -> UsageAccess.foregroundPackagesSince(app, since) },
+    currentCall = { calls.snapshot() },
+    flaggedApps = FileFlaggedAppStore(File(shieldDir, "flagged_apps.txt")),
+    selfPackage = app.packageName,
+  )
+
+  /** P8 pause notifications (no overlay): token → callbacks, in memory only. */
+  private val pendingPauses = java.util.concurrent.ConcurrentHashMap<Int, Pair<() -> Unit, () -> Unit>>()
+  private val pauseTokens = java.util.concurrent.atomic.AtomicInteger(1)
 
   init {
     calls.addListener { wasP1 ->
       alerts.onCallEnded()
       if (wasP1) Notifications.postAfterCallQuestion(app)
     }
+    calls.addChangeListener { snap -> phase2.onCallState(snap) }
+  }
+
+  private fun registerPause(onCallAnyway: () -> Unit, onDontCall: () -> Unit): Int {
+    val t = pauseTokens.getAndIncrement()
+    pendingPauses.clear() // only the latest pause screen is live
+    pendingPauses[t] = onCallAnyway to onDontCall
+    return t
+  }
+
+  fun resolvePause(token: Int, callAnyway: Boolean) {
+    val p = pendingPauses.remove(token) ?: return
+    if (callAnyway) p.first() else p.second()
+  }
+
+  /**
+   * P8 [Phir bhi call karo]: re-place the same call, unmodified. With CALL_PHONE it is placed
+   * directly (TelecomManager.placeCall); without it the dialer opens with the number filled in.
+   * The redirection service lets it through once (allow-once).
+   */
+  fun replaceCall(number: String) {
+    val uri = Uri.fromParts("tel", number, null)
+    try {
+      if (app.checkSelfPermission(Manifest.permission.CALL_PHONE) == PackageManager.PERMISSION_GRANTED) {
+        app.getSystemService(TelecomManager::class.java)?.placeCall(uri, null)
+      } else {
+        app.startActivity(Intent(Intent.ACTION_DIAL, uri).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+      }
+    } catch (e: Exception) {
+      Log.w(TAG, "re-place failed: ${e.javaClass.simpleName}")
+    }
+  }
+
+  /** Phase 2 signal → masked event → queue. Not paired = nothing to send (the red screen already showed). */
+  private fun enqueueSignal(kind: String, ruleId: String, context: Map<String, Any>) {
+    val id = secure.load()?.identity ?: return
+    val now = System.currentTimeMillis()
+    val event = EventFactory.fromSignal(kind, ruleId, context, id, java.util.UUID.randomUUID().toString(), now)
+    worker.execute {
+      runCatching { queue.enqueue(event.idempotencyKey, event.toJson(), now) }.onFailure { Log.w(TAG, "enqueue failed", it) }
+      kickSender()
+    }
+    debugEvents.add("phase2 event · kind=$kind · rule=$ruleId")
   }
 
   /** Registers the call-state listener if READ_PHONE_STATE is granted. Safe to call repeatedly. */

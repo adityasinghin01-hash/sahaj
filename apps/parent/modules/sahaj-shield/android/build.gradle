@@ -34,6 +34,8 @@ android {
     unitTests.all {
       // The real-engine test reads the same rules.json that prebuild bundles as an asset.
       systemProperty 'sahaj.rulesJson', shieldRulesJson.absolutePath
+      // Phase 2 test: the <queries> list in the config plugin must match AppLists.REMOTE_CONTROL.
+      systemProperty 'sahaj.pluginJs', new File(projectDir, '../app.plugin.js').canonicalPath
       testLogging {
         events "passed", "failed", "skipped"
         exceptionFormat "full"
@@ -45,6 +47,8 @@ android {
 dependencies {
   // Same version as packages/shield-kotlin/build.gradle.kts (JsonRulesEngine parses rules.json with it).
   implementation 'org.jetbrains.kotlinx:kotlinx-serialization-json:1.6.3'
+  // Step 3.2: installed-app scan every 6 h.
+  implementation 'androidx.work:work-runtime:2.10.5'
   // JVM unit tests cover app.sahaj.shield.core and app.sahaj.shield.rules (no Android classes there).
   testImplementation 'junit:junit:4.13.2'
 }

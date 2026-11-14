@@ -7,12 +7,19 @@ import {
   Pressable,
   ScrollView,
   StyleSheet,
+  Switch,
   Text,
   TextInput,
   View,
 } from 'react-native';
 
-import SahajShield, { type LocalVerdictEvent, type ShieldStatus } from '../../modules/sahaj-shield';
+import SahajShield, {
+  SHIELD_FEATURES,
+  type LocalVerdictEvent,
+  type ShieldFeature,
+  type ShieldFeatures,
+  type ShieldStatus,
+} from '../../modules/sahaj-shield';
 
 const STATUS_ROWS: { key: keyof ShieldStatus; label: string }[] = [
   { key: 'sms', label: 'SMS (RECEIVE_SMS + READ_SMS)' },
@@ -25,8 +32,37 @@ const STATUS_ROWS: { key: keyof ShieldStatus; label: string }[] = [
   { key: 'usageAccess', label: 'Usage access (T5)' },
   { key: 'notificationAccess', label: 'Notification access (T6)' },
   { key: 'batteryOptimizationIgnored', label: 'Battery optimisation exempt' },
+  { key: 'callPhone', label: 'Call phone (P8 re-place)' },
   { key: 'paired', label: 'Paired' },
 ];
+
+const FEATURE_LABELS: Record<ShieldFeature, { title: string; test: string; simulate: string }> = {
+  p8_pause_call: {
+    title: 'P8 · Pause call to a number from a flagged SMS',
+    test: 'Needs T4 (call redirection role)',
+    simulate: 'Stores a fake flagged number and "dials" it: the pause screen shows. "Phir bhi call karo" only logs.',
+  },
+  p9_bank_app: {
+    title: 'P9 · Banking/UPI app during an unknown call',
+    test: 'Needs T5 (usage access)',
+    simulate: 'Fake unsaved call starts, PhonePe "opens", call ends: red screen + app_open event.',
+  },
+  p2_video_call: {
+    title: 'P2 · Long WhatsApp call with an unsaved contact',
+    test: 'Needs T6 (notification access)',
+    simulate: 'Starts a fake WhatsApp call timer: red screen + line 4 after 10 min ÷ demo scale.',
+  },
+  p3_apk: {
+    title: 'P3 · .apk file in WhatsApp',
+    test: 'Needs T6 (notification access)',
+    simulate: 'Fake WhatsApp notification "📄 shaadi_card.apk": red screen + line 5.',
+  },
+  installed_apps: {
+    title: 'P4/P3 · Remote-control or sideloaded apps',
+    test: 'Runs on app start + every 6 h',
+    simulate: 'Fake list with AnyDesk + an app sideloaded 1 h ago: red screen + 2 install events.',
+  },
+};
 
 function now(): string {
   return new Date().toTimeString().slice(0, 8);
@@ -59,6 +95,14 @@ export default function ShieldTestScreen() {
   const [deviceId, setDeviceId] = useState('');
   const [secret, setSecret] = useState('');
   const [childNumber, setChildNumber] = useState('');
+  const [features, setFeatures] = useState<ShieldFeatures | null>(() => {
+    if (Platform.OS !== 'android') return null;
+    try {
+      return SahajShield.getFeatures();
+    } catch {
+      return null;
+    }
+  });
 
   const write = useCallback((line: string) => {
     const entry = `${now()} ${line}`;
@@ -93,9 +137,9 @@ export default function ShieldTestScreen() {
   const showServiceLog = (prefix: string) => {
     try {
       const lines = SahajShield.getDebugEvents().filter((l) => l.includes(prefix));
-      write(`${prefix} service log: ${lines.length === 0 ? 'nothing yet' : `\n${lines.slice(0, 10).join('\n')}`}`);
+      write(`${prefix || 'all'} service log: ${lines.length === 0 ? 'nothing yet' : `\n${lines.slice(0, 10).join('\n')}`}`);
     } catch (e) {
-      write(`${prefix} service log ERROR: ${errText(e)}`);
+      write(`${prefix || 'all'} service log ERROR: ${errText(e)}`);
     }
   };
 
@@ -117,6 +161,32 @@ export default function ShieldTestScreen() {
       write(`${name} ERROR: ${errText(e)}`);
     }
     refresh();
+  };
+
+  const toggleFeature = (name: ShieldFeature, on: boolean) => {
+    try {
+      setFeatures(SahajShield.setFeature(name, on));
+      write(`setFeature ${name}=${on}`);
+    } catch (e) {
+      write(`setFeature ${name} ERROR: ${errText(e)}`);
+    }
+  };
+
+  const simulate = (name: ShieldFeature) => {
+    try {
+      write(`simulate ${name}: ${SahajShield.simulateFeature(name)}`);
+    } catch (e) {
+      write(`simulate ${name} ERROR: ${errText(e)}`);
+    }
+  };
+
+  const setScale = (scale: number) => {
+    try {
+      setFeatures(SahajShield.setDemoScale(scale));
+      write(`demoScale=${scale} (P2 fires after ${Math.round(600 / scale)} s)`);
+    } catch (e) {
+      write(`setDemoScale ERROR: ${errText(e)}`);
+    }
   };
 
   if (Platform.OS !== 'android') {
@@ -220,6 +290,33 @@ export default function ShieldTestScreen() {
       </Text>
       <Btn title="T6 Show notification log" onPress={() => showServiceLog('T6')} />
 
+      <Text style={styles.h2}>Phase 2 switches (all OFF until the phone test passes)</Text>
+      {SHIELD_FEATURES.map((name) => (
+        <View key={name} style={styles.feature}>
+          <View style={styles.row}>
+            <Text style={[styles.cell, styles.featureTitle]}>{FEATURE_LABELS[name].title}</Text>
+            <Switch value={features?.[name] ?? false} onValueChange={(on) => toggleFeature(name, on)} />
+          </View>
+          <Text style={styles.hint}>
+            {FEATURE_LABELS[name].test}. Simulate: {FEATURE_LABELS[name].simulate}
+          </Text>
+          <Btn title={`Simulate ${name}`} onPress={() => simulate(name)} />
+        </View>
+      ))}
+      <Text style={styles.small}>
+        Demo scale: {features?.demoScale ?? '?'} (P2 threshold {features ? Math.round(600 / features.demoScale) : '?'} s)
+      </Text>
+      <Btn title="Demo scale 20 (P2 after 30 s)" onPress={() => setScale(20)} />
+      <Btn title="Demo scale 1 (real 10 min)" onPress={() => setScale(1)} />
+      <Btn title="Run installed-app scan now" onPress={run('runInstalledAppScan', () => SahajShield.runInstalledAppScan())} />
+      <Btn title="Show Phase 2 log" onPress={() => showServiceLog('')} />
+      {status && (
+        <Text style={styles.small}>
+          P8 numbers kept {status.p8NumbersKept} · P9 polling {status.p9Polling ? 'yes' : 'no'} · P2 calls tracked{' '}
+          {status.p2CallsTracked}
+        </Text>
+      )}
+
       <Text style={styles.h2}>Staying alive</Text>
       <Btn title="Battery optimisation exemption" onPress={run('openBatteryOptimizationSettings', () => SahajShield.openBatteryOptimizationSettings())} />
       <Btn title="OEM autostart settings" onPress={run('openAutostartSettings', () => SahajShield.openAutostartSettings())} />
@@ -266,4 +363,6 @@ const styles = StyleSheet.create({
   btnText: { color: '#fff', fontSize: 18, textAlign: 'center' },
   input: { borderWidth: 1, borderColor: '#999', borderRadius: 6, padding: 10, fontSize: 16, marginVertical: 4 },
   logLine: { fontSize: 12, fontFamily: 'monospace', paddingVertical: 2 },
+  feature: { marginVertical: 6, paddingBottom: 6, borderBottomWidth: 1, borderColor: '#ddd' },
+  featureTitle: { flex: 1, fontWeight: 'bold', paddingRight: 8 },
 });
