@@ -154,6 +154,13 @@ export function createPhase2Service(opts: {
   warningsDeps: WarningsDeps;
   clock: { now(): Date };
   fallbackHandleScheduledJob: (name: string, payload: unknown) => Promise<unknown>;
+  /**
+   * Places the real check-in retry call (Sarvam outbound, purpose "checkin", with
+   * agent_variables family_id / parent_id / in_checkin_window=true / streak_id so the call-status
+   * webhook loops back into the busy watch). Absent or `placed:false` → dev_outbox, as before.
+   */
+  placeCheckinRetry?: (input: { familyId: string; parentId: string; streakId: string; jobId: string }) =>
+    Promise<{ placed: boolean }>;
 }) {
   const { store, busyDeps, warningsDeps, clock } = opts;
 
@@ -313,6 +320,20 @@ export function createPhase2Service(opts: {
       }
       if (streak.endedAt || streak.childRepliedAt) {
         return { job: BUSY_JOBS.retry, outcome: "already_resolved" as const };
+      }
+      if (opts.placeCheckinRetry) {
+        const placed = await opts.placeCheckinRetry({
+          familyId: streak.familyId, parentId: streak.parentId, streakId: streak.id, jobId,
+        });
+        if (placed.placed) {
+          await busyDeps.sign({
+            familyId: streak.familyId,
+            type: "shield.busy.retry_call_placed",
+            line: "Check-in retry call placed.",
+            data: { streak_id: streak.id, parent_id: streak.parentId, simulated: false },
+          });
+          return { job: BUSY_JOBS.retry, outcome: "call_placed" as const, streak_id: streak.id };
+        }
       }
       await store.recordBusyRetryOutbox({
         jobId,

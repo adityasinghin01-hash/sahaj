@@ -38,7 +38,29 @@ function currentContext(event: ShieldEvent): Record<string, unknown> {
   return ctx;
 }
 
+/**
+ * P8 (step 2.1) is decided on the phone: a call to a number from a flagged message was paused and
+ * Maa chose "Mat karo". The server only has to tell Riya, so this is a fixed yellow card.
+ */
+function pausedCallVerdict(event: ShieldEvent): RulesResult | null {
+  if (event.kind !== "call_out" || event.context.paused !== true) return null;
+  const p8 = RULES.patterns.P8 as { id: string; reason?: { hi?: string; en?: string } };
+  return {
+    verdict: Verdict.parse({
+      level: "yellow", scam_type: "unknown",
+      reasons: [{ rule_id: p8.id,
+        hi: p8.reason?.hi ?? "माँ ने चेतावनी वाले नंबर पर कॉल रोक दी",
+        en: p8.reason?.en ?? "Maa paused a call to a number from a flagged message" }],
+      checks_fired: [p8.id], ai_used: false, models_agreed: [], confidence: 0.9, actions: ["alert_child"],
+    }),
+    needs_ai: false,
+    links: [],
+  };
+}
+
 export function evaluateRules(event: ShieldEvent, recent: ShieldEvent[]): RulesResult {
+  const paused = pausedCallVerdict(event);
+  if (paused) return paused;
   // Only calls and SMS at/before this event are evidence. Earlier app_open / notification /
   // install events already got their own verdicts, so they must not re-fire on this one.
   const history = recent.filter(item => item.idempotency_key !== event.idempotency_key &&

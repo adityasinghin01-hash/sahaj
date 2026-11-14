@@ -94,3 +94,18 @@ describe("runtime rules bridge: Phase 2 live telemetry reaches the Phase 2 rules
     expect(v.checks_fired).toContain("pattern.P1");
   });
 });
+
+describe("P8 pause (step 2.1): Maa chose not to call a flagged number → Riya is told", () => {
+  it("paused call_out → yellow card with the P8 reason, no AI", () => {
+    const r = evaluateRules(ev({ kind: "call_out", caller_type: "mobile_10", context: { paused: true, user_choice: "did_not_call" } }), []);
+    expect(r.verdict.level).toBe("yellow");
+    expect(r.verdict.checks_fired).toContain("pattern.P8");
+    expect(r.verdict.reasons[0]?.rule_id).toBe("pattern.P8");
+    expect(r.needs_ai).toBe(false);
+  });
+
+  it("an ordinary outgoing call stays green", () => {
+    const r = evaluateRules(ev({ kind: "call_out", caller_type: "mobile_10", context: {} }), []);
+    expect(r.verdict.level).toBe("green");
+  });
+});
