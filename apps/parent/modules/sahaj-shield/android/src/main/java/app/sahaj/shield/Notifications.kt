@@ -15,6 +15,7 @@ internal object Notifications {
   const val ID_ONGOING = 7101
   const val ID_RED = 7102
   const val ID_AFTER_CALL = 7103
+  const val ID_CALL_PAUSE = 7104
 
   private const val CH_ONGOING = "sahaj_shield_ongoing"
   private const val CH_RED = "sahaj_shield_red"
@@ -87,6 +88,38 @@ internal object Notifications {
       .setContentIntent(openApp(ctx))
       .addAction(Notification.Action.Builder(null, childLabel, dial).build())
     ctx.getSystemService(NotificationManager::class.java)?.notify(ID_RED, b.build())
+  }
+
+  /**
+   * P8 fallback when the overlay permission is missing: line 3 with [Phir bhi call karo] / [Mat karo].
+   * The actions go to ShieldActionReceiver with only a [token]; the number stays in process memory.
+   */
+  @Suppress("DEPRECATION")
+  fun postCallPause(ctx: Context, title: String, text: String, token: Int) {
+    if (!canPost(ctx)) return
+    ensureChannels(ctx)
+    fun action(label: String, action: String, req: Int): Notification.Action {
+      val i = Intent(ctx, ShieldActionReceiver::class.java).setAction(action).putExtra(ShieldActionReceiver.EXTRA_TOKEN, token)
+      val pi = PendingIntent.getBroadcast(ctx, req, i, PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)
+      return Notification.Action.Builder(null, label, pi).build()
+    }
+    val b = builder(ctx, CH_RED)
+      .setSmallIcon(android.R.drawable.stat_sys_warning)
+      .setContentTitle(title)
+      .setContentText(text)
+      .setStyle(Notification.BigTextStyle().bigText(text))
+      .setCategory(Notification.CATEGORY_ALARM)
+      .setPriority(Notification.PRIORITY_MAX)
+      .setVibrate(AlertController.VIBRATION)
+      .setColor(0xFFC62828.toInt())
+      .setAutoCancel(true)
+      .addAction(action("Phir bhi call karo", ShieldActionReceiver.ACTION_CALL_ANYWAY, 11))
+      .addAction(action("Mat karo", ShieldActionReceiver.ACTION_DONT_CALL, 12))
+    ctx.getSystemService(NotificationManager::class.java)?.notify(ID_CALL_PAUSE, b.build())
+  }
+
+  fun cancel(ctx: Context, id: Int) {
+    ctx.getSystemService(NotificationManager::class.java)?.cancel(id)
   }
 
   /** After a P1 call ends: ask the parent what happened. Opens the app's after-call screen. */

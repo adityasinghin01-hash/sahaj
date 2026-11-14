@@ -24,6 +24,9 @@ const PERMISSIONS = [
   'android.permission.RECEIVE_BOOT_COMPLETED',
   'android.permission.VIBRATE',
   'android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS',
+  // P8: "Phir bhi call karo" re-places the paused call directly (TelecomManager.placeCall).
+  // Without it the dialer opens with the number filled in.
+  'android.permission.CALL_PHONE',
 ];
 
 // OEM autostart screens opened by KeepAlive.kt; <queries> makes them resolvable on Android 11+.
@@ -35,6 +38,26 @@ const AUTOSTART_PACKAGES = [
   'com.iqoo.secure',
   'com.oneplus.security',
 ];
+
+// Step 3.2 (P4): remote-control apps. Same list as AppLists.REMOTE_CONTROL in core/Phase2.kt
+// (a JVM test checks they match). <queries> makes them visible to getInstalledPackages on Android 11+.
+const REMOTE_CONTROL_PACKAGES = [
+  'com.anydesk.anydeskandroid', // AnyDesk
+  'com.teamviewer.quicksupport.market', // TeamViewer QuickSupport
+  'com.teamviewer.host.market', // TeamViewer Host
+  'com.teamviewer.teamviewer.market.mobile', // TeamViewer Remote Control
+  'com.carriez.flutter_hbb', // RustDesk
+  'com.sand.airdroid', // AirDroid
+  'com.sand.airdroidbiz', // AirDroid Business
+  'com.sand.airmirror', // AirMirror
+];
+
+// Step 3.2 (P3): apps installed outside the Play Store. Instead of QUERY_ALL_PACKAGES (Play-restricted)
+// we ask to see every app with a launcher icon, which covers a sideloaded .apk that she can open.
+const LAUNCHER_QUERY = {
+  action: [{ $: { 'android:name': 'android.intent.action.MAIN' } }],
+  category: [{ $: { 'android:name': 'android.intent.category.LAUNCHER' } }],
+};
 
 function upsertByName(list, item) {
   const name = item.$['android:name'];
@@ -57,6 +80,9 @@ function applyManifest(androidManifest) {
   const q = manifest.queries[0];
   q.package = q.package || [];
   for (const p of AUTOSTART_PACKAGES) upsertByName(q.package, { $: { 'android:name': p } });
+  for (const p of REMOTE_CONTROL_PACKAGES) upsertByName(q.package, { $: { 'android:name': p } });
+  q.intent = q.intent || [];
+  if (!q.intent.some((i) => JSON.stringify(i) === JSON.stringify(LAUNCHER_QUERY))) q.intent.push(LAUNCHER_QUERY);
 
   const app = AndroidConfig.Manifest.getMainApplicationOrThrow(androidManifest);
   app.receiver = app.receiver || [];
@@ -88,6 +114,11 @@ function applyManifest(androidManifest) {
     ],
   });
 
+  // P8 pause-notification actions (only used without the overlay permission). Not exported.
+  upsertByName(app.receiver, {
+    $: { 'android:name': `${PKG}.ShieldActionReceiver`, 'android:exported': 'false' },
+  });
+
   upsertByName(app.service, {
     $: {
       'android:name': `${PKG}.ShieldCallScreeningService`,
@@ -99,7 +130,7 @@ function applyManifest(androidManifest) {
     ],
   });
 
-  // T4: logging only. Always places the call unmodified (Phase 2 adds real behaviour).
+  // T4 logging + P8 (behind the p8_pause_call switch): pauses calls to numbers from flagged SMS.
   upsertByName(app.service, {
     $: {
       'android:name': `${PKG}.ShieldCallRedirectionService`,
@@ -111,7 +142,7 @@ function applyManifest(androidManifest) {
     ],
   });
 
-  // T6: logging only. Looks at WhatsApp / WhatsApp Business notifications, logs yes/no facts, never the text.
+  // T6 logging + P2/P3 (behind switches). WhatsApp / WhatsApp Business only; signals only, never the text.
   upsertByName(app.service, {
     $: {
       'android:name': `${PKG}.ShieldNotificationListener`,
@@ -178,3 +209,4 @@ module.exports = withSahajShield;
 module.exports.applyManifest = applyManifest;
 module.exports.copyRules = copyRules;
 module.exports.PERMISSIONS = PERMISSIONS;
+module.exports.REMOTE_CONTROL_PACKAGES = REMOTE_CONTROL_PACKAGES;

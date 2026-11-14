@@ -9,7 +9,7 @@ import android.os.Build
 import android.os.Process
 
 /**
- * T5 (Phase 1, test only). PACKAGE_USAGE_STATS is granted by the user in Settings → Usage access,
+ * T5 (Phase 1 test) and P9 (Phase 2). PACKAGE_USAGE_STATS is granted by the user in Settings → Usage access,
  * not by a runtime dialog. Only package names are read; nothing is stored or sent.
  */
 internal object UsageAccess {
@@ -46,6 +46,25 @@ internal object UsageAccess {
       }
     }
     return last
+  }
+
+  /**
+   * P9: every package that came to the foreground between [sinceMs] and now (oldest first).
+   * Empty if usage access is not granted. Package names only.
+   */
+  fun foregroundPackagesSince(context: Context, sinceMs: Long): List<String> {
+    if (!isGranted(context)) return emptyList()
+    val usm = context.getSystemService(Context.USAGE_STATS_SERVICE) as? UsageStatsManager ?: return emptyList()
+    val end = System.currentTimeMillis()
+    // A little overlap so an app opened right at the poll boundary is not missed.
+    val events = usm.queryEvents((sinceMs - 500).coerceAtLeast(end - 60_000), end) ?: return emptyList()
+    val e = UsageEvents.Event()
+    val out = mutableListOf<String>()
+    while (events.hasNextEvent()) {
+      events.getNextEvent(e)
+      if (isForeground(e.eventType)) e.packageName?.let { out += it }
+    }
+    return out
   }
 
   private fun isForeground(type: Int): Boolean =

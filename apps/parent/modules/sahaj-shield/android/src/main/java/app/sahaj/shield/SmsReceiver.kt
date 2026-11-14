@@ -57,4 +57,31 @@ internal object Contacts {
       null
     }
   }
+
+  /**
+   * P2: is a WhatsApp notification title the name of a saved contact? WhatsApp shows the saved name
+   * for saved contacts and the number (or "~ name") for others. null = cannot tell (no READ_CONTACTS).
+   * The title is used for this lookup only; it is never logged, stored or sent.
+   */
+  fun isSavedName(context: Context, title: String?): Boolean? {
+    val t = title?.trim().orEmpty()
+    if (t.isEmpty() || t.startsWith("~")) return false
+    if (PhoneNumbersCompat.digitCount(t) >= 7) return isSaved(context, t)
+    if (context.checkSelfPermission(Manifest.permission.READ_CONTACTS) != PackageManager.PERMISSION_GRANTED) return null
+    return try {
+      context.contentResolver.query(
+        ContactsContract.Contacts.CONTENT_URI,
+        arrayOf(ContactsContract.Contacts._ID),
+        "${ContactsContract.Contacts.DISPLAY_NAME} = ? COLLATE NOCASE",
+        arrayOf(t),
+        null,
+      )?.use { it.count > 0 } ?: false
+    } catch (e: Exception) {
+      null
+    }
+  }
+}
+
+private object PhoneNumbersCompat {
+  fun digitCount(s: String) = s.count { Character.isDigit(it) }
 }

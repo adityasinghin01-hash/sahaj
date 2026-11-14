@@ -33,6 +33,35 @@ export type ShieldStatus = {
   usageAccess: boolean;
   /** T6: Settings → Notification access. */
   notificationAccess: boolean;
+  /** P8: CALL_PHONE granted, so "Phir bhi call karo" re-places the call directly (else the dialer opens). */
+  callPhone: boolean;
+  /** P8: how many number hashes from flagged SMS are kept (24 h, on the phone only). */
+  p8NumbersKept: number;
+  /** P9: polling the foreground app right now (unsaved call active and switch on). */
+  p9Polling: boolean;
+  /** P2: WhatsApp call notifications with a running timer. */
+  p2CallsTracked: number;
+};
+
+/** Phase 2 features. All OFF by default; each one turns on after its phone test passes. */
+export type ShieldFeature =
+  | 'p8_pause_call'
+  | 'p9_bank_app'
+  | 'p2_video_call'
+  | 'p3_apk'
+  | 'installed_apps';
+
+export const SHIELD_FEATURES: readonly ShieldFeature[] = [
+  'p8_pause_call',
+  'p9_bank_app',
+  'p2_video_call',
+  'p3_apk',
+  'installed_apps',
+];
+
+export type ShieldFeatures = Record<ShieldFeature, boolean> & {
+  /** Divides the P2 10-minute threshold (20 → 30 s). 1 = real time. */
+  demoScale: number;
 };
 
 export type CallRedirectionResult =

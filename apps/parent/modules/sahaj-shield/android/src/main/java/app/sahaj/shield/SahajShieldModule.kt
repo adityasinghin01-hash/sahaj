@@ -11,6 +11,7 @@ import android.net.Uri
 import android.os.Build
 import android.provider.Settings
 import android.util.Log
+import app.sahaj.shield.core.Feature
 import app.sahaj.shield.core.LocalLevel
 import app.sahaj.shield.core.LocalVerdict
 import app.sahaj.shield.core.Pairing
@@ -69,6 +70,10 @@ class SahajShieldModule : Module() {
       rt.verdictListeners.add(verdictListener)
       rt.ensureCallMonitor()
       if (rt.isPaired()) ShieldForegroundService.startIfAllowed(context)
+      // Step 3.2: installed-app scan on app start + every 6 h (both do nothing while the switch is off).
+      InstalledApps.schedulePeriodic(context)
+      val app = context.applicationContext
+      rt.worker.execute { InstalledApps.scanNow(app) }
     }
 
     OnDestroy {
@@ -77,13 +82,29 @@ class SahajShieldModule : Module() {
 
     Function("getStatus") { status() }
 
+    // Non-sensitive display choices only. Device credentials remain in SecureStore.
+    Function("getUiPreferences") {
+      val prefs = context.getSharedPreferences("sahaj_ui", Context.MODE_PRIVATE)
+      mapOf("lang" to (prefs.getString("lang", "en") ?: "en"), "size" to (prefs.getString("size", "large") ?: "large"))
+    }
+    Function("setUiPreferences") { lang: String, size: String ->
+      if (lang !in setOf("en", "hi") || size !in setOf("large", "xlarge")) {
+        throw CodedException("E_BAD_PREFERENCE", "Unsupported display preference", null)
+      }
+      context.getSharedPreferences("sahaj_ui", Context.MODE_PRIVATE).edit()
+        .putString("lang", lang).putString("size", size).apply()
+    }
+
     AsyncFunction("requestSmsPermission") { promise: Promise ->
       ask(promise, Manifest.permission.RECEIVE_SMS, Manifest.permission.READ_SMS)
     }
 
-    /** READ_PHONE_STATE (call active/ended), READ_CONTACTS (saved contact?), POST_NOTIFICATIONS. */
+    /**
+     * READ_PHONE_STATE (call active/ended), READ_CONTACTS (saved contact?), CALL_PHONE (P8 re-places
+     * the call after "Phir bhi call karo"), POST_NOTIFICATIONS.
+     */
     AsyncFunction("requestPhonePermissions") { promise: Promise ->
-      val perms = mutableListOf(Manifest.permission.READ_PHONE_STATE, Manifest.permission.READ_CONTACTS)
+      val perms = mutableListOf(Manifest.permission.READ_PHONE_STATE, Manifest.permission.READ_CONTACTS, Manifest.permission.CALL_PHONE)
       if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) perms += Manifest.permission.POST_NOTIFICATIONS
       ask(promise, *perms.toTypedArray())
     }
@@ -173,6 +194,44 @@ class SahajShieldModule : Module() {
       true
     }
 
+    // ---- Phase 2 switches (all OFF by default, persisted) ----
+
+    /** { p8_pause_call, p9_bank_app, p2_video_call, p3_apk, installed_apps: boolean, demoScale: number } */
+    Function("getFeatures") { shield.features.snapshot() }
+
+    Function("setFeature") { name: String, on: Boolean ->
+      val f = Feature.byId(name) ?: throw CodedException("E_BAD_FEATURE", "Unknown feature: $name", null)
+      val rt = shield
+      rt.features.set(f, on)
+      Log.i(TEST_LOG_TAG, "feature ${f.id}=${on}")
+      if (f == Feature.INSTALLED_APPS && on) {
+        val app = context.applicationContext
+        rt.worker.execute { InstalledApps.scanNow(app) }
+      }
+      rt.features.snapshot()
+    }
+
+    /** Divides the P2 10-minute threshold (20 → 30 s). 1 = real time. */
+    Function("setDemoScale") { scale: Int ->
+      shield.features.setDemoScale(scale)
+      shield.features.snapshot()
+    }
+
+    /** Feeds fake signals through the same code path. Returns "off" when the switch is off. */
+    Function("simulateFeature") { name: String ->
+      val f = Feature.byId(name) ?: throw CodedException("E_BAD_FEATURE", "Unknown feature: $name", null)
+      val rt = shield
+      val r = rt.phase2.simulate(f) { line -> Log.i(TEST_LOG_TAG, line); rt.debugEvents.add(line) }
+      rt.debugEvents.add("simulate ${f.id} → $r")
+      r
+    }
+
+    /** Runs the real installed-app scan now. Returns the number of NEW flags (0 when the switch is off). */
+    AsyncFunction("runInstalledAppScan") { promise: Promise ->
+      val app = context.applicationContext
+      shield.worker.execute { promise.resolve(InstalledApps.scanNow(app)) }
+    }
+
     Function("testRedScreen") {
       val rt = shield
       rt.alerts.showRedScreen(
@@ -235,6 +294,10 @@ class SahajShieldModule : Module() {
       "rulesEngine" to rt.rulesEngineName,
       "usageAccess" to UsageAccess.isGranted(context),
       "notificationAccess" to notificationAccessGranted(),
+      "callPhone" to granted(Manifest.permission.CALL_PHONE),
+      "p8NumbersKept" to rt.phase2.numbers.size(System.currentTimeMillis()),
+      "p9Polling" to rt.phase2.bankApps.isPolling,
+      "p2CallsTracked" to rt.phase2.whatsAppCalls.trackedCount,
     )
   }
 

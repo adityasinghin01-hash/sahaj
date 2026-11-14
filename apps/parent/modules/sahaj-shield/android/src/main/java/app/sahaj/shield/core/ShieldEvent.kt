@@ -88,6 +88,49 @@ object EventFactory {
   }
 }
 
+/**
+ * Phase 2 signal events (call_out, app_open, notification, install). No masked_text and no sender:
+ * only the rule id, the level and a flat context of yes/no facts, package names and durations.
+ * Every string value is masked again, so a stray 4+ digit run can never leave the phone.
+ */
+fun EventFactory.fromSignal(
+  kind: String,
+  ruleId: String,
+  context: Map<String, Any>,
+  identity: EventIdentity,
+  idempotencyKey: String,
+  occurredAtMs: Long,
+  level: LocalLevel = LocalLevel.RED,
+): ShieldEvent {
+  require(kind in SIGNAL_KINDS) { "unsupported signal kind" }
+  val safe = linkedMapOf<String, Any>()
+  for ((k, v) in context) {
+    safe[Masker.mask(k).take(64)] = when (v) {
+      is Boolean, is Int, is Long -> v
+      is Number -> v.toDouble()
+      else -> Masker.mask(v.toString()).take(200)
+    }
+  }
+  return ShieldEvent(
+    idempotencyKey = idempotencyKey,
+    familyId = identity.familyId,
+    parentId = identity.parentId,
+    deviceId = identity.deviceId,
+    channel = "device",
+    kind = kind,
+    occurredAt = IsoTime.format(occurredAtMs),
+    maskedText = null,
+    senderType = null,
+    linkDomains = emptyList(),
+    matchedRules = listOf(Masker.mask(ruleId).take(64)),
+    localLevel = level.wire,
+    context = safe,
+  )
+}
+
+/** ShieldEventKind values (packages/shared/src/shield.ts) that Phase 2 sends. */
+val SIGNAL_KINDS = setOf("call_out", "app_open", "notification", "install")
+
 object IsoTime {
   /** UTC ISO-8601 with milliseconds, accepted by z.string().datetime(). */
   // SimpleDateFormat instead of java.time so it works below API 26 without desugaring.
