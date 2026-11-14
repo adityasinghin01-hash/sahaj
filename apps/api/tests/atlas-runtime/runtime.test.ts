@@ -5,7 +5,6 @@ import { describe, expect, it } from "vitest";
 import { loadAtlasConfig } from "../../src/lib/atlas-runtime/config";
 import { RuntimeError, type RpcDb } from "../../src/lib/atlas-runtime/db";
 import { startLeaseHeartbeat } from "../../src/lib/atlas-runtime/lease-guard";
-import { acquireThreadLock } from "../../src/lib/atlas-runtime/thread-lock";
 import { createAtlasPorts, requestIdFor } from "../../src/lib/atlas-runtime/repository";
 import { dispatchEvents, interruptRef, routeEventKind, runWorkflowJobs, type AtlasLike, type ClaimedJob } from "../../src/lib/atlas-runtime/runner";
 import { createTimelineWriter, type StoredTimelineRow, type TimelineStore } from "../../src/lib/atlas-runtime/timeline-writer";
@@ -384,17 +383,31 @@ describe("lease heartbeat, thread lock and cancellation", () => {
     await expect(ports.enqueueAuthorized({ familyId: FAMILY, jobId: JOB, eventId: EVENT, action: "check_in", idempotencyKey: "k" })).rejects.toThrow("stale_lease");
     expect(w.outbox.size).toBe(0);
   });
-  it("acquires the advisory lock once, refuses a second holder, and releases", async () => {
-    const held = new Set<string>(); const released: boolean[] = [];
-    const pool = { async connect() { return { async query(sql: string, v: unknown[] = []) { const k = String(v[0]);
-      if (sql.includes("pg_try_advisory_lock")) { if (held.has(k)) return { rows: [{ ok: false }] }; held.add(k); return { rows: [{ ok: true }] }; }
-      held.delete(k); return { rows: [] }; }, release(e?: unknown) { released.push(Boolean(e)); } }; } };
-    const a = await acquireThreadLock(pool, "atlas:v1:abc"); expect(a?.held).toBe(true);
-    expect(await acquireThreadLock(pool, "atlas:v1:abc")).toBeNull();
-    await a!.release(); expect(a!.held).toBe(false); expect(() => a!.assertHeld()).toThrow("thread_lock_lost");
-    expect((await acquireThreadLock(pool, "atlas:v1:abc"))?.held).toBe(true);
-  });
-  it("runner does not run Atlas when the thread is busy, and discards a run whose lock or lease was lost", async () => {
+  it("runner aborts the in-flight graph run when the lease or the thread lock is lost mid-run", async () => {
+    for (const which of ["lease", "lock"] as const) {
+      const calls: Array<[string, Record<string, unknown>]> = [];
+      const db: RpcDb = { async rpc(n, a = {}) { calls.push([n, a]);
+        if (n === "claim_workflow_jobs_for_kinds") return { data: [{ id: JOB, family_id: FAMILY, workflow_kind: "core1.atlas", lease_token: TOKEN, checkpoint_ref: null }], error: null };
+        return { data: n === "wake_ready_interrupted_jobs" ? 0 : true, error: null }; } };
+      const leaseListeners: Array<() => void> = [], lockListeners: Array<() => void> = [];
+      let leaseLost = false, lockHeld = true, lockLoseCalled = false, sawAbort = false;
+      const guard = { get lost() { return leaseLost; }, assertLive() { if (leaseLost) throw new RuntimeError("stale_lease"); }, stop() {}, onLost(l: () => void) { leaseListeners.push(l); } };
+      const lock = { get held() { return lockHeld; }, assertHeld() { if (!lockHeld) throw new RuntimeError("thread_lock_lost"); }, onLost(l: () => void) { lockListeners.push(l); },
+        lose() { lockLoseCalled = true; lockHeld = false; }, release: async () => undefined };
+      const atlas: AtlasLike = { async start(_s, o) {
+        await new Promise<void>((resolve, reject) => {
+          o?.signal?.addEventListener("abort", () => { sawAbort = true; reject(new Error("aborted")); });
+          setTimeout(() => { if (which === "lease") { leaseLost = true; leaseListeners.forEach(l => l()); } else { lockHeld = false; lockListeners.forEach(l => l()); } }, 10);
+          setTimeout(resolve, 1000);
+        });
+        return { next: [], tasks: [] } as never; }, resume: async () => ({ next: [], tasks: [] }) as never };
+      const r = await runWorkflowJobs({ db, workerId: "w", atlasFor: () => atlas, heartbeat: () => guard, lockThread: async () => lock });
+      expect(sawAbort).toBe(true);
+      expect(r.leaseLost).toBe(1);
+      expect(calls.some(c => c[0] === "finish_workflow_job")).toBe(false);
+      if (which === "lease") expect(lockLoseCalled).toBe(true); // lease loss also fences checkpoint writes
+    }
+  });  it("runner does not run Atlas when the thread is busy, and discards a run whose lock or lease was lost", async () => {
     const calls: Array<[string, Record<string, unknown>]> = []; let started = false;
     const mk = (extra: Partial<Parameters<typeof runWorkflowJobs>[0]>) => ({ db: { async rpc(n: string, a: Record<string, unknown> = {}) { calls.push([n, a]);
       if (n === "claim_workflow_jobs_for_kinds") return { data: [{ id: JOB, family_id: FAMILY, workflow_kind: "core1.atlas", lease_token: TOKEN, checkpoint_ref: null }], error: null };

@@ -59,12 +59,13 @@ export interface AtlasSnapshot {
   config?: { configurable?: { checkpoint_id?: string } };
   values?: { status?: string };
 }
-export interface AtlasLike { start(scope: { familyId: string; jobId: string }): Promise<AtlasSnapshot>; resume(scope: { familyId: string; jobId: string }): Promise<AtlasSnapshot> }
+type RunOptions = { signal?: AbortSignal };
+export interface AtlasLike { start(scope: { familyId: string; jobId: string }, options?: RunOptions): Promise<AtlasSnapshot>; resume(scope: { familyId: string; jobId: string }, options?: RunOptions): Promise<AtlasSnapshot> }
 export interface RunnerDeps {
   db: RpcDb;
   workerId: string;
-  /** Builds Atlas with ports bound to this job's lease and heartbeat guard. */
-  atlasFor(job: ClaimedJob, guard: LeaseGuard): AtlasLike;
+  /** Builds Atlas with ports bound to this job's lease and heartbeat guard, checkpointing through the thread lock's fence. */
+  atlasFor(job: ClaimedJob, guard: LeaseGuard, lock: ThreadLock | null): AtlasLike;
   /** Starts a lease heartbeat for the job. Omit only in tests. */
   heartbeat?(job: ClaimedJob): LeaseGuard;
   /** Durable cross-process thread exclusivity. Returns null when another process holds the thread. */
@@ -146,11 +147,17 @@ export async function runWorkflowJobs(deps: RunnerDeps) {
         lock = await deps.lockThread(job);
         if (!lock) throw new RuntimeError("thread_busy");
       }
-      const atlas = deps.atlasFor(job, guard);
+      // Losing either the lease or the thread lock cancels in-flight graph work and fences further checkpoint writes.
+      const controller = new AbortController();
+      const cancel = () => { controller.abort(); lock?.lose?.(); };
+      guard.onLost?.(cancel);
+      lock?.onLost?.(cancel);
+      const run = { signal: controller.signal };
+      const atlas = deps.atlasFor(job, guard, lock);
       const scope = { familyId: job.family_id, jobId: job.id };
-      let snap = job.checkpoint_ref ? await atlas.resume(scope) : await atlas.start(scope);
+      let snap = job.checkpoint_ref ? await atlas.resume(scope, run) : await atlas.start(scope, run);
       // A crash can leave a started thread mid-graph with no interrupt. start() returns it unchanged, so continue it.
-      if (!job.checkpoint_ref && snap.next.length && !interruptRef(snap)) snap = await atlas.resume(scope);
+      if (!job.checkpoint_ref && snap.next.length && !interruptRef(snap)) snap = await atlas.resume(scope, run);
       // Lease or thread lock lost during the run: the result must not be recorded by this worker.
       guard.assertLive();
       lock?.assertHeld();
@@ -163,7 +170,7 @@ export async function runWorkflowJobs(deps: RunnerDeps) {
       (await finish(db, job, "interrupted", ref.checkpoint, ref.interrupt, null)) ? summary.interrupted++ : summary.leaseLost++;
     } catch (error) {
       const code = error instanceof RuntimeError && /^[a-z0-9_]{1,80}$/.test(error.code) ? error.code : "atlas_failed";
-      if (code === "stale_lease" || guard.lost) { summary.leaseLost++; continue; }
+      if (code === "stale_lease" || code === "thread_lock_lost" || guard.lost || (lock && !lock.held)) { summary.leaseLost++; continue; }
       try { await finish(db, job, "failed", job.checkpoint_ref, null, code); } catch { /* lease expiry makes it claimable again */ }
       summary.failed++;
     } finally {

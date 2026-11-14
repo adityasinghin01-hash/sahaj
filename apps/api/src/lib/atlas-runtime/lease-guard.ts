@@ -4,6 +4,8 @@ import { call, RuntimeError, type JobLease, type RpcDb } from "./db";
 export interface LeaseGuard {
   assertLive(): void;
   readonly lost: boolean;
+  /** Called once when the lease is lost (used to abort the graph and the checkpoint fence). */
+  onLost?(listener: () => void): void;
   stop(): void;
 }
 
@@ -20,17 +22,20 @@ export function startLeaseHeartbeat(db: RpcDb, lease: JobLease, options: { inter
   const seconds = options.seconds ?? 120;
   const interval = options.intervalMs ?? Math.max(1000, Math.floor((seconds * 1000) / 3));
   let lost = false, stopped = false, busy = false;
+  const listeners: Array<() => void> = [];
+  const markLost = () => { if (lost) return; lost = true; for (const l of listeners.splice(0)) { try { l(); } catch { /* ignore */ } } };
   const timer = setInterval(() => {
     if (stopped || lost || busy) return;
     busy = true;
     call<boolean>(db, "renew_workflow_lease", { p_job_id: lease.jobId, p_lease_token: lease.token, p_lease_seconds: seconds }, "lease_check_failed")
-      .then(ok => { if (ok !== true) lost = true; }, () => { lost = true; })
+      .then(ok => { if (ok !== true) markLost(); }, () => markLost())
       .finally(() => { busy = false; });
   }, interval);
   (timer as { unref?: () => void }).unref?.();
   return {
     assertLive() { if (lost) throw new RuntimeError("stale_lease"); },
     get lost() { return lost; },
+    onLost(listener) { if (lost) listener(); else listeners.push(listener); },
     stop() { stopped = true; clearInterval(timer); },
   };
 }
