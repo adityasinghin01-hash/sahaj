@@ -98,7 +98,7 @@ describe("Health API Route Handlers", () => {
       code: "database_timeout"
     });
 
-    const res = await readinessRoute();
+    const res = await readinessRoute(new Request('http://localhost:3000/api/health/readiness'));
     expect(res.status).toBe(503);
     expect(res.headers.get("Cache-Control")).toBe("no-store");
 
