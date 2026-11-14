@@ -1,3 +1,6 @@
+import { LiveVoiceScreen } from '@/components/sahaj/core1-screens';
+import { LiveLoading } from '@/components/sahaj/live';
+import { useSession } from '@/lib/session';
 import { Icon } from '@/components/ui/icon';
 import { Card, Chip, Pop, Screen, T, Tap, TopBar, Waveform, palette } from '@/components/sahaj/ui';
 import { family, useDemo } from '@/lib/demo';
@@ -16,7 +19,7 @@ import Animated, {
 
 type Stage = 'idle' | 'recording' | 'sent' | 'delivered' | 'heard';
 
-export default function Voice() {
+function DemoVoice() {
   const demo = useDemo();
   const [stage, setStage] = React.useState<Stage>('idle');
   const [secs, setSecs] = React.useState(0);
@@ -166,4 +169,10 @@ function Step({
       </T>
     </View>
   );
+}
+
+export default function Voice() {
+  const { ready, session } = useSession();
+  if (!ready) return <LiveLoading />;
+  return session ? <LiveVoiceScreen /> : <DemoVoice />;
 }

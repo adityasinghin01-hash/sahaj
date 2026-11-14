@@ -40,6 +40,7 @@
       ],
       "expo-status-bar",
       "expo-font",
+      "expo-audio",
       [
         "expo-notifications",
         {

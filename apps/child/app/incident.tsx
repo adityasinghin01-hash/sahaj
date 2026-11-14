@@ -1,3 +1,6 @@
+import { LiveUrgentScreen } from '@/components/sahaj/core1-screens';
+import { LiveLoading } from '@/components/sahaj/live';
+import { useSession } from '@/lib/session';
 import { Icon } from '@/components/ui/icon';
 import {
   Btn,
@@ -23,7 +26,7 @@ const stateStyle: Record<ChainState, { ring: string; icon: typeof Check; iconCls
   waiting: { ring: 'bg-sand', icon: Clock3, iconCls: 'text-ink-muted' },
 };
 
-export default function Incident() {
+function DemoIncident() {
   return (
     <Screen>
       <TopBar title="Urgent call" right={<LiveDot color="bg-danger" />} />
@@ -137,4 +140,10 @@ export default function Incident() {
       </T>
     </Screen>
   );
+}
+
+export default function Incident() {
+  const { ready, session } = useSession();
+  if (!ready) return <LiveLoading />;
+  return session ? <LiveUrgentScreen /> : <DemoIncident />;
 }
