@@ -41,7 +41,7 @@ describe.skipIf(!url)('CheckpointFence on real PostgreSQL', () => {
     }
   }, 30_000);
 
-  it('parallel put/putWrites through one fence on real PostgreSQL: one failing write never commits or rolls back the other', async () => {
+  it('parallel put/putWrites through one fence on real PostgreSQL: a write that fails never takes the other writes with it (mid-transaction failures are covered by fenced.concurrency.test.ts)', async () => {
     const pool = new Pool({ connectionString: url!, max: 4 });
     const thread = `synthetic-fence-par-${Date.now()}`;
     try {

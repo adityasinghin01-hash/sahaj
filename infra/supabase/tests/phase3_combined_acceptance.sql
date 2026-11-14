@@ -6,6 +6,7 @@
 --    -> raw Sarvam no_answer callback -> Phase 2 record_delivery_proof -> Phase 3 observe_delivery = failed.
 -- 2. urgent_responder: two approvals -> enqueue bound to the offered responder -> Twilio dispatch -> raw Gather press ->
 --    Phase 2 record_responder_acceptance + accept_assignment_verified -> Phase 3 wake + observe_delivery = accepted.
+-- 4. Permission scope narrowed/reassigned after enqueue (targets, principal, person, action, amount, vendor, items) -> refused at claim.
 -- 3. Revocation between enqueue and claim: permission revoked, permission period ended, approver membership revoked ->
 --    claim_dispatch refused atomically (no ledger row, so no provider call is possible).
 begin;
@@ -163,6 +164,58 @@ begin
   exception when sqlstate '42501' then if sqlerrm not like 'dispatch_not_authorized:approval_no_longer_valid%' then raise; end if; end;
   select count(*) into n from public.dispatch_ledger where outbox_id=ob;
   if n<>0 then raise exception 'FAIL ledger row written after approver revocation'; end if;
+end$$;
+-- ---------------------------------------------------------------- 4. permission scope narrowed or reassigned after enqueue
+-- Each mutation is applied under the shared family lock (authz trigger) and must make claim_dispatch refuse with
+-- permission_scope_changed, inserting nothing. Restoring the scope lets the claim through, and the claim never charges usage.
+reset role;
+insert into public.atlas_principals(id,family_id,label,active) values('a7500000-0000-4000-8000-000000000002','b5000000-0000-4000-8000-000000000001','synthetic other',false);
+update public.permissions set revoked_at=null,period_end=now()+interval '1 day',max_amount_minor=1000,vendor_ids=array['v1'],item_ids=array['i1','i2']
+  where id='a4500000-0000-4000-8000-000000000001';
+-- A request with a non-zero amount, a vendor and items (inserted directly; the immutability trigger only guards updates).
+insert into public.action_requests(id,family_id,person_id,action,expires_at,target_id,workflow_job_id,principal_id,request_fingerprint,amount_minor,vendor_id,item_ids)
+  values('75000000-0000-4000-8000-000000000005','b5000000-0000-4000-8000-000000000001','c5000000-0000-4000-8000-000000000001','check_in',now()+interval '1 day',
+    'c5000000-0000-4000-8000-000000000001','d5000000-0000-4000-8000-000000000005','a7500000-0000-4000-8000-000000000001',repeat('a',64),500,'v1',array['i1']);
+set local role service_role;
+do $$declare fam uuid:='b5000000-0000-4000-8000-000000000001';s uuid:='c5000000-0000-4000-8000-000000000001';
+  rq uuid:='75000000-0000-4000-8000-000000000005';pid uuid:='a4500000-0000-4000-8000-000000000001';
+  res jsonb;ob uuid;cl uuid;lease uuid;n integer;used_before integer;used_after integer;
+  mutations text[]:=array[
+    'target_ids=''{}''',
+    'principal_id=''a7500000-0000-4000-8000-000000000002''',
+    'person_id=''c5000000-0000-4000-8000-000000000002''',
+    'action=''send_alert''',
+    'max_amount_minor=100',
+    'vendor_ids=array[''v2'']',
+    'item_ids=array[''i2'']'];
+  restore text:='target_ids=array[''c5000000-0000-4000-8000-000000000001''],principal_id=''a7500000-0000-4000-8000-000000000001'','
+    ||'person_id=''c5000000-0000-4000-8000-000000000001'',action=''check_in'',max_amount_minor=1000,vendor_ids=array[''v1''],item_ids=array[''i1'',''i2'']';
+  m text;
+begin
+  res:=public.enqueue_authorized_command(fam,'d5000000-0000-4000-8000-000000000005','95000000-0000-4000-8000-000000000005',rq,
+    'check_in','cmb-k5','ct',repeat('b',64),sahaj_private.authorization_revision(fam,rq));
+  if res->>'status'<>'enqueued' then raise exception 'FAIL scoped enqueue: %',res; end if;
+  ob:=(res->>'outbox_id')::uuid; select call_id into cl from public.dispatch_bindings where outbox_id=ob;
+  select o.lease_token into lease from public.claim_outbox('cmb-worker',100,120) o where o.id=ob;
+  if lease is null then raise exception 'FAIL scoped outbox not claimable'; end if;
+  select used_count into used_before from public.permissions where id=pid;
+  foreach m in array mutations loop
+    execute format('update public.permissions set %s where id=%L',m,pid);
+    begin
+      perform public.claim_dispatch(fam,s,'dispatch:'||ob||':a1','sarvam','sarvam.outbound_call',ob,lease,cl);
+      raise exception 'FAIL claim allowed after scope change: %',m;
+    exception when sqlstate '42501' then
+      if sqlerrm not like 'dispatch_not_authorized:permission_scope_changed%' then raise exception 'FAIL wrong refusal for %: %',m,sqlerrm; end if;
+    end;
+    if (public.recheck_dispatch_authorization(ob,lease))->>'reason'<>'permission_scope_changed' then raise exception 'FAIL recheck missed %',m; end if;
+    select count(*) into n from public.dispatch_ledger where outbox_id=ob;
+    if n<>0 then raise exception 'FAIL ledger row after scope change %',m; end if;
+    execute format('update public.permissions set %s where id=%L',restore,pid);
+  end loop;
+  -- Original scope restored: the queued send is authorized again, and the claim does not charge usage a second time.
+  if public.claim_dispatch(fam,s,'dispatch:'||ob||':a1','sarvam','sarvam.outbound_call',ob,lease,cl)<>'claimed' then raise exception 'FAIL claim with restored scope'; end if;
+  select used_count into used_after from public.permissions where id=pid;
+  if used_after<>used_before then raise exception 'FAIL claim charged usage again (% -> %)',used_before,used_after; end if;
 end$$;
 reset role;
 rollback;

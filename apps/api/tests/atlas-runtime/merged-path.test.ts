@@ -252,6 +252,12 @@ describe("SQL source contracts (static; the SQL itself runs only on scratch Post
     expect(sql).toMatch(/create trigger dispatch_ledger_authorize before insert on public\.dispatch_ledger/);
     expect(sql).toMatch(/if o\.action='urgent_responder' and sahaj_private\.outbox_acceptance\(o\.id\) then/);
   });
+  it("claim-time authorization rechecks the permission's current scope against the stored request, without rechecking usage", () => {
+    const fn = sql.slice(sql.indexOf("function sahaj_private.dispatch_authorization_problem"), sql.indexOf("function public.recheck_dispatch_authorization"));
+    for (const needle of ["q.principal_id is distinct from r.principal_id", "q.person_id<>r.person_id", "q.action<>r.action", "r.target_id=any(q.target_ids)",
+      "r.amount_minor>q.max_amount_minor", "r.vendor_id=any(q.vendor_ids)", "r.item_ids<@q.item_ids", "'permission_scope_changed'"]) expect(fn).toContain(needle);
+    expect(fn.split("\n").filter(l => !l.trim().startsWith("--")).join("\n")).not.toMatch(/used_count|max_uses/);
+  });
   const p2 = "infra/supabase/migrations/20261114201600_phase2_dispatch_recording.sql";
   it.skipIf(!existsSync(new URL(p2, repo)))("Phase 2 producers emit the fields Phase 3 consumes (after integration)", () => {
     const rec = read(p2);

@@ -126,6 +126,16 @@ begin
   select * into q from public.permissions p where p.id=o.permission_id and p.family_id=o.family_id;
   if q.id is null or q.decision<>'allow' or q.revoked_at is not null or not (p_at>=q.valid_from and p_at<q.expires_at
     and p_at>=q.period_start and p_at<q.period_end) then return 'permission_not_live'; end if;
+  -- The permission's CURRENT scope must still cover the immutable stored request. A permission narrowed or reassigned after
+  -- enqueue (other principal/person/action, target, vendor or item lists, amount cap) denies the queued send. Usage is NOT
+  -- rechecked: it was reserved once at enqueue (used_count already includes this command) and is never charged again here.
+  if q.principal_id is distinct from r.principal_id or q.person_id<>r.person_id or q.action<>r.action
+    or r.target_id is null or not (r.target_id=any(q.target_ids))
+    or r.amount_minor>q.max_amount_minor
+    or (r.vendor_id is not null and not (r.vendor_id=any(q.vendor_ids)))
+    or not (r.item_ids<@q.item_ids) then
+    return 'permission_scope_changed';
+  end if;
   if sahaj_private.permission_block(o.family_id,r.principal_id,r.person_id,r.action) is not null then return 'permission_blocked'; end if;
   if q.two_person_required or r.two_person_required then
     if exists(select 1 from public.action_answers a where a.family_id=o.family_id and a.action_request_id=r.id and not a.answer) then
