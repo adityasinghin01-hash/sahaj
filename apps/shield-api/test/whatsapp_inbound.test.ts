@@ -168,8 +168,8 @@ function liveHarness(options: { send?: boolean; noKeys?: boolean; fallback?: boo
     if (text.includes("openphish")) return new Response(options.failFeed ? "" : "https://phishing.example/a\n");
     if (text.includes("rdap.org")) return Response.json({ ldhName: "GOOGLE.COM" });
     if (text.endsWith("/api/health")) return Response.json({ ok: true, ports: { router: "real" } });
-    if (text.includes("/api/public/traces?")) return Response.json({ data: [{ id: "synthetic-trace" }] });
-    if (text.includes("/api/public/traces/")) return Response.json({ observations: [{ metadata: { task: options.staleTrace ? "unrelated-task" : runTask } }] });
+    // Langfuse retired GET /api/public/traces (410); the checker reads v2 observations with metadata.
+    if (text.includes("/api/public/v2/observations?")) return Response.json({ data: [{ id: "synthetic-observation", metadata: { task: options.staleTrace ? "unrelated-task" : runTask } }] });
     if (init.method === "POST") return options.failSend ? new Response("private provider failure", { status: 400 }) : Response.json({ messages: [{ id: "synthetic-message" }] });
     return Response.json({ id: "123" });
   }) as unknown as typeof fetch;
@@ -217,7 +217,11 @@ describe("opt-in live checker (fake providers and fetch only)", () => {
     expect(h.routerEnvs[1]?.ANTHROPIC_API_KEY).toBeUndefined();
     expect(h.trace.flush).toHaveBeenCalledOnce();
     expect(h.trace.shutdown).toHaveBeenCalledOnce();
-    expect(h.requests.find((r) => r.url.includes("/api/public/traces?"))?.url).toContain("limit=1");
+    const observations = h.requests.find((r) => r.url.includes("/api/public/v2/observations?"))?.url ?? "";
+    expect(observations).toContain("fields=core%2Cbasic%2Cmetadata");
+    expect(h.requests.some((r) => r.url.includes("/api/public/traces"))).toBe(false);
+    const rdap = h.requests.find((r) => r.url.includes("rdap.org"));
+    expect(new Headers(rdap?.init.headers).get("User-Agent")).toMatch(/^sahaj-shield\//);
     const text = h.lines.join("\n");
     for (const secret of [h.env.ANTHROPIC_API_KEY, h.env.MUSE_API_KEY, h.env.WHATSAPP_TOKEN, h.env.LAB_PHONE_ROHIT]) expect(text).not.toContain(secret);
   });
