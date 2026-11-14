@@ -264,7 +264,7 @@ export interface GatherStore {
   acceptFromGather(familyId: string, gatherProviderEventId: string): Promise<{ proofEventId: string; assignmentId: string } | null>;
 }
 export interface GatherResult extends GatewayResult { twiml?: string }
-const ACCEPTED_TWIML = `<?xml version="1.0" encoding="UTF-8"?><Response><Say language="hi-IN">???????? ???? ???????? ???? ?? ???</Say><Hangup/></Response>`;
+const ACCEPTED_TWIML = `<?xml version="1.0" encoding="UTF-8"?><Response><Say language="hi-IN">धन्यवाद। आपकी हाँ दर्ज हो गई है। परिवार को बता दिया है।</Say><Hangup/></Response>`;
 const NOT_ACCEPTED_TWIML = `<?xml version="1.0" encoding="UTF-8"?><Response><Hangup/></Response>`;
 
 /**
