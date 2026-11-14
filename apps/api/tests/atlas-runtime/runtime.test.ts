@@ -15,6 +15,7 @@ const FAMILY = "b3000000-0000-4000-8000-000000000001";
 const JOB = "d3000000-0000-4000-8000-000000000001";
 const PERSON = "c3000000-0000-4000-8000-000000000001";
 const EVENT = "e3000000-0000-4000-8000-000000000001";
+const PRINCIPAL = "a6000000-0000-4000-8000-000000000001";
 const TOKEN = "99000000-0000-4000-8000-000000000001";
 const OUTBOX = "a5000000-0000-4000-8000-000000000001";
 const lease = { familyId: FAMILY, jobId: JOB, token: TOKEN };
@@ -27,14 +28,14 @@ const text = (body: string, person = PERSON) => ({ person_id: person, account: "
 
 interface World {
   payload: unknown; metadataPerson: string; personActive: boolean; permission: Record<string, unknown> | null; requestStatus: string;
-  consumed: boolean; outbox: Map<string, string>; used: number; proof: 'none' | 'delivered'; leaseOk: boolean; calls: string[]; request: Record<string, unknown> | null;
+  consumed: boolean; principal: string | null; block: "deny" | "ask" | null; outbox: Map<string, string>; used: number; proof: 'none' | 'delivered'; leaseOk: boolean; calls: string[]; request: Record<string, unknown> | null;
   approvals: unknown[];
 }
 function world(over: Partial<World> = {}): World & { db: RpcDb } {
   const w: World = {
     payload: text("Check in"), metadataPerson: PERSON, personActive: true, requestStatus: "pending", consumed: false,
-    outbox: new Map(), used: 0, proof: "none", leaseOk: true, calls: [], request: null, approvals: [],
-    permission: { id: "a4000000-0000-4000-8000-000000000001", familyId: FAMILY, actorId: PERSON, action: "check_in",
+    principal: PRINCIPAL, block: null, outbox: new Map(), used: 0, proof: "none", leaseOk: true, calls: [], request: null, approvals: [],
+    permission: { id: "a4000000-0000-4000-8000-000000000001", familyId: FAMILY, actorId: PRINCIPAL, action: "check_in",
       validFrom: "2026-11-01T00:00:00Z", expiresAt: "2026-12-01T00:00:00Z", periodStart: "2026-11-14T00:00:00Z", periodEnd: "2026-11-15T00:00:00Z",
       maxUses: 1, usedCount: 0, maxAmountMinor: 0, vendorIds: [], itemIds: [], targetIds: [PERSON], approvalMode: "setup" },
     ...over,
@@ -45,12 +46,13 @@ function world(over: Partial<World> = {}): World & { db: RpcDb } {
       w.calls.push(name);
       switch (name) {
         case "load_atlas_job": return ok({ eventId: EVENT, source: "whatsapp", providerEventId: "p-1", eventType: "whatsapp.text",
-          metadataPersonId: w.metadataPerson, ciphertext: cipher(w.payload), personActive: w.personActive });
+          metadataPersonId: w.metadataPerson, ciphertext: cipher(w.payload), personActive: w.personActive, principalId: w.principal });
         case "ensure_action_request":
-          w.request = { id: a.p_request_id, familyId: FAMILY, action: a.p_action, actorId: a.p_person_id, amountMinor: 0, vendorId: null, itemIds: [],
-            consentSubjectId: null, targetId: a.p_target_id };
+          if (!w.principal) return ok(null);
+          w.request = { id: a.p_request_id, familyId: FAMILY, action: a.p_action, actorId: w.principal, personId: a.p_person_id, amountMinor: 0, vendorId: null, itemIds: [],
+            consentSubjectId: null, targetId: a.p_target_id, fingerprint: a.p_request_fingerprint };
           return ok(a.p_request_id);
-        case "load_gate_snapshot": return ok(!w.request ? { found: false } : { found: true, now: NOW, actorActive: true,
+        case "load_gate_snapshot": return ok(!w.request ? { found: false } : { found: true, now: NOW, actorActive: true, revision: "rev-1", block: w.block,
           request: { ...w.request, status: w.requestStatus, consumed: w.consumed, expired: false, hasDenial: false },
           permissions: w.permission ? [{ ...w.permission, usedCount: w.used }] : [], approvals: w.approvals, consents: [] });
         case "enqueue_authorized_command": {
@@ -267,5 +269,43 @@ describe("workflow runner", () => {
   it("fails jobs that pause without a known interrupt", async () => {
     const h = harness([claimed({ checkpoint_ref: "cp" })], { start: async () => snap({}), resume: async () => snap({ next: ["x"] }) });
     expect(await runWorkflowJobs(h.deps)).toMatchObject({ failed: 1 });
+  });
+});
+
+describe("principal, snapshot revision and overlapping decisions", () => {
+  it("pauses for review and creates nothing when the family has no active principal", async () => {
+    const w = world({ principal: null });
+    const s = await atlasFor(w).atlas.start({ familyId: FAMILY, jobId: JOB });
+    expect(s.values.status).toBe("review");
+    expect(w.request).toBeNull(); expect(w.calls).not.toContain("enqueue_authorized_command");
+  });
+  it("uses the principal, not the subject, as the Cedar actor", async () => {
+    const w = world(); (w.permission as Record<string, unknown>).actorId = PERSON; // permission granted to the subject instead
+    const s = await atlasFor(w).atlas.start({ familyId: FAMILY, jobId: JOB });
+    expect(s.values.status).toBe("review"); expect(w.outbox.size).toBe(0);
+  });
+  it("does not commit when a deny or ask row overlaps an allow", async () => {
+    for (const block of ["deny", "ask"] as const) {
+      const w = world({ block });
+      await atlasFor(w).atlas.start({ familyId: FAMILY, jobId: JOB });
+      expect(w.calls).not.toContain("enqueue_authorized_command"); expect(w.outbox.size).toBe(0);
+    }
+  });
+  it("sends the snapshot revision and a plaintext payload hash, and surfaces a stale snapshot as a failure", async () => {
+    const w = world(); const seen: Array<Record<string, unknown>> = []; const real = w.db.rpc.bind(w.db);
+    const spy: RpcDb = { async rpc(n, a = {}) { if (n === "enqueue_authorized_command") { seen.push(a); return { data: null, error: { code: "40001" } }; } return real(n, a); } };
+    const atlas = createAtlas(createAtlasPorts({ db: spy, lease, encryptionKeyHex: KEY, appendTimeline: async () => undefined }), new MemorySaver());
+    await expect(atlas.start({ familyId: FAMILY, jobId: JOB })).rejects.toThrow();
+    expect(seen[0]).toMatchObject({ p_revision: "rev-1", p_incident_id: null });
+    expect(String(seen[0].p_payload_hash)).toMatch(/^[0-9a-f]{64}$/);
+    expect(w.outbox.size).toBe(0);
+  });
+  it("rejects a stored request whose fingerprint no longer matches its fields", async () => {
+    const w = world(); const real = w.db.rpc.bind(w.db);
+    const tampered: RpcDb = { async rpc(n, a = {}) { const r = await real(n, a);
+      if (n === "load_gate_snapshot" && r.data) (r.data as { request: { amountMinor: number } }).request.amountMinor = 500; return r; } };
+    const atlas = createAtlas(createAtlasPorts({ db: tampered, lease, encryptionKeyHex: KEY, appendTimeline: async () => undefined }), new MemorySaver());
+    await expect(atlas.start({ familyId: FAMILY, jobId: JOB })).rejects.toThrow();
+    expect(w.outbox.size).toBe(0);
   });
 });
