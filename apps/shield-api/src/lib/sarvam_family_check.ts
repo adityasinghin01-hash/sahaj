@@ -26,6 +26,8 @@ export type ResponderAnswerResult = "recorded" | "no_responder_call" | "no_open_
 
 export interface SarvamFamilyCheckStore {
   recordResponderAnswer(input: ResponderAnswerInput): Promise<ResponderAnswerResult>;
+  /** The responder call row (dev_outbox id) WE placed for this check in this family, or null. */
+  findResponderReceipt?(familyId: string, checkId: string): Promise<string | null>;
 }
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -51,6 +53,14 @@ export function parseResponderAnswer(body: Record<string, unknown>): { checkId: 
 
 export function createPgSarvamFamilyCheckStore(sql: Sql): SarvamFamilyCheckStore {
   return {
+    async findResponderReceipt(familyId, checkId) {
+      if (!UUID_RE.test(familyId) || !UUID_RE.test(checkId)) return null;
+      const rows = await sql<{ id: string }[]>`
+        select id from public.dev_outbox
+        where dedupe_key=${`calls:responder:${checkId}`} and family_id=${familyId} and channel='calls'
+        order by created_at desc limit 1`;
+      return rows[0]?.id ?? null;
+    },
     async recordResponderAnswer({ familyId, personId, receiptId, checkId, answer, at }) {
       return sql.begin(async (tx) => {
         await tx`set local statement_timeout = '2s'`;
@@ -84,4 +94,19 @@ export function createPgSarvamFamilyCheckStore(sql: Sql): SarvamFamilyCheckStore
       }) as Promise<ResponderAnswerResult>;
     },
   };
+}
+
+/**
+ * In-call answer from the responder agent's `family_check_answer` tool (Sarvam has no "set variable" step, so the
+ * post-call `final_agent_variables.family_check_answer` path needs the agent to call this). Bearer + Sarvam IP checked by
+ * the caller. Trusts nothing but ids: the receipt is OUR responder call row for this check in this family, and the store
+ * still requires the check to be asked of exactly this person, open, and under 30 minutes old.
+ */
+export function parseFamilyCheckToolBody(body: Record<string, unknown>): { familyId: string; personId: string; checkId: string; answer: WhatsappAnswer } | null {
+  const src = { ...record(body.agent_variables), ...record(body.variables), ...record(body.input), ...body };
+  const familyId = src.family_id, personId = src.person_id, checkId = src.check_id ?? src.incident_id;
+  const answer = normalizeWhatsappReply(src.answer ?? src.family_check_answer);
+  if (typeof familyId !== "string" || !UUID_RE.test(familyId) || typeof personId !== "string" || !UUID_RE.test(personId)
+    || typeof checkId !== "string" || !UUID_RE.test(checkId) || !answer) return null;
+  return { familyId, personId, checkId, answer };
 }

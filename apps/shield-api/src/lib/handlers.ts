@@ -1,3 +1,4 @@
+import { parseFamilyCheckToolBody } from "./sarvam_family_check";
 import { z } from "zod";
 import { isShieldToolName, type ShieldToolName, type ToolCtx } from "@sahaj/shield";
 import { getPortsStatus } from "@/ports";
@@ -88,6 +89,25 @@ export function createEventHandler(getApp: () => ShieldApp) {
   };
 }
 
+const FAMILY_CHECK_LINES = {
+  recorded: "Shukriya, aapka jawab parivar ko bata diya hai.",
+  refused: "Maaf kijiye, yeh jawab abhi darj nahi ho paaya. Main aapko parivar se jod rahi hoon.",
+} as const;
+
+/** Responder agent tool: records the spoken haan/nahi for a Shield family check (see parseFamilyCheckToolBody). */
+async function familyCheckAnswerTool(app: ShieldApp, req: Request): Promise<Response> {
+  let body: unknown;
+  try { body = await req.json(); } catch { return Response.json({ error: "invalid_request" }, { status: 400 }); }
+  const input = isPlainObject(body) ? parseFamilyCheckToolBody(body) : null;
+  if (!input) return Response.json({ error: "invalid_request", line_hi: FAMILY_CHECK_LINES.refused, transfer: true }, { status: 400 });
+  const store = app.sarvamFamilyCheckStore;
+  const receiptId = store?.findResponderReceipt ? await store.findResponderReceipt(input.familyId, input.checkId) : null;
+  if (!store || !receiptId) return Response.json({ status: "no_responder_call", line_hi: FAMILY_CHECK_LINES.refused, transfer: true });
+  const result = await store.recordResponderAnswer({ ...input, receiptId, at: new Date() });
+  if (result !== "recorded") return Response.json({ status: result, line_hi: FAMILY_CHECK_LINES.refused, transfer: true });
+  return Response.json({ status: "recorded", answer: input.answer, line_hi: FAMILY_CHECK_LINES.recorded, transfer: false });
+}
+
 export function createSarvamToolHandler(getApp: () => ShieldApp) {
   return async function POST(
     req: Request,
@@ -98,6 +118,7 @@ export function createSarvamToolHandler(getApp: () => ShieldApp) {
       return Response.json({ error: "unauthorized" }, { status: 401 });
     }
     const { name } = await route.params;
+    if (name === "family_check_answer") return familyCheckAnswerTool(app, req);
     if (name === "call_screen" && app.env.CALL_GATEWAY_ENABLED !== "1") {
       return Response.json({ enabled: false }, { status: 404 });
     }

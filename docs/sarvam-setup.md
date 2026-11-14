@@ -118,7 +118,7 @@ Each prompt file's "Tools" table lists the same set with one line on when to cal
 | Madad (inbound keypad helper) | `madad.md` | `classify_scam`, `check_message`, `family_check`, `family_check_result`, `check_code_word`, `money_sent` | `raise_urgent`, `check_status`, `leave_message`, `cancel_permission`, `child_status` (speaks the `/api/core2/truth-line` status), `child_scam_check`, `any_phone_verify` |
 | Daily check-in | `checkin.md` (+ `drill_checkin.md` section 3) | `classify_scam`, `drill_answer` | `record_consent`, `reschedule`, `mark_private`, `medicine_count`, `save_free_time`, `raise_urgent` |
 | Daily check-in, hearing mode | `checkin_hearing.md` | `classify_scam` | `record_consent`, `reschedule`, `mark_private`, `medicine_count`, `save_free_time`, `raise_urgent` |
-| Responder | `responder.md` | none | `accept_incident`, `decline_incident` (enabled; the server proves the call) |
+| Responder | `responder.md` | `family_check_answer` (Shield: `POST <PUBLIC_URL>/api/sarvam/tool/family_check_answer`, body `family_id: @family_id`, `person_id: @person_id`, `check_id: @check_id`, `answer` = `haan`/`nahi` from the conversation; only when `@purpose` is `responder`) | `accept_incident`, `decline_incident` (enabled; the server proves the call; only when `@purpose` is `urgent_help`) |
 | Callback | `callback.md` | `classify_scam`, `money_sent` | `raise_urgent` |
 | Experience drill | `experience_drill.md` | `experience_turn` | none |
 | Call gateway screener | `call_gateway.md` | `call_screen` | none |
