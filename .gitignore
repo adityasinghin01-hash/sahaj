@@ -1,0 +1,14 @@
+node_modules/
+.cards/
+.env
+.env.*
+!.env.example
+*.log
+dist/
+.next/
+.expo/
+android/
+ios/
+!apps/parent/modules/**/android/
+.DS_Store
+coverage/
