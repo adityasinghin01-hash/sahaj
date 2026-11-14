@@ -22,7 +22,7 @@ begin
   perform 1 from public.people p where p.id=new.person_id and p.family_id=new.family_id for no key update;
   return new;
 end$$;
-revoke all on function sahaj_private.consents_before_insert() from public,anon,authenticated;
+revoke all on function sahaj_private.consents_before_insert() from public,anon,authenticated,service_role;
 create trigger consents_serialize before insert on public.consents for each row execute function sahaj_private.consents_before_insert();
 
 -- Effective call_recording consent for one call: the newest row among that call's rows and global refusals;
@@ -36,7 +36,7 @@ returns uuid language sql stable security definer set search_path='' as $$
     order by x.created_at desc,x.answer asc limit 1
   ) r where r.answer is true and length(r.version)>0
 $$;
-revoke all on function sahaj_private.call_recording_consent(uuid,uuid,uuid) from public,anon,authenticated;
+revoke all on function sahaj_private.call_recording_consent(uuid,uuid,uuid) from public,anon,authenticated,service_role;
 
 ------------------------------------------------------------------ proof marker on raw_events
 -- Only the proof-writer functions below may create normalized proof. Provider callbacks stay raw.
@@ -53,7 +53,7 @@ begin
   end if;
   return new;
 end$$;
-revoke all on function sahaj_private.guard_normalized_proof() from public,anon,authenticated;
+revoke all on function sahaj_private.guard_normalized_proof() from public,anon,authenticated,service_role;
 create trigger raw_events_guard_proof before insert or update on public.raw_events for each row execute function sahaj_private.guard_normalized_proof();
 
 ------------------------------------------------------------------ ledger and immutable bindings
@@ -192,6 +192,7 @@ begin
 end$$;
 
 -- Link the provider reference to the call and, for Sarvam, bind the attempt identity that the webhook gateway matches.
+-- Internal: execute is granted to nobody; the definer functions below call it as owner.
 create function sahaj_private.bind_dispatch(p_l public.dispatch_ledger,p_provider_ref text,p_account_id text,
   p_identity_hash text,p_ai_disclosed boolean) returns void language plpgsql security definer set search_path='' as $$
 declare c public.calls;
@@ -420,7 +421,7 @@ begin
   return jsonb_build_object('incident_id',i.id,'assignment_id',a.id,'responder_person_id',a.person_id,'person_id',i.person_id,
     'call_id',c.id,'outbox_id',o.id,'action_request_id',ar.id,'action','urgent_responder');
 end$$;
-revoke all on function sahaj_private.derive_responder_binding(uuid,uuid) from public,anon,authenticated;
+revoke all on function sahaj_private.derive_responder_binding(uuid,uuid) from public,anon,authenticated,service_role;
 
 -- Turn one verified Twilio Gather callback (raw event 'twilio.gather.response', digit 1, ingested after signature
 -- verification) into the normalized `responder.accepted` proof. Idempotent: replays return the same proof.
@@ -587,7 +588,6 @@ end$$;
 ------------------------------------------------------------------ grants
 revoke all on function public.bind_outbox_dispatch(uuid,uuid,uuid,text,text,uuid,uuid,uuid),
   public.claim_dispatch(uuid,uuid,text,text,text,uuid,uuid,uuid),
-  sahaj_private.bind_dispatch(public.dispatch_ledger,text,text,text,boolean),
   public.complete_dispatch(uuid,text,text,text,text,boolean),public.bind_dispatch_identity(uuid,text,text,text,boolean),
   public.mark_dispatch_failed(uuid,text,text),public.mark_dispatch_unknown(uuid,text,text,text),
   public.sweep_stale_dispatch_claims(integer),public.record_delivery_proof(uuid,uuid,text),
@@ -596,6 +596,7 @@ revoke all on function public.bind_outbox_dispatch(uuid,uuid,uuid,text,text,uuid
   public.get_call_recording_slot(uuid,uuid,text),public.put_call_recording(uuid,uuid,uuid,text,timestamptz,text),
   public.list_recording_purge_candidates(integer,timestamptz),public.finish_recording_purge(uuid,uuid,text,timestamptz)
   from public,anon,authenticated;
+revoke all on function sahaj_private.bind_dispatch(public.dispatch_ledger,text,text,text,boolean) from public,anon,authenticated,service_role;
 grant execute on function public.bind_outbox_dispatch(uuid,uuid,uuid,text,text,uuid,uuid,uuid),
   public.claim_dispatch(uuid,uuid,text,text,text,uuid,uuid,uuid),
   public.complete_dispatch(uuid,text,text,text,text,boolean),public.bind_dispatch_identity(uuid,text,text,text,boolean),

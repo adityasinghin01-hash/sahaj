@@ -31,16 +31,21 @@ AI calls and synthetic speech always start with the AI disclosure (`AI_DISCLOSUR
 
 Verified against provider docs on 2026-11 (see links in `KIRO-HANDOFF.md`): Sarvam create-outbound, outbound and inbound webhook payloads, analytics recording endpoint; Twilio request signing (HMAC-SHA1, sorted params); Meta `X-Hub-Signature-256`; TeleCMI missed-call webhook and `/v2/missed` pull. Not verified: the WhatsApp media download host list (`DEFAULT_MEDIA_HOSTS`) and the current Graph API version (`graphVersion` is required config). Sarvam's `failure_reason` and TeleCMI auth failure (HTTP 404) follow the docs as written.
 
-## Open assumptions (not confirmed against current provider documentation)
+## Provider facts checked against official docs (2026-11-14, public pages fetched)
 
-Web access was denied in the Phase 2 session, so none of these were re-checked. Each needs a check against the provider's current docs, or a sandbox call by Codex, before live use.
+- **Twilio recording media** (twilio.com/docs/voice/api/recording): `GET https://api.twilio.com/2010-04-01/Accounts/{AccountSid}/Recordings/{Sid}.wav` (or `.mp3`); omitting the extension or using `.wav` returns binary WAV with MIME type `audio/x-wav`. The media is only available when the recording is `completed` and stored at Twilio; otherwise the request returns Not Found. HTTP Basic auth is required for media URLs and the page names an API key SID and secret. `RecordingStatus` is `in-progress`, `completed` or `absent`. Used by `fetchTwilioRecording`.
+- **Twilio Gather** (twiml/gather): digits are posted to the `action` URL as `Digits`; `finishOnKey` defaults to `#`; the caller can do nothing and the request then carries no digits.
+- **Twilio signatures** (usage/webhooks/webhooks-security): HMAC-SHA1 over the full URL plus sorted parameters, keyed by the auth token, sent as `X-Twilio-Signature`; Twilio may add parameters without notice. The verifier signs the configured exact URL.
+- **Sarvam analytics** (docs.sarvam.ai/voice-agents/api/analytics): base `https://apps.sarvam.ai/api/analytics/v1/{org_id}/{workspace_id}/{app_id}`, header `X-API-Key`. Get recording `GET .../recordings/{interaction_id}` (`YYYYMMDD/id`, slash literal or `%2F`) returns `audio/wav`; 404 if the interaction has no recording. List attempts `GET .../attempts` requires `start_datetime` and `end_datetime`, takes `limit` 1-1000, `offset`, `sort_by`, `sort_order`; the official example items carry `attempt_id` and `interaction_id`, and also the user's unmasked contact (never read or kept). Used by `getSarvamRecording` and `verifySarvamAttemptInteraction`.
 
-1. **Twilio recording media** (`fetchTwilioRecording`): `GET https://api.twilio.com/2010-04-01/Accounts/{AC}/Recordings/{RE}.wav` with HTTP Basic auth is assumed to return the audio directly with an `audio/x-wav` or `audio/wav` type. If Twilio answers with a redirect to a CDN, the shared HTTP helper rejects it (`provider_rejected`, status 3xx) and retrieval fails closed. Following redirects would need an allowlist of exact hosts and dropping the `Authorization` header on the second hop.
-2. **Twilio recording callback timing**: a `completed` callback is assumed to mean the media can be fetched. A 404 is treated as "not ready yet" and retried.
-3. **Twilio Gather/DTMF acceptance**: no route exists. The event type `twilio.gather.accepted` is a contract name chosen in this repo, not a Twilio name.
-4. **Sarvam webhooks carry no signature** (already assumed by the existing parsers). `attempt_id` plus `app_id` against a stored binding is the only identity check, so the binding row written by `complete_dispatch` is security relevant.
-5. **Sarvam outbound response** is assumed to include `attempt_id` on 2xx, and the webhook to echo `webhook_config.metadata.idempotency_key`. Without `attempt_id` the call is treated as delivery-unknown.
-6. **WhatsApp**: the Graph API version string must be supplied by deployment config. `delivered`/`read` statuses are assumed to be sent by Meta's `statuses` webhook; that route is not in this lane.
+## Still unconfirmed (do not rely on)
+
+1. Whether Twilio ever redirects a `.wav` media request. The page does not say; the shared HTTP helper treats any 3xx as `provider_rejected`, so it fails closed.
+2. Twilio media auth with AccountSid and AuthToken. The page documents an API key pair; `fetchTwilioRecording` currently sends AccountSid:AuthToken.
+3. Sarvam: how soon after the post-call webhook a recording exists, that List attempts returns every attempt in a window (paging is capped at 5 pages of 200), and that the unsigned webhook's `interaction_id` field is the same value List attempts reports (the worker only trusts the pair after Sarvam confirms it).
+4. Meta media host: Meta does not document the media `url` host, so `fetchWhatsAppMedia` has NO default allowlist and requires explicit `allowedHosts` from deployment configuration.
+5. WhatsApp Graph version string and the `statuses` webhook shape: supplied by deployment config, no route in this lane.
+6. `twilio.gather.response` and `responder.accepted` are internal contract names, not provider names.
 ## Not done
 
 No live calls or messages were made. Real credentials, phone acceptance tests and the Sarvam dashboard setup are outstanding. Twilio call creation requires a server-controlled `allowedWebhookHosts` list so caller payloads cannot substitute arbitrary TwiML. The default Meta media host allowlist contains only `lookaside.fbsbx.com`; configure additional exact hosts only after verifying provider documentation and deployment responses. Authorization grants are server-issued; the backend must bind actual recipient and media/recording resources to its permission decision. Dependencies are declared in `package.json`; installing and locking them is Codex's job.

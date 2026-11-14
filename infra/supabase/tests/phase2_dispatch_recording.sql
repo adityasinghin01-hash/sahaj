@@ -266,9 +266,9 @@ do $$ declare fam uuid := 'b2000000-0000-4000-8000-000000000001'; cid uuid := 'd
 end $$;
 do $$ declare fam uuid := 'b2000000-0000-4000-8000-000000000001'; cid uuid := 'd2000000-0000-4000-8000-000000000001';
   pid uuid := 'c2000000-0000-4000-8000-000000000001'; yes uuid; p text := 'b2000000-0000-4000-8000-000000000001/calls/d2000000-0000-4000-8000-000000000001/'||repeat('4',32)||'.wav'; begin
-  -- a refusal newer than the yes blocks the writer (global refusal from the previous block still applies to this person)
+  -- a global refusal (inserted by the previous block, newer than this yes) blocks the writer
   insert into public.consents(family_id,person_id,call_id,purpose,question,answer,version,created_at) values
-   (fam,pid,cid,'call_recording','Synthetic?',true,'v1',now()-interval '30 minutes') returning id into yes;
+   (fam,pid,cid,'call_recording','Synthetic?',true,'v1',now()-interval '3 hours') returning id into yes;
   begin perform public.put_call_recording(fam,cid,yes,p,now()+interval '30 days',repeat('4',64)); raise exception 'FAIL refusal ignored';
   exception when insufficient_privilege then null; end;
 end $$;
