@@ -53,6 +53,7 @@ while IFS= read -r seed; do
 done < <(find "$REPO_ROOT/infra/supabase/dev" -maxdepth 1 -type f -name '*.sql' | LC_ALL=C sort)
 # Explicit synthetic telephony values; real provider env is disabled below.
 "${PSQL[@]}" -d "$DB" -c "update people set phone='+919000000001' where role='parent'; update people set phone='+919000000002' where role='child';"
+export OPENPHISH_FEED=0 RDAP_LOOKUP=0
 export DATABASE_URL="postgres://service_role@127.0.0.1:$PG_PORT/$DB"
 export SHIELD_DEVICE_PAIRING_SECRET='app-e2e-only-pairing-secret-at-least-32'
 export SUPABASE_JWT_SECRET='app-e2e-only-jwt-signing-secret-at-least-32'

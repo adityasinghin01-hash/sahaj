@@ -12,6 +12,7 @@ export function aiReply(data: Record<string, unknown>): Provider {
 
 export function makeRuntime(db: ShieldRuntimeDb, opts: {
   provider?: Provider; now?: () => Date; env?: Partial<ShieldRuntimeTestPorts["env"]>; allow?: boolean;
+  linkIntelFetch?: typeof fetch;
 } = {}) {
   const pending: Promise<unknown>[] = [];
   const provider = opts.provider ?? aiReply({ is_scam: false, scam_type: "unknown", pressure_signals: [], asks_for: [],
@@ -32,6 +33,7 @@ export function makeRuntime(db: ShieldRuntimeDb, opts: {
     clock: { now: opts.now ?? (() => new Date("2026-11-14T06:00:00.000Z")) },
     cache: { get: vi.fn(async () => null), set: vi.fn(async () => undefined) },
     log: { error: vi.fn() },
+    ...(opts.linkIntelFetch ? { linkIntelFetch: opts.linkIntelFetch } : {}),
   };
   const runtime = createShieldRuntime(ports);
   const flush = async () => { while (pending.length) await Promise.allSettled(pending.splice(0)); };

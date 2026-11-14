@@ -16,7 +16,9 @@ async function safeBrowsing(urls: string[], deps: ShieldBrainDeps, signal: Abort
     return false;
   }
   const key = (deps.env ?? process.env).SAFE_BROWSING_KEY;
-  if (!key) throw new Error("Safe Browsing not configured");
+  // Not configured is a deliberate choice (the team has no Google Cloud), not an outage:
+  // no signal, and the link is not "unverified". A configured key that fails still is.
+  if (!key) return false;
   const response = await (deps.safeBrowsingFetch ?? fetch)(
     `https://safebrowsing.googleapis.com/v4/threatMatches:find?key=${encodeURIComponent(key)}`,
     {

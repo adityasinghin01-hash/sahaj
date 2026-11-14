@@ -74,6 +74,7 @@ export function createShieldRuntime(ports: ShieldRuntimePorts | ShieldRuntimeTes
       calls: ports.calls, scheduler, jobs: { claim: key => track(ports.scheduler.claim(key)) },
       atlas: ports.atlas, gate: ports.gate, sign,
       cache: ports.cache, env: ports.env, now: () => ports.clock.now().getTime(),
+      ...(ports.linkIntelFetch ? { linkIntelFetch: ports.linkIntelFetch } : {}),
     };
   }
 

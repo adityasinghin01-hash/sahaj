@@ -97,6 +97,7 @@ if [[ ! -f "$APP_DIR/.next/BUILD_ID" ]]; then
   pnpm --dir "$REPO_ROOT" -F @sahaj/shield-api build >/dev/null
 fi
 
+export OPENPHISH_FEED=0 RDAP_LOOKUP=0
 export DATABASE_URL="postgres://service_role@127.0.0.1:$PG_PORT/$DB"
 export SHIELD_DEVICE_PAIRING_SECRET="e2e-pairing-secret-at-least-32-chars"
 export SMS_GATEWAY_SECRET="e2e-sms-gateway-secret-at-least-32-chars"

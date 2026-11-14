@@ -6,7 +6,7 @@ import { aiReply, GATEWAY_SECRET, makeRuntime } from "../runtime/ports";
 
 const MAA_PHONE = "+91 90000 00003";
 const now = new Date("2026-11-14T06:00:00.000Z");
-/** A link the server cannot verify (no Safe Browsing key in tests) → yellow, and the AI fake says "not a scam". */
+/** A link to a website registered 5 days ago (RDAP fake below) → yellow, and the AI fake says "not a scam". */
 const YELLOW = "Kal ki photos yahan dekhiye https://photos-share.in/album";
 const cleanups: (() => Promise<void>)[] = [];
 afterEach(async () => { for (const close of cleanups.splice(0)) await close(); });
@@ -36,7 +36,15 @@ async function fixture(provider = aiReply({ is_scam: false, scam_type: "unknown"
         sender_type: null, caller_type: null, matched_rules: [], local_level: null }),
     };
   }
-  return { store, ...makeRuntime(store.db, { provider, now: () => now }) };
+  // Key-free link checks with fakes: empty OpenPhish feed, and RDAP says the domain is 5 days old.
+  const linkIntelFetch = (async (input: string | URL | Request) => {
+    const url = String(input instanceof Request ? input.url : input);
+    if (url.startsWith("https://rdap.org/domain/")) {
+      return Response.json({ events: [{ eventAction: "registration", eventDate: new Date(now.getTime() - 5 * 86_400_000).toISOString() }] });
+    }
+    return new Response("", { status: 200 });
+  }) as typeof fetch;
+  return { store, ...makeRuntime(store.db, { provider, now: () => now, linkIntelFetch }) };
 }
 
 function forward(body: string, at = now) {

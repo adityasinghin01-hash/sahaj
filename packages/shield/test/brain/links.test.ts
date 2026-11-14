@@ -42,9 +42,13 @@ describe("link reputation", () => {
     expect(deps.safeBrowsingFetch.mock.calls.length).toBe(before);
     expect(await checkLinks([link("https://bit.ly/good")], deps)).toMatchObject([{ threat: false, status: "checked" }]);
   });
-  it("treats an unconfigured API, sandbox denial, provider error and bad JSON as unverified, never caches a clean result", async () => {
+  it("no Safe Browsing key = deliberately not used: no signal, not 'unverified', no network call", async () => {
     const { deps } = fixtures();
-    expect(await checkLinks([link()], deps)).toMatchObject([{ status: "unavailable" }]);
+    expect(await checkLinks([link()], deps)).toMatchObject([{ status: "checked", threat: false }]);
+    expect(deps.safeBrowsingFetch).not.toHaveBeenCalled();
+  });
+  it("treats a configured-but-failing API, sandbox denial, provider error and bad JSON as unverified, never caches a clean result", async () => {
+    const { deps } = fixtures();
     deps.env = { SAFE_BROWSING_KEY: "fake" }; deps.safeBrowsingFetch.mockRejectedValue(new Error("secret provider error"));
     expect(await checkLinks([link()], deps)).toMatchObject([{ status: "unavailable" }]);
     deps.safeBrowsingFetch.mockResolvedValue(new Response("{}")); deps.sandbox.unshorten.mockRejectedValue(new Error("blocked IP"));

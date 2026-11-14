@@ -37,6 +37,8 @@ export type ShieldCircleInput = Parameters<ShieldBrainDeps["atlas"]["startCircle
 
 export interface ShieldRuntimePorts {
   sql: Sql;
+  /** Key-free link checks (OpenPhish feed + RDAP domain age). Absent = those checks are off. */
+  linkIntelFetch?: typeof fetch;
   /** Inject the shared catalogue when it is available; no production sample stories. */
   drillStories?: readonly DrillStory[];
   /** Required when building an evidence pack; absent configuration fails closed. */

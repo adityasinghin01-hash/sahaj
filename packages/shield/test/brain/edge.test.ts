@@ -82,6 +82,7 @@ describe("failure, privacy and scheduling boundaries", () => {
   });
   it("does not cache an unavailable link check as safe; escalates unverified links to yellow", async () => {
     const { deps } = fixtures();
+    deps.env = { SAFE_BROWSING_KEY: "fake" }; deps.safeBrowsingFetch.mockRejectedValue(new Error("provider down"));
     deps.rules.evaluate.mockResolvedValue({ verdict: verdict(), needs_ai: false, links: [{ url: "https://example.com/", domain: "example.com" }] });
     const result = await buildShieldGraph(deps).invoke({ event: event() });
     expect(result.decision.verdict.level).toBe("yellow");

@@ -71,6 +71,8 @@ export function createShieldPorts(opts: {
       twoLock: router.twoLock,
     },
     whatsapp: createWhatsappPort(opts.auxSql, opts.env, opts.fetchFn),
+    // Key-free link checks; OPENPHISH_FEED=0 / RDAP_LOOKUP=0 switch them off (lab e2e does).
+    linkIntelFetch: opts.fetchFn ?? fetch,
     push: createPushPort(opts.auxSql),
     calls: createCallsPort(opts.auxSql, opts.env),
     scheduler: createSchedulerPort(opts.auxSql, clock),
