@@ -1,16 +1,26 @@
 # SAHAJ coding checkpoint
 
-Updated 2026-11-14. Estimates measure reviewed implementation and integration, not live-phone readiness. Overall approximately 28%; phases have unequal effort.
+Updated 2026-11-15. Estimates measure reviewed implementation and integration, not live-phone readiness. Phases have unequal effort; historical snapshots below are superseded by this table and the current checkpoint.
 
 | Phase | Scope | Coding complete |
 | --- | --- | --- |
 | 1 | Build, API foundation, schema, RLS, private storage | 100% |
-| 2 | Provider adapters and verified durable webhook ingestion | 65% |
-| 3 | Atlas, Cedar, signed timeline and durable orchestration | 50% |
+| 2 | Provider adapters and verified durable webhook ingestion | 85% |
+| 3 | Atlas, Cedar, signed timeline and durable orchestration | 80% |
 | 4 | Integrated Core 1 check-ins, urgent responder, voice, medicines, nudges and reports | 0% |
 | 5 | Core 2 server integration and complete acceptance suite | 0% |
 
 ## Saved implementation
+
+### Current checkpoint (supersedes historical notes)
+
+- Canonical repository: https://github.com/adityasinghin01-hash/sahaj. Foundation and detailed Aditya Phase 4/5 handoff pushed on `chatgpt/core1-foundation` (7bff318), draft PR #1. Phase 2/3 reviewed integration pushed on `chatgpt/core1-phase23` (674c177), draft PR #2. These are review branches, not merged main.
+- Aditya owns Phase 4/5. Start with `docs/core1-handoff/START-HERE.md` on the foundation branch. The integrated Core 1/Core 2 harness belongs to Phase 5. Existing Shield harness remains lead-owned Core 3.
+- Reviewed leader integration passed 1,334 tests, API typecheck and production build. Both native PostgreSQL fence tests ran separately and passed; nine migrations and four rollback suites passed on disposable local PostgreSQL. The latest combined worker code additionally passes 497 API tests/typecheck; four scratch-only tests are skipped in that default run.
+- Kiro A is correcting a contact resolve/revoke/claim race. Kiro B is correcting claim filtering so disabled provider capabilities preserve retries, independent recording configuration and Twilio disclosure provenance. These findings block 100% completion.
+- Phase 2/3 is not deployed. Phase 1 release b1904b2 remains the verified deployment. Real-provider/phone acceptance remains outstanding. Imported Core SQL is inactive under `infra/supabase/core1-import`; reconcile canonical membership/bootstrap with Shield before combined hosted migration.
+
+### Historical implementation evidence
 
 - Backend branch: `feature/core1-atlas`; previous foundation checkpoint `a2ed402`.
 - Reviewed Kiro B media integrated as `f97da4e`, `990938a`. Worker tip `bcc70b2`;91 focused media tests passed independently. Production authorization deliberately denies until Cedar is wired.
