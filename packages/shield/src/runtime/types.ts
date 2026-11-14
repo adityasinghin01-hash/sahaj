@@ -7,6 +7,7 @@ import type { ShieldServerDb } from "../server/types";
 import type { ShieldDeps, ToolCtx } from "../tools/types";
 import type { ShieldJobDeps, JobLedger } from "../jobs";
 import type { ShieldEvent } from "@sahaj/shared";
+import type { SmsGatewayDb } from "../gateway/types";
 
 /** Extra persistence needed to join the graph to the existing server/tools DB. */
 export interface ShieldRuntimeDb {
@@ -21,6 +22,8 @@ export interface ShieldRuntimeDb {
   getVerdictForEvent(eventId: string): Promise<StoredVerdict | null>;
   /** Serialize across workers; work receives storage using the locked connection. */
   withEventLock<T>(eventId: string, work: (db: ShieldRuntimeDb) => Promise<T>): Promise<T>;
+  /** SMS gateway storage (migration 20261114000500). Without it the gateway route answers 500. */
+  gateway?: SmsGatewayDb;
 }
 
 export type ShieldTimelineEntry = TimelineRow | Parameters<ShieldDeps["sign"]>[0];
@@ -52,7 +55,9 @@ export interface ShieldRuntimePorts {
   gate: ShieldBrainDeps["gate"];
   sign(entry: ShieldTimelineEntry): Promise<void>;
   waitUntil(promise: Promise<unknown>): void;
-  env: { SHIELD_DEVICE_PAIRING_SECRET: string; SAFE_BROWSING_KEY?: string; DEMO_TIMER_SCALE?: string };
+  env: { SHIELD_DEVICE_PAIRING_SECRET: string; SAFE_BROWSING_KEY?: string; DEMO_TIMER_SCALE?: string;
+    /** Shared secret of the SMS gateway phone (>= 32 characters). Needed only for handleSmsGateway. */
+    SMS_GATEWAY_SECRET?: string };
   clock: { now(): Date };
   cache: ShieldBrainDeps["cache"];
   log?: { error(message: string, meta?: Record<string, unknown>): void };

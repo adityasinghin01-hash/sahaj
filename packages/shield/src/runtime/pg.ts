@@ -4,6 +4,7 @@ import { createEvidencePg } from "../evidence";
 import { ShieldEvent, Verdict } from "@sahaj/shared";
 import type { StoredVerdict } from "../brain/types.js";
 import { createShieldPg, isUuid } from "../db/pg";
+import { createGatewayPg } from "../db/gateway_pg";
 import type { ShieldRuntimeDb } from "./types";
 
 /** Decode DB nulls/timestamps without relaxing the shared phone contract. */
@@ -28,6 +29,7 @@ export function createShieldRuntimePg(sql: Sql): ShieldRuntimeDb {
       drills: createDrillPg(sql),
       evidence: createEvidencePg(query),
       server: pg.server,
+      gateway: createGatewayPg(query),
       tools: {
         ...pg.tools,
         async markFamilyCheckNoAnswer(checkId, at) {
