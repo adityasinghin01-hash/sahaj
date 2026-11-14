@@ -355,5 +355,33 @@ export function createShieldRuntime(ports: ShieldRuntimePorts | ShieldRuntimeTes
       throw new Error("Unknown Shield scheduled job");
     },
     runBrainForEvent,
+    async planWeeklyDrills(input: { now?: Date } = {}) {
+      const { planWeeklyDrills: runPlan, createSchedulePg } = await import("../drills/schedule");
+      const schedule = ports.sql
+        ? createSchedulePg(ports.sql)
+        : (db as { schedule?: import("../drills/schedule").DrillScheduleStore }).schedule;
+      if (!schedule) throw new Error("Shield drill schedule storage not configured");
+      const now = input.now ?? ports.clock.now();
+      const expClock = { now: () => now };
+      return runPlan(
+        {
+          schedule,
+          pickDrill: args => pickDrill(drillDeps(), args),
+          startExperienceDrill: async ctx => {
+            const result = await startExperienceDrill({ ...experienceDeps(), clock: expClock }, ctx);
+            await signDrill(
+              ctx,
+              result.ok ? "shield.drill.experience.scheduled" : "shield.drill.experience.refused",
+              result.ok ? "Experience drill scheduled." : "Experience drill refused.",
+              result.ok ? { script_id: result.script_id } : { reason: result.reason },
+            );
+            return result;
+          },
+          sign: entry =>
+            track(ports.sign({ familyId: entry.familyId, type: entry.type, line: entry.line, data: entry.data })),
+        },
+        { now },
+      );
+    },
   };
 }

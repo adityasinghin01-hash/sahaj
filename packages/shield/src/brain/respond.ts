@@ -4,11 +4,15 @@ import type { ShieldBrainDeps, StoredVerdict, TimelineRow } from "./types.js";
 
 export const RETRY_PARENT_JOB = "retryCallParent";
 export const NO_REACTION_JOB = "shield.no_reaction_check";
+const isKeypadChannel = (channel: ShieldEvent["channel"]) =>
+  channel === "keypad_voice" || channel === "gateway_sms";
 export function ladderActions(event: ShieldEvent, verdict: Verdict): ShieldAction[] {
   if (verdict.level === "green") return [];
   const actions: ShieldAction[] = ["alert_child"];
   if (verdict.level === "red") {
     actions.push(event.channel === "device" ? "show_red_screen" : "speak_clip", "circle_chain");
+  } else if (verdict.level === "yellow" && isKeypadChannel(event.channel)) {
+    actions.push("speak_clip");
   }
   if (event.context.money_already_left === true) actions.push("offer_1930");
   return actions;
@@ -40,15 +44,28 @@ async function schedule(deps: ShieldBrainDeps, record: StoredVerdict, name: stri
 }
 async function callParent(record: StoredVerdict, deps: ShieldBrainDeps, attempt: number) {
   const lineId = record.parent.line_id;
+  const isYellow = record.verdict.level === "yellow";
   if (!lineId) {
-    await audit(deps, record, { step: "call_parent", status: "skipped", action: "speak_clip", details: { reason: "missing_line", attempt } }); return;
+    await audit(deps, record, {
+      step: "call_parent",
+      status: "skipped",
+      action: "speak_clip",
+      details: isYellow ? { reason: "missing_line", attempt, level: "yellow" } : { reason: "missing_line", attempt },
+    });
+    return;
   }
   let status = "failed";
   try {
     status = (await deps.calls.callParent({ familyId: record.event.family_id, parentId: record.event.parent_id,
       lineId, verdictId: record.id, attempt })).status;
   } catch { /* Treat a provider failure as retryable; never expose its raw error. */ }
-  await audit(deps, record, { step: "call_parent", status: status === "failed" ? "failed" : "ok", action: "speak_clip", details: { result: status, attempt } });
+  await audit(deps, record, {
+    step: "call_parent",
+    status: status === "failed" ? "failed" : "ok",
+    action: "speak_clip",
+    details: isYellow ? { result: status, attempt, level: "yellow" } : { result: status, attempt },
+  });
+  // At most 2 retries (attempts 2 and 3; 3 total attempts) for both red and yellow keypad calls.
   if (["busy", "no_answer", "failed"].includes(status) && attempt < 3) {
     await schedule(deps, record, RETRY_PARENT_JOB, { verdictId: record.id, attempt: attempt + 1 });
   }
@@ -74,6 +91,8 @@ export async function respond(record: StoredVerdict, deps: ShieldBrainDeps) {
     }
     if (allowed("speak_clip") && event.channel !== "device") branches.push(callParent(record, deps, 1));
     if (allowed("circle_chain")) branches.push(schedule(deps, record, NO_REACTION_JOB, { verdictId: record.id }));
+  } else if (verdict.level === "yellow" && isKeypadChannel(event.channel)) {
+    if (allowed("speak_clip")) branches.push(callParent(record, deps, 1));
   }
   const outcomes = await Promise.allSettled(branches);
   // Wait for sibling branches to finish before surfacing a signing failure.
@@ -90,7 +109,11 @@ export async function handleScheduledJob(name: string, payload: unknown, deps: S
   if (record.parent.id !== record.event.parent_id || record.parent.family_id !== record.event.family_id || record.id !== input.verdictId) throw new Error("Shield scheduled family mismatch");
   try {
     const action = name === RETRY_PARENT_JOB ? "speak_clip" : "circle_chain";
-    if (record.verdict.level !== "red" || !record.verdict.actions.includes(action) ||
+    const canCallYellowKeypad =
+      name === RETRY_PARENT_JOB &&
+      record.verdict.level === "yellow" &&
+      isKeypadChannel(record.event.channel);
+    if ((!canCallYellowKeypad && record.verdict.level !== "red") || !record.verdict.actions.includes(action) ||
         (name === RETRY_PARENT_JOB && record.event.channel === "device")) {
       await audit(deps, record, { step: name, status: "skipped" }); return;
     }
