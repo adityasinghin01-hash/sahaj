@@ -2,6 +2,6 @@ packages:
   - "apps/*"
   - "packages/*"
 allowBuilds:
-  esbuild: true
-  protobufjs: true
+  esbuild@0.28.2: true
+  protobufjs@7.6.6: true
 nodeLinker: hoisted

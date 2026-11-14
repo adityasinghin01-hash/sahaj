@@ -1,1 +1,10 @@
 export * from "./llm/index.js";
+export { AdapterError, requireAuthorization, dispatchOnce } from "./contracts";
+export type { ProviderName, FetchTransport, ActionAuthorization, ProviderRequest as CommunicationProviderRequest, ProviderResult, AdapterErrorCode, DispatchLedger } from "./contracts";
+export * from "./security";
+export * from "./audio";
+export * from "./sarvam";
+export * from "./whatsapp";
+export * from "./twilio";
+export * from "./telecmi";
+export { assertSafeUrl, assertE164 } from "./http";

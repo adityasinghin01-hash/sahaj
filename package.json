@@ -3,6 +3,8 @@
   "private": true,
   "packageManager": "pnpm@12.18.0",
   "scripts": {
+    "dev:core1": "pnpm --filter @sahaj/api dev",
+    "build:core1": "pnpm --filter @sahaj/api build",
     "typecheck": "pnpm -r --if-present typecheck",
     "test": "pnpm -r --if-present test",
     "harness:shield": "npx tsx harness/shield/run.ts"
