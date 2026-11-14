@@ -127,3 +127,11 @@ export function parseTwilioRecording(params: URLSearchParams): TwilioRecording {
     durationSeconds: optionalCount(params, "RecordingDuration"),
   };
 }
+
+export interface TwilioGather { accountSid: string; callSid: string; digits: string | null }
+/** Twilio posts `Digits` to the Gather `action` URL. Only the account, the call and the digits are read; nothing else is trusted. */
+export function parseTwilioGather(params: URLSearchParams): TwilioGather {
+  const digits = single(params, "Digits");
+  if (digits !== null && !/^[0-9*#]{1,32}$/.test(digits)) throw invalid();
+  return { accountSid: sid(params, "AccountSid", ACCOUNT_SID), callSid: sid(params, "CallSid", CALL_SID), digits };
+}
