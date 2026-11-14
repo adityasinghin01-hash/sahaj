@@ -12,6 +12,7 @@
     "@sahaj/adapters": "workspace:*",
     "@sahaj/shared": "workspace:*",
     "ipaddr.js": "2.5.0",
+    "postgres": "^4.1.1",
     "zod": "^4.1.0"
   },
   "devDependencies": {
