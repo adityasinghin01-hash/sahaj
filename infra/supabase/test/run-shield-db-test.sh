@@ -1,5 +1,7 @@
 #!/usr/bin/env bash
-# Throwaway-Postgres test for the Shield Postgres layer (cards K-B3, K-B5): packages/shield/src/db.
+# Throwaway-Postgres test for the Shield Postgres layer (cards K-B3, K-B5, K-B8): packages/shield/src/db,
+# the SMS gateway, drills/experience drills, call gateway and evidence storage.
+# Applies EVERY migration in infra/supabase/migrations, sorted by file name.
 # Usage: bash infra/supabase/test/run-shield-db-test.sh
 # Needs local Postgres binaries (default /opt/homebrew/bin; override with PG_BIN) and the
 # workspace installed (pnpm install). No Docker. The cluster lives in a temp dir and is deleted after.
@@ -7,14 +9,15 @@ set -euo pipefail
 
 PG_BIN="${PG_BIN:-/opt/homebrew/bin}"
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-MIGRATIONS=(
-  "$HERE/../migrations/20261114000100_shield.sql"
-  "$HERE/../migrations/20261114000200_shield_pairing.sql"
-  "$HERE/../migrations/20261114000300_shield_busy_warnings.sql"
-)
+MIGRATIONS_DIR="$(cd "$HERE/../migrations" && pwd)"
+# All migrations, in file-name order (C collation, so the timestamp prefixes sort numerically).
+MIGRATIONS=()
+while IFS= read -r m; do MIGRATIONS+=("$m"); done < <(find "$MIGRATIONS_DIR" -maxdepth 1 -name '*.sql' -type f | LC_ALL=C sort)
+[[ ${#MIGRATIONS[@]} -gt 0 ]] || { echo "no migrations in $MIGRATIONS_DIR" >&2; exit 2; }
 RLS_SQL="$HERE/shield_busy_warnings_rls.sql"
 PKG="$(cd "$HERE/../../../packages/shield" && pwd)"
 VITEST="$PKG/node_modules/.bin/vitest"
+[[ -x "$VITEST" ]] || VITEST="$(cd "$PKG/../.." && pwd)/node_modules/.bin/vitest"   # hoisted installs
 DB=shield_db_test
 
 for bin in initdb pg_ctl psql; do
@@ -63,6 +66,9 @@ create role authenticated nologin;
 -- The app connects as the service role. LOGIN only so the test can connect as it directly;
 -- BYPASSRLS as on Supabase. It is not a superuser, so missing grants would fail the tests.
 create role service_role login bypassrls;
+-- Test bootstrap only (never a production migration): lets the throwaway service login
+-- assume the API roles so the vitest suites can prove RLS without a superuser.
+grant authenticated, anon to service_role;
 
 create schema auth;
 create function auth.uid() returns uuid language sql stable as $f$
@@ -85,7 +91,8 @@ create table public.people (
   family_id uuid not null references public.families(id),
   name      text not null,
   aliases   text[] not null default '{}',
-  role      text
+  role      text,
+  phone     text
 );
 create table public.family_members (
   family_id uuid references public.families(id),
@@ -105,6 +112,7 @@ echo "== RLS checks (busy_streaks, scam_indicators)"
 "${PSQL[@]}" -d "$DB" -f "$RLS_SQL" 2>&1 | sed 's/^psql:[^:]*:[0-9]*: //'
 # pipefail propagates a psql failure through sed.
 
-echo "== vitest run test/db + *.db.test.ts (busy, warnings)"
+echo "== vitest run test/db, test/gateway, drills pg + *.db.test.ts (busy, warnings, experience, callgate, evidence)"
 cd "$PKG"
-DATABASE_URL="postgres://service_role@localhost:$PORT/$DB" SHIELD_DB_TEST_REQUIRED=1 "$VITEST" run test/db .db.test.ts
+DATABASE_URL="postgres://service_role@localhost:$PORT/$DB" SHIELD_DB_TEST_REQUIRED=1 SHIELD_DRILLS_DB_TEST_REQUIRED=1 \
+  "$VITEST" run test/db test/gateway test/drills/pg.test.ts .db.test.ts

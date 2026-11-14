@@ -1,9 +1,12 @@
 import { z } from "zod";
 import { TIMED_OUT, withTimeout } from "../tools/runtime";
 import { maskPrivate } from "./privacy";
-import type { DrillContext, DrillDeps } from "./types";
+import { HELPER_DRILLS } from "@sahaj/shared";
+import type { DrillContext, DrillDeps, DrillStory } from "./types";
 export * from "./types";
 export { createDrillPg } from "./pg";
+export * from "./experience";
+export { createExperiencePg } from "./experience_pg";
 
 const WEEK_MS = 7 * 24 * 60 * 60 * 1000;
 export const DRILL_FALLBACK_LINE = "Koi baat nahi. Anjaan caller ko code ya paise mat dijiye; parivaar se jaanch karaiye.";
@@ -14,20 +17,42 @@ export const DrillRubric = z.object({
   matched_risky: z.array(z.string().max(200)).max(30),
   reason_en: z.string().max(1000),
 });
-export interface DrillAnswerOutput { score: 0 | 1 | 2; teach_line_hi: string }
+/**
+ * teach = true: teach_line_hi is the story's teaching line (score < 2).
+ * teach = false: full marks, teach_line_hi is the short praise line instead.
+ */
+export interface DrillAnswerOutput { score: 0 | 1 | 2; teach_line_hi: string; teach: boolean }
+/** Spoken for a full-marks answer (score 2) instead of the teaching line. */
+export const DRILL_PRAISE_LINE = "Bahut badhiya ji! Aapne bilkul sahi jawab diya. Aise hi saavdhaan rahiye.";
+function answerLine(score: 0 | 1 | 2, teachLine: string): DrillAnswerOutput {
+  return score < 2 ? { score, teach_line_hi: teachLine || DRILL_FALLBACK_LINE, teach: true }
+    : { score, teach_line_hi: DRILL_PRAISE_LINE, teach: false };
+}
 
-export async function pickDrill(deps: DrillDeps, input: DrillContext & { now: Date }) {
+/** Sarvam check-in agent variables for the weekly drill segment (prompts/sarvam/drill_checkin.md). */
+export interface DrillCheckinVariables { drill_id: string; drill_story: string }
+export interface PickedDrill { drill_id: string; story_hi: string; checkin_variables: DrillCheckinVariables }
+
+/**
+ * Weekly helper drill. Order: never-asked stories first (catalogue order), then the story whose
+ * latest ask is oldest, so a ten-story catalogue keeps rotating instead of running dry.
+ */
+export async function pickDrill(deps: DrillDeps, input: DrillContext & { now: Date }): Promise<PickedDrill | null> {
   if (!Number.isFinite(input.now.getTime())) throw new Error("Invalid drill time");
   return deps.db.withParentLock(input, async db => {
     if (!await db.getParent(input)) return null;
-    const recent = (await db.recent(input)).sort((a, b) => b.asked_at.localeCompare(a.asked_at)).slice(0, 10);
+    const recent = (await db.recent(input)).filter(row => row.type === "helper")
+      .sort((a, b) => b.asked_at.localeCompare(a.asked_at)).slice(0, 10);
     if (recent.some(row => input.now.getTime() - Date.parse(row.asked_at) < WEEK_MS)) return null;
-    const used = new Set(recent.map(row => row.drill_id));
-    const story = deps.stories.find(story => !used.has(story.id));
+    const lastAsked = new Map<string, string>();
+    for (const row of recent) if (!lastAsked.has(row.drill_id)) lastAsked.set(row.drill_id, row.asked_at);
+    const story = deps.stories.find(story => !lastAsked.has(story.id))
+      ?? [...deps.stories].sort((a, b) => lastAsked.get(a.id)!.localeCompare(lastAsked.get(b.id)!))[0];
     if (!story) return null;
     await db.insert({ family_id: input.familyId, parent_id: input.parentId, drill_id: story.id,
       type: "helper", asked_at: input.now.toISOString(), answer_masked: null, score: null, teach_line_played: false });
-    return { drill_id: story.id, story_hi: maskPrivate(story.story_hi) };
+    const storyHi = maskPrivate(story.story_hi);
+    return { drill_id: story.id, story_hi: storyHi, checkin_variables: { drill_id: story.id, drill_story: storyHi } };
   });
 }
 
@@ -62,7 +87,7 @@ export const drillAnswer = {
   async run(deps: DrillDeps, ctx: DrillContext, raw: z.input<typeof DrillAnswerInput>): Promise<DrillAnswerOutput> {
     // No raw speech is captured by the async work, a storage callback, or an AI request.
     const parsed = DrillAnswerInput.safeParse(raw);
-    const fallback = (): DrillAnswerOutput => ({ score: 0, teach_line_hi: DRILL_FALLBACK_LINE });
+    const fallback = (): DrillAnswerOutput => ({ score: 0, teach_line_hi: DRILL_FALLBACK_LINE, teach: true });
     if (!parsed.success) return fallback();
     // Match locally before masking: an explicit public-helpline answer must not
     // become indistinguishable from an arbitrary masked OTP/phone number.
@@ -78,7 +103,7 @@ export const drillAnswer = {
       const story = deps.stories.find(story => story.id === input.drill_id);
       if (expired || !asked || !story || asked.type !== "helper") return fallback();
       const line = maskPrivate(story.teach_line_hi);
-      if (asked.score !== null) return { score: asked.score, teach_line_hi: line };
+      if (asked.score !== null) return answerLine(asked.score, line);
       let score: 0 | 1 | 2 = keywordScore;
       try {
         const result = await withTimeout(Promise.resolve().then(() => deps.router.understand({
@@ -94,8 +119,8 @@ export const drillAnswer = {
         }
       } catch { /* Deterministic fallback; never log provider error or speech. */ }
       if (expired) return fallback();
-      await db.saveAnswer({ ...ctx, drillId: input.drill_id, answerMasked: input.said, score });
-      return { score, teach_line_hi: line || DRILL_FALLBACK_LINE };
+      await db.saveAnswer({ ...ctx, drillId: input.drill_id, answerMasked: input.said, score, teachLinePlayed: score < 2 });
+      return answerLine(score, line);
     });
     try {
       const result = await withTimeout(work, 2800);
@@ -106,7 +131,16 @@ export const drillAnswer = {
   },
 };
 
-export async function scamSense(deps: DrillDeps, input: DrillContext & { month: string }) {
+export interface ScamSenseTypeScore { drills: number; score_out_of_5: number }
+export interface ScamSense {
+  score_out_of_5: number;
+  trend: "up" | "down" | "flat";
+  drills_this_month: number;
+  /** Helper (story) drills and opt-in experience drills, scored the same way. */
+  by_type: { helper: ScamSenseTypeScore; experience: ScamSenseTypeScore };
+}
+
+export async function scamSense(deps: DrillDeps, input: DrillContext & { month: string }): Promise<ScamSense> {
   if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(input.month)) throw new Error("Invalid drill month");
   if (!await deps.db.getParent(input)) throw new Error("Drill parent not found");
   const start = new Date(`${input.month}-01T00:00:00Z`);
@@ -117,9 +151,20 @@ export async function scamSense(deps: DrillDeps, input: DrillContext & { month: 
   const current = answered.filter(row => Date.parse(row.asked_at) >= start.getTime());
   const previous = answered.filter(row => Date.parse(row.asked_at) < start.getTime());
   const average = (items: typeof answered) => items.reduce((sum, row) => sum + row.score!, 0) / items.length;
+  const outOf5 = (items: typeof answered) => items.length ? Math.round(average(items) * 2.5 * 10) / 10 : 0;
   const avg = current.length ? average(current) : 0;
   const difference = current.length && previous.length ? avg - average(previous) : 0;
-  return { score_out_of_5: Math.round(avg * 2.5 * 10) / 10,
+  const ofType = (type: "helper" | "experience") => {
+    const items = current.filter(row => row.type === type);
+    return { drills: items.length, score_out_of_5: outOf5(items) };
+  };
+  return { score_out_of_5: outOf5(current),
     trend: difference > 0 ? "up" as const : difference < 0 ? "down" as const : "flat" as const,
-    drills_this_month: current.length };
+    drills_this_month: current.length, by_type: { helper: ofType("helper"), experience: ofType("experience") } };
 }
+
+/** The shared ten-story catalogue (one per scam type) as runtime stories. */
+export const HELPER_DRILL_STORIES: readonly DrillStory[] = HELPER_DRILLS.map(drill => ({
+  id: drill.id, scam_type: drill.scam_type, story_hi: drill.story_hi,
+  good_answers: [...drill.good_answers], risky_answers: [...drill.risky_answers], teach_line_hi: drill.teach_line_hi,
+}));

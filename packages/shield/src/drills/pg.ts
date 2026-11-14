@@ -22,7 +22,7 @@ export function createDrillPg(sql: Sql): DrillStore {
       return rows.length > 0;
     },
     async recent({ familyId, parentId }) {
-      const rows = await query`select * from public.drills where family_id = ${familyId} and parent_id = ${parentId} order by asked_at desc, id desc limit 10`;
+      const rows = await query`select * from public.drills where family_id = ${familyId} and parent_id = ${parentId} and type = 'helper' order by asked_at desc, id desc limit 10`;
       return rows.map(record);
     },
     async insert(row) {
@@ -31,13 +31,13 @@ export function createDrillPg(sql: Sql): DrillStore {
     },
     async getAsked({ familyId, parentId, drillId }) {
       const [row] = await query`select * from public.drills where family_id = ${familyId} and parent_id = ${parentId}
-        and drill_id = ${drillId} order by asked_at desc, id desc limit 1`;
+        and drill_id = ${drillId} and type = 'helper' order by asked_at desc, id desc limit 1`;
       return row ? record(row) : null;
     },
-    async saveAnswer({ familyId, parentId, drillId, answerMasked, score }) {
-      await query`update public.drills set answer_masked = ${maskPrivate(answerMasked)}, score = ${score}, teach_line_played = true
+    async saveAnswer({ familyId, parentId, drillId, answerMasked, score, teachLinePlayed = true }) {
+      await query`update public.drills set answer_masked = ${maskPrivate(answerMasked)}, score = ${score}, teach_line_played = ${teachLinePlayed}
         where id = (select id from public.drills where family_id = ${familyId} and parent_id = ${parentId}
-          and drill_id = ${drillId} order by asked_at desc, id desc limit 1) and score is null`;
+          and drill_id = ${drillId} and type = 'helper' order by asked_at desc, id desc limit 1) and score is null`;
     },
     async between({ familyId, parentId, since, until }) {
       const rows = await query`select * from public.drills where family_id = ${familyId} and parent_id = ${parentId}

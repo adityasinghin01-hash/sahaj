@@ -45,7 +45,15 @@ export interface ShieldDeps {
     }): Promise<void>;
   };
   calls: {
-    startResponderCall(input: { familyId: string; toPersonId: string; checkId: string }): Promise<void>;
+    /**
+     * Family-check responder call. With purpose "experience_drill" (Step 3.5) the call goes to the
+     * parent (toPersonId = parentId, checkId = drill id) and speaks the given GENERIC script.
+     */
+    startResponderCall(input: {
+      familyId: string; toPersonId: string; checkId: string;
+      purpose?: "experience_drill";
+      script?: { id: string; opening_hi: string; ask_hi: string; nudge_hi: string };
+    }): Promise<void>;
     startCallback(input: { familyId: string; parentId: string; line: string }): Promise<void>;
   };
   atlas: {

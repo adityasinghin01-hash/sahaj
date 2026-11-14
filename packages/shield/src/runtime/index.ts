@@ -1,12 +1,16 @@
 import { ShieldEvent, Verdict, type ShieldAction } from "@sahaj/shared";
 import { buildShieldGraph, handleScheduledJob as handleBrainJob, RETRY_PARENT_JOB, NO_REACTION_JOB } from "../brain/index.js";
-import { checkAction, respond } from "../brain/respond.js";
+import { audit, checkAction, respond } from "../brain/respond.js";
 import type { ShieldBrainDeps, StoredVerdict } from "../brain/types.js";
 import { createPairingCode, handleShieldEvent, handleShieldPair, type ShieldServerDeps } from "../server";
 import { scheduledShieldTools, handleShieldToolJob, isShieldJobName, FamilyCheckJobPayload, type ShieldJobDeps, type ScheduledToolDeps } from "../jobs";
 import { type ShieldTool, type ToolCtx, type ShieldDeps } from "../tools";
-import { drillAnswer, pickDrill, scamSense, DRILL_FALLBACK_LINE, type DrillDeps } from "../drills";
-import { buildEvidencePack, type EvidenceRequest } from "../evidence";
+import { drillAnswer, pickDrill, scamSense, DRILL_FALLBACK_LINE, HELPER_DRILL_STORIES, type DrillDeps,
+  experienceTurn, startExperienceDrill, isQuietHours, experienceScriptFor, ExperienceJobPayload,
+  EXPERIENCE_DRILL_JOB, EXPERIENCE_DRILL_PURPOSE, EXPERIENCE_STOP_LINE, type ExperienceDeps, type ExperienceStore } from "../drills";
+import { buildEvidencePack, verifyEvidencePack, type EvidenceDeps, type EvidenceRequest } from "../evidence";
+import { callScreen, screenCall, CALL_GATE_FORWARD_LINE, type CallGateDeps, type ScreenCallInput } from "../callgate";
+import { numberFingerprint } from "../warnings/fingerprint";
 import { createShieldRuntimePg } from "./pg";
 import { handleSmsGateway, type SmsGatewayDeps } from "../gateway";
 import { evaluateRules, scoreVoiceText } from "./rules";
@@ -15,11 +19,18 @@ import type { ShieldRuntimePorts, ShieldRuntimeTestPorts, ShieldRuntimeDb } from
 export * from "./types";
 export { createShieldRuntimePg } from "./pg";
 
-/** Unified runtime registration, including the injected drill tool. */
-export const shieldTools = { ...scheduledShieldTools, drill_answer: drillAnswer } as const;
+/** Unified runtime registration, including the drill, experience-drill and call-gateway tools. */
+export const shieldTools = { ...scheduledShieldTools, drill_answer: drillAnswer, experience_turn: experienceTurn,
+  call_screen: callScreen } as const;
 export type ShieldToolName = keyof typeof shieldTools;
 export function isShieldToolName(name: string): name is ShieldToolName {
   return Object.prototype.hasOwnProperty.call(shieldTools, name);
+}
+/** Outcome of the shield.drill.experience job. */
+export interface ExperienceJobResult {
+  job: typeof EXPERIENCE_DRILL_JOB;
+  outcome: "started" | "invalid_payload" | "not_found" | "no_consent" | "disabled" | "already_answered"
+    | "quiet_hours" | "duplicate" | "denied";
 }
 export interface BoundShieldTools {
   run<K extends ShieldToolName>(name: K, ctx: ToolCtx,
@@ -72,9 +83,31 @@ export function createShieldRuntime(ports: ShieldRuntimePorts | ShieldRuntimeTes
       if (!event) throw new Error("Shield event not found");
       const existing = await storage.getVerdictForEvent(eventId);
       if (existing) return { verdict: existing.verdict, verdictId: existing.id };
-      const state = await buildShieldGraph(brainDeps(storage)).invoke({ event });
+      const deps = brainDeps(storage);
+      const state = await buildShieldGraph(deps).invoke({ event });
+      // KEYPAD ladder for forwarded SMS: the brain calls Maa for red; yellow also gets Aasha
+      // Didi's call (one attempt, gated and signed) next to Riya's quiet card.
+      if (event.channel === "gateway_sms" && state.decision.verdict.level === "yellow" && state.decision.verdictId) {
+        await keypadYellowCall(deps, { id: state.decision.verdictId, event, parent: state.parent, verdict: state.decision.verdict });
+      }
       return state.decision;
     });
+  }
+
+  async function keypadYellowCall(deps: ShieldBrainDeps, record: StoredVerdict) {
+    if (!await checkAction(deps, record, "speak_clip")) return;
+    const lineId = record.parent.line_id;
+    if (!lineId) {
+      await audit(deps, record, { step: "call_parent", status: "skipped", action: "speak_clip", details: { reason: "missing_line", attempt: 1, level: "yellow" } });
+      return;
+    }
+    let status = "failed";
+    try {
+      status = (await ports.calls.callParent({ familyId: record.event.family_id, parentId: record.event.parent_id,
+        lineId, verdictId: record.id, attempt: 1 })).status;
+    } catch { /* Provider failure is signed; never expose its raw error. */ }
+    await audit(deps, record, { step: "call_parent", status: status === "failed" ? "failed" : "ok", action: "speak_clip",
+      details: { result: status, attempt: 1, level: "yellow" } });
   }
 
   const serverDeps: ShieldServerDeps = {
@@ -152,8 +185,69 @@ export function createShieldRuntime(ports: ShieldRuntimePorts | ShieldRuntimeTes
   function drillDeps(): DrillDeps {
     if (!db.drills) throw new Error("Shield drill storage not configured");
     const storage = db.drills;
-    return { db: { ...storage, withParentLock: (ctx, work) => track(storage.withParentLock(ctx, work)) }, stories: ports.drillStories ?? [], clock: ports.clock,
+    // The shared ten-story catalogue is the default; a host may inject its own.
+    return { db: { ...storage, withParentLock: (ctx, work) => track(storage.withParentLock(ctx, work)) },
+      stories: ports.drillStories ?? HELPER_DRILL_STORIES, clock: ports.clock,
       router: { understand: request => track(ports.router.understand(request)) } };
+  }
+
+  function experienceStore(): ExperienceStore {
+    if (!db.experience) throw new Error("Shield experience drill storage not configured");
+    const storage = db.experience;
+    return { ...storage, withParentLock: (ctx, work) => track(storage.withParentLock(ctx, work)) };
+  }
+  function experienceDeps(): ExperienceDeps {
+    return { db: experienceStore(), clock: ports.clock, scheduler };
+  }
+  const signDrill = (ctx: ToolCtx, type: string, line: string, data: Record<string, string | number | boolean> = {}) =>
+    track(ports.sign({ familyId: ctx.familyId, type, line, data: { parent_id: ctx.parentId, ...data } }));
+
+  async function runExperienceJob(payload: unknown): Promise<ExperienceJobResult> {
+    const job = EXPERIENCE_DRILL_JOB;
+    const parsed = ExperienceJobPayload.safeParse(payload);
+    if (!parsed.success) return { job, outcome: "invalid_payload" };
+    const ctx = { familyId: parsed.data.family_id, parentId: parsed.data.parent_id };
+    const drillId = parsed.data.drill_id;
+    const store = experienceStore();
+    // Every lock is checked again at call time: Maa or Riya may have switched it off since.
+    const blocked = await store.withParentLock(ctx, async tx => {
+      if (!await tx.getParent(ctx)) return "not_found" as const;
+      const drill = await tx.getExperience({ ...ctx, drillId });
+      if (!drill) return "not_found" as const;
+      if (drill.score !== null) return "already_answered" as const;
+      if (!await tx.hasConsent(ctx)) return "no_consent" as const;
+      if (!await tx.isEnabled(ctx)) return "disabled" as const;
+      if (isQuietHours(ports.clock.now())) return "quiet_hours" as const;
+      return null;
+    });
+    const script = experienceScriptFor(drillId);
+    if (blocked || !script) {
+      await signDrill(ctx, "shield.drill.experience.skipped", "Experience drill call not placed.", { reason: blocked ?? "no_script" });
+      return { job, outcome: blocked ?? "not_found" };
+    }
+    if (!await ports.scheduler.claim(`${job}:${drillId}`)) return { job, outcome: "duplicate" };
+    const allowed = (await ports.gate.check({ familyId: ctx.familyId, action: "speak_clip" })).allowed === true;
+    await sign({ familyId: ctx.familyId, parentId: ctx.parentId, eventKey: drillId, step: "gate.action",
+      action: "speak_clip", status: allowed ? "ok" : "denied" });
+    if (!allowed) return { job, outcome: "denied" };
+    await ports.calls.startResponderCall({ familyId: ctx.familyId, toPersonId: ctx.parentId, checkId: drillId,
+      purpose: EXPERIENCE_DRILL_PURPOSE, script: { id: script.id, opening_hi: script.opening_hi, ask_hi: script.ask_hi, nudge_hi: script.nudge_hi } });
+    await signDrill(ctx, "shield.drill.experience.started", "Experience drill call placed with a generic script.", { script_id: script.id });
+    return { job, outcome: "started" };
+  }
+
+  function callGateDeps(ctx: ToolCtx): CallGateDeps {
+    const tools = toolDeps(ctx);
+    const missing = async (): Promise<never> => { throw new Error("Shield call gateway storage not configured"); };
+    return { env: ports.env, db: db.callgate ?? { getParent: missing, isFamilyNumber: missing },
+      rules: { scoreText: scoreVoiceText }, router: { understand: request => track(ports.router.understand(request)) },
+      alertChild: input => tools.atlas.alertChild(input), sign: entry => track(ports.sign(entry)) };
+  }
+
+  function evidenceDeps(): EvidenceDeps {
+    if (!db.evidence || !ports.timeline) throw new Error("Shield evidence ports not configured");
+    return { db: db.evidence, timeline: ports.timeline, clock: ports.clock,
+      ...(ports.evidenceSensitive ? { sensitive: ports.evidenceSensitive } : {}) };
   }
 
   const run = (async (name: ShieldToolName, ctx: ToolCtx, input: unknown) => {
@@ -161,10 +255,18 @@ export function createShieldRuntime(ports: ShieldRuntimePorts | ShieldRuntimeTes
     if (name === "drill_answer") {
       // The drill tool includes membership and storage work inside its deadline.
       try { return track(drillAnswer.run(drillDeps(), ctx, input as Parameters<typeof drillAnswer.run>[2])); }
-      catch { return { score: 0, teach_line_hi: DRILL_FALLBACK_LINE }; }
+      catch { return { score: 0, teach_line_hi: DRILL_FALLBACK_LINE, teach: true }; }
+    }
+    if (name === "experience_turn") {
+      try { return track(experienceTurn.run(experienceDeps(), ctx, input as Parameters<typeof experienceTurn.run>[2])); }
+      catch { return { stop: true, line: EXPERIENCE_STOP_LINE }; }
+    }
+    if (name === "call_screen") {
+      try { return track(callScreen.run(callGateDeps(ctx), ctx, input as Parameters<typeof callScreen.run>[2])); }
+      catch { return ports.env.CALL_GATEWAY_ENABLED === "1" ? { enabled: true, action: "forward", reason: "unsure", line: CALL_GATE_FORWARD_LINE } : { enabled: false }; }
     }
     if (!await db.brain.getParent(ctx)) throw new Error("Shield tool parent not found");
-    const tool: ShieldTool = scheduledShieldTools[name];
+    const tool: ShieldTool = scheduledShieldTools[name as keyof typeof scheduledShieldTools];
     return track(tool.run(toolDeps(ctx), ctx, input));
   }) as BoundShieldTools["run"];
 
@@ -176,11 +278,71 @@ export function createShieldRuntime(ports: ShieldRuntimePorts | ShieldRuntimeTes
     shieldTools: { run } satisfies BoundShieldTools,
     pickDrill: (input: ToolCtx & { now: Date }) => pickDrill(drillDeps(), input),
     scamSense: (input: ToolCtx & { month: string }) => scamSense(drillDeps(), input),
-    buildEvidencePack: (input: EvidenceRequest) => {
-      if (!db.evidence || !ports.timeline) throw new Error("Shield evidence ports not configured");
-      return buildEvidencePack({ db: db.evidence, timeline: ports.timeline, clock: ports.clock }, input);
+    buildEvidencePack: (input: EvidenceRequest) => buildEvidencePack(evidenceDeps(), input),
+    /** Recompute a stored receipt's contents hash and chain checkpoint. */
+    verifyEvidencePack: (input: { familyId: string; packId: string }) => verifyEvidencePack(evidenceDeps(), input),
+
+    /** Keypad onboarding: register the number Maa forwards SMS from. Only its fingerprint is stored. */
+    async registerGatewayParent(input: { familyId: string; parentId: string; phone: string }) {
+      const registry = db.gateway;
+      if (!registry?.registerParent) throw new Error("Shield gateway storage is not configured");
+      const phoneHash = await numberFingerprint(input.phone);
+      if (!phoneHash) throw new Error("Invalid gateway phone number");
+      if (!await registry.registerParent({ phoneHash, familyId: input.familyId, parentId: input.parentId })) {
+        throw new Error("Shield gateway parent not found");
+      }
+      await signDrill(input, "shield.gateway.registered", "Keypad parent registered for SMS forwarding.");
+      return { ok: true as const };
+    },
+    async unregisterGatewayParent(input: { familyId: string; parentId: string }) {
+      const registry = db.gateway;
+      if (!registry?.unregisterParent) throw new Error("Shield gateway storage is not configured");
+      const removed = await registry.unregisterParent(input);
+      await signDrill(input, "shield.gateway.unregistered", "Keypad parent removed from SMS forwarding.", { removed });
+      return { ok: true as const, removed };
+    },
+
+    /** Maa's recorded yes for experience drills (clipRef = storage reference of the recording). */
+    async recordDrillConsent(input: { familyId: string; parentId: string; clipRef: string }) {
+      const clipRef = String(input.clipRef ?? "").trim();
+      if (!clipRef || clipRef.length > 300) throw new Error("Invalid consent clip reference");
+      const row = await experienceStore().recordConsent({ ...input, clipRef, givenAt: ports.clock.now() });
+      if (!row) throw new Error("Drill parent not found");
+      await signDrill(input, "shield.drill.consent", "Maa recorded consent for experience drills.");
+      return { ok: true as const, consent_id: row.id };
+    },
+    async revokeDrillConsent(input: { familyId: string; parentId: string }) {
+      const revoked = await experienceStore().revokeConsent({ ...input, at: ports.clock.now() });
+      await signDrill(input, "shield.drill.consent_revoked", "Experience drill consent revoked.", { revoked });
+      return { ok: true as const, revoked };
+    },
+    /** The child's per-parent switch. byUserId must be a child member of the family. */
+    async setExperienceDrills(input: { familyId: string; parentId: string; enabled: boolean; byUserId: string }) {
+      if (typeof input.enabled !== "boolean") throw new Error("Invalid experience drill switch");
+      if (!await experienceStore().setEnabled({ ...input, at: ports.clock.now() })) throw new Error("Experience drills child access required");
+      await signDrill(input, "shield.drill.experience_switch", `Experience drills switched ${input.enabled ? "on" : "off"} by the child.`, { enabled: input.enabled });
+      return { ok: true as const, enabled: input.enabled };
+    },
+    /** Refuses unless consent AND switch AND none in the last 7 days AND outside quiet hours. */
+    async startExperienceDrill(input: { familyId: string; parentId: string }) {
+      const result = await startExperienceDrill(experienceDeps(), input);
+      await signDrill(input, result.ok ? "shield.drill.experience.scheduled" : "shield.drill.experience.refused",
+        result.ok ? "Experience drill scheduled." : "Experience drill refused.", result.ok ? { script_id: result.script_id } : { reason: result.reason });
+      return result;
+    },
+    /** Next praise line for the daily check-in (Sarvam variable @drill_praise), or null. */
+    async takeCheckinPraise(input: { familyId: string; parentId: string }) {
+      const line = await experienceStore().takeCheckinLine({ ...input, at: ports.clock.now() });
+      return line ? { drill_praise: line } : null;
+    },
+
+    /** Step 3.6 call gateway. { enabled: false } unless env CALL_GATEWAY_ENABLED === "1". */
+    screenCall: (input: { familyId: string; parentId: string } & ScreenCallInput) => {
+      const { familyId, parentId, ...call } = input;
+      return track(screenCall(callGateDeps({ familyId, parentId }), { familyId, parentId }, call));
     },
     async handleScheduledJob(name: string, payload: unknown) {
+      if (name === EXPERIENCE_DRILL_JOB) return runExperienceJob(payload);
       if (name === RETRY_PARENT_JOB || name === NO_REACTION_JOB) return handleBrainJob(name, payload, brainDeps(db));
       if (isShieldJobName(name)) {
         // The existing job parser returns invalid_payload rather than throwing.

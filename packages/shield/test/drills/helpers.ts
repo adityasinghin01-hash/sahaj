@@ -20,10 +20,10 @@ export function fixture(context = { familyId: "family", parentId: "parent" }) {
         try { return await work(deps.db); } finally { release(); }
       },
       async getParent(input) { return input.familyId === ctx.familyId && input.parentId === ctx.parentId; },
-      async recent() { return [...rows].sort((a, b) => b.asked_at.localeCompare(a.asked_at)).slice(0, 10); },
+      async recent() { return rows.filter(row => row.type === "helper").sort((a, b) => b.asked_at.localeCompare(a.asked_at)).slice(0, 10); },
       async insert(row) { rows.push(row); },
-      async getAsked(input) { return rows.find(row => row.drill_id === input.drillId && row.family_id === input.familyId && row.parent_id === input.parentId) ?? null; },
-      async saveAnswer(input) { const row = rows.find(r => r.drill_id === input.drillId)!; if (row.score === null) Object.assign(row, { score: input.score, answer_masked: input.answerMasked, teach_line_played: true }); },
+      async getAsked(input) { return rows.find(row => row.type === "helper" && row.drill_id === input.drillId && row.family_id === input.familyId && row.parent_id === input.parentId) ?? null; },
+      async saveAnswer(input) { const row = rows.find(r => r.drill_id === input.drillId)!; if (row.score === null) Object.assign(row, { score: input.score, answer_masked: input.answerMasked, teach_line_played: input.teachLinePlayed ?? true }); },
       async between(input) { return rows.filter(row => row.asked_at >= input.since && row.asked_at < input.until); },
     },
   };

@@ -178,7 +178,7 @@ const extraPorts = {
 };
 ```
 
-`DrillStory = { id, scam_type, story_hi, good_answers: string[], risky_answers: string[], teach_line_hi }`. No production stories are fabricated while the shared catalogue is absent. An empty catalogue returns no drill. With ten or fewer stories, the exact last-ten exclusion eventually exhausts the pool and returns null; more stories must be supplied before another unseen drill can be issued.
+`DrillStory = { id, scam_type, story_hi, good_answers: string[], risky_answers: string[], teach_line_hi }`. Without `drillStories` the runtime uses the shared ten-story catalogue (`HELPER_DRILL_STORIES`, from `@sahaj/shared` `HELPER_DRILLS`). An empty injected catalogue returns no drill. Never-asked stories come first; after that the least recently asked story repeats, so the pool never runs dry (K-B8).
 
 `EvidenceTimelineEntry = { at: string, step: string, status: "ok" | "denied" | "failed" | "skipped", action?: string, details?: string, money_sent?: boolean }`. Resolve database event IDs to the host's existing event keys/verdict IDs inside this adapter. Read the actual signed records/checkpoint, with the host's normal snapshot/retry policy. `money_sent` must be an explicit parent report associated with the incident. No timeline implementation or signature verification is invented by Shield.
 
@@ -199,7 +199,7 @@ The evidence API authorizes a current `family_members.role = 'child'` before rea
 
 All returned pack fields satisfy the card's strict four-digit rule, including hash and time fields. `created_at` is a UTC RFC 850 display timestamp with a two-digit year (for example `Saturday, 14-Nov-26 10:00:00 GMT`), and `chain_hash` is losslessly encoded as `hex-ap:` plus 64 letters `a..p` for original hex nibbles `0..f`. Use `decodeChainHash(pack.chain_hash)` for the original standard hex checkpoint; `encodeChainHash` is also exported. The receipt keeps the original hex. No claim of verified signature is implied by the export itself. The contents hash covers the deterministic UTF-8 JSON of all returned pack fields **except export `created_at`**, so exporting unchanged incident content again has the same hash. The fixed helpline label alone retains `1930`.
 
-The existing Postgres runner remains the C-03 regression gate and applies only its original two migrations. Run the additional C-04 runner to apply the new migration and execute the real concurrency, storage, scope, constraint and API-role RLS tests:
+All Postgres runners now apply every migration (K-B8). Run the C-04 runner to apply the new migration and execute the real concurrency, storage, scope, constraint and API-role RLS tests:
 
 ```sh
 bash packages/shield/test/drills/run-postgres.sh
@@ -208,3 +208,43 @@ SHIELD_DRILLS_DB_TEST_REQUIRED=1 DATABASE_URL=... pnpm -F @sahaj/shield test
 ```
 
 The extra runner grants the throwaway service login permission to assume the two test API roles; this grant is test bootstrap only, never a production migration. Without that explicit C-04 test flag, its three database scenarios skip. Both runners delete only their own temporary cluster. Neither runner changes an existing database.
+
+## K-B8: Phase 3 server logic
+
+Migrations: the runtime now expects **every** file in `infra/supabase/migrations` (both test runners apply them all, sorted by name), including `20261114000800_shield_experience_drills.sql`. `createShieldRuntimePg` supplies `db.experience` (consents, child switch, check-in lines) and `db.callgate` (reads `people.phone`). Offline test storage may leave them out; those features then fail closed (experience) or forward every call (call gateway).
+
+New optional ports: `evidenceSensitive` (child-only originals for evidence packs) and `env.CALL_GATEWAY_ENABLED`. `calls.startResponderCall` input gained optional `purpose: "experience_drill"` and `script` fields; existing adapters keep working but must ring the parent and speak the script when `purpose` is set (`toPersonId` = parent id, `checkId` = drill id).
+
+```ts
+// Step 3.4 SMS gateway onboarding (only the number's fingerprint is stored)
+await shield.registerGatewayParent({ familyId, parentId, phone });   // { ok: true } | throws
+await shield.unregisterGatewayParent({ familyId, parentId });        // { ok: true, removed }
+
+// Step 2.6 helper drills (default catalogue: the ten shared HELPER_DRILLS)
+await shield.pickDrill({ familyId, parentId, now });   // { drill_id, story_hi, checkin_variables: { drill_id, drill_story } } | null
+await shield.shieldTools.run("drill_answer", ctx, { drill_id, said });   // { score, teach_line_hi, teach }
+await shield.scamSense({ familyId, parentId, month }); // + by_type: { helper, experience }
+
+// Step 3.5 experience drills (opt-in)
+await shield.recordDrillConsent({ familyId, parentId, clipRef });
+await shield.revokeDrillConsent({ familyId, parentId });
+await shield.setExperienceDrills({ familyId, parentId, enabled, byUserId }); // byUserId: a child of the family
+await shield.startExperienceDrill({ familyId, parentId }); // { ok: true, drill_id, script_id } | { ok: false, reason }
+await shield.shieldTools.run("experience_turn", ctx, { drill_id, said, hung_up });  // { stop, line, score? }
+await shield.takeCheckinPraise({ familyId, parentId });   // { drill_praise } | null  → Sarvam @drill_praise
+
+// Step 3.6 call gateway (OFF unless CALL_GATEWAY_ENABLED === "1")
+await shield.screenCall({ familyId, parentId, from, saidWho, saidWhy });
+await shield.shieldTools.run("call_screen", ctx, { from, said_who, said_why });
+
+// Step 3.1 evidence
+await shield.buildEvidencePack({ familyId, verdictId, viewerUserId }); // unchanged signature; adds structured fields + pack_ref
+await shield.verifyEvidencePack({ familyId, packId });   // packId = pack.pack_ref or the receipt uuid
+```
+
+- **Keypad ladder for `gateway_sms`.** Red: the brain calls Maa (three attempts) and alerts Riya, as before. Yellow: after the brain's quiet card the runtime places one gated, signed `calls.callParent` (attempt 1) in the same `waitUntil` promise as the brain run, so it starts within seconds of the forward.
+- **Experience drills.** `startExperienceDrill` checks consent, switch, 7-day limit and quiet hours (20:00–09:00 IST) under the parent drill lock, inserts a `drills` row (`type = 'experience'`) and queues job `shield.drill.experience` (delay 0). `handleScheduledJob("shield.drill.experience", { family_id, parent_id, drill_id })` rechecks every lock, claims `shield.drill.experience:<drill_id>`, gates `speak_clip`, then calls `startResponderCall`. Scripts are generic and validated against every brand token, name and official domain in `rules.json`; each opening says it is an AI voice. `experience_turn` decides locally (no AI): 3+ digits (digits or spoken digit words), OTP/PIN/code without a refusal, or agreeing to share/pay → stop with line 9 + teach line, score 0; refusal → line 9, score 2; hang-up → score 2; refusal and hang-up queue a praise line for the next check-in. Stored answers have every digit replaced by `<NUM>`.
+- **Call gateway.** Saved family number (SHA-256 of the last 10 digits of `people.phone`, computed in Postgres) → forward without AI. Unknown caller → `scoreVoiceText` on the masked words, then `router.understand` (masked only). Scam → `{ action: "end", line, notify_parent: true }` and a red tool verdict through the existing child-alert branch (push + WhatsApp). Anything slow, failing or unsure → forward. "End" ends only the screening leg; the host must tell Maa a call was screened so she can call back (nothing is blocked or deleted).
+- **Evidence.** The pack adds `verdict`, `events`, `actions`, `asked_for`, `money_sent`, `pack_ref` (receipt id, letters only), `child_only` and `copy_for_1930_full`. `child_only` (full numbers and original message) comes from the optional `evidenceSensitive` port, is read only after the child-role check, and is excluded from the contents hash and from storage. `verifyEvidencePack` rebuilds the contents from the current incident and signed timeline and compares both the contents hash and the chain checkpoint with the stored receipt.
+
+Tests: `pnpm -F @sahaj/shield test` (memory), `bash infra/supabase/test/run-shield-db-test.sh` (Postgres layer, gateway, drills, experience, call gateway, evidence), `bash packages/shield/test/e2e/run-postgres.sh` (whole suite on Postgres). The runners' `grant authenticated, anon to service_role` is test bootstrap only.

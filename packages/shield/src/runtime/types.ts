@@ -1,13 +1,14 @@
 import type { Sql } from "postgres";
-import type { DrillStore, DrillStory } from "../drills";
-import type { EvidenceDeps, EvidenceStore } from "../evidence";
+import type { DrillStore, DrillStory, ExperienceStore } from "../drills";
+import type { EvidenceDeps, EvidenceSensitiveSource, EvidenceStore } from "../evidence";
+import type { CallGateDeps } from "../callgate";
 import type { understand, twoLock } from "@sahaj/adapters";
 import type { ShieldBrainDeps, StoredVerdict, TimelineRow, ChildCard } from "../brain/types.js";
 import type { ShieldServerDb } from "../server/types";
 import type { ShieldDeps, ToolCtx } from "../tools/types";
 import type { ShieldJobDeps, JobLedger } from "../jobs";
 import type { ShieldEvent } from "@sahaj/shared";
-import type { SmsGatewayDb } from "../gateway/types";
+import type { GatewayRegistryDb, SmsGatewayDb } from "../gateway/types";
 
 /** Extra persistence needed to join the graph to the existing server/tools DB. */
 export interface ShieldRuntimeDb {
@@ -23,7 +24,11 @@ export interface ShieldRuntimeDb {
   /** Serialize across workers; work receives storage using the locked connection. */
   withEventLock<T>(eventId: string, work: (db: ShieldRuntimeDb) => Promise<T>): Promise<T>;
   /** SMS gateway storage (migration 20261114000500). Without it the gateway route answers 500. */
-  gateway?: SmsGatewayDb;
+  gateway?: SmsGatewayDb & Partial<GatewayRegistryDb>;
+  /** Experience drills (migration 20261114000800). Absent = those features fail closed. */
+  experience?: ExperienceStore;
+  /** Call gateway lookups (people.phone fingerprints). Absent = screenCall forwards everything. */
+  callgate?: CallGateDeps["db"];
 }
 
 export type ShieldTimelineEntry = TimelineRow | Parameters<ShieldDeps["sign"]>[0];
@@ -36,6 +41,8 @@ export interface ShieldRuntimePorts {
   drillStories?: readonly DrillStory[];
   /** Required when building an evidence pack; absent configuration fails closed. */
   timeline?: EvidenceDeps["timeline"];
+  /** Child-only originals (full numbers, original message) for evidence packs. Optional. */
+  evidenceSensitive?: EvidenceSensitiveSource;
   router: { understand: typeof understand; twoLock: typeof twoLock };
   whatsapp: ShieldDeps["whatsapp"] & ShieldBrainDeps["whatsapp"];
   /** Persist the child-app card and request push delivery. Receives no inbox text. */
@@ -57,7 +64,9 @@ export interface ShieldRuntimePorts {
   waitUntil(promise: Promise<unknown>): void;
   env: { SHIELD_DEVICE_PAIRING_SECRET: string; SAFE_BROWSING_KEY?: string; DEMO_TIMER_SCALE?: string;
     /** Shared secret of the SMS gateway phone (>= 32 characters). Needed only for handleSmsGateway. */
-    SMS_GATEWAY_SECRET?: string };
+    SMS_GATEWAY_SECRET?: string;
+    /** "1" turns the call gateway (Step 3.6) on. Anything else: screenCall returns { enabled: false }. */
+    CALL_GATEWAY_ENABLED?: string };
   clock: { now(): Date };
   cache: ShieldBrainDeps["cache"];
   log?: { error(message: string, meta?: Record<string, unknown>): void };

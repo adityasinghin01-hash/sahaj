@@ -3,13 +3,34 @@
  * Service-role connection; every value is a bound parameter.
  */
 import type { ISql } from "postgres";
-import type { NewGatewayEventRow, SmsGatewayDb } from "../gateway/types";
+import type { GatewayRegistryDb, NewGatewayEventRow, SmsGatewayDb } from "../gateway/types";
 import { isUuid } from "./pg";
 
 const HASH_RE = /^[0-9a-f]{64}$/;
 
-export function createGatewayPg(sql: ISql): SmsGatewayDb {
+export function createGatewayPg(sql: ISql): SmsGatewayDb & GatewayRegistryDb {
   return {
+    async registerParent({ phoneHash, familyId, parentId }) {
+      if (!HASH_RE.test(phoneHash) || !isUuid(familyId) || !isUuid(parentId)) return false;
+      // One statement: the insert happens only when the parent belongs to the family. A number
+      // registered before (even by another family) moves to this parent: one phone, one owner.
+      const rows = await sql`
+        insert into public.shield_gateway_parents (phone_hash, family_id, parent_id)
+        select ${phoneHash}, p.family_id, p.id from public.people p
+        where p.id = ${parentId} and p.family_id = ${familyId}
+        on conflict (phone_hash) do update set family_id = excluded.family_id, parent_id = excluded.parent_id
+        returning phone_hash`;
+      return rows.length > 0;
+    },
+
+    async unregisterParent({ familyId, parentId }) {
+      if (!isUuid(familyId) || !isUuid(parentId)) return 0;
+      const rows = await sql`
+        delete from public.shield_gateway_parents where family_id = ${familyId} and parent_id = ${parentId}
+        returning phone_hash`;
+      return rows.length;
+    },
+
     async findParentByPhoneHash(phoneHash: string) {
       if (!HASH_RE.test(phoneHash)) return null;
       // The parent must still exist in the same family.
