@@ -301,6 +301,8 @@ server_env() {
       ;;
     api)
       export SAHAJ_LAB_MODE=1 SUPABASE_URL="$GW_URL"
+      # Keypad Sarvam tools run raw SQL as the service login (DATABASE_URL below is the restricted Atlas role).
+      export SARVAM_TOOLS_DATABASE_URL="$SERVICE_DB_URL"
       # Atlas checkpoints: verify-full TLS (packages/atlas/scripts/database-url.mjs) against the lab CA, as the
       # restricted sahaj_atlas_runtime login. LAB2_ATLAS=off leaves DATABASE_URL unset (workflow: not_configured).
       if [[ "${LAB2_ATLAS:-on}" != "off" ]]; then

@@ -59,8 +59,10 @@ function requireRow<T>(rows: T[]): T {
 
 export function createProductionSarvamDeps(env: Record<string, string | undefined> = process.env, overrides: ProductionOverrides = {}): CommandDeps {
   const db = overrides.db ?? serviceDatabase();
-  if (!overrides.sql && !env.DATABASE_URL) throw new Error('database_not_configured');
-  const sql = overrides.sql ?? getDbPools(env.DATABASE_URL!).auxSql;
+  // Raw-SQL tool ports need a service-level login; SARVAM_TOOLS_DATABASE_URL lets a deployment keep DATABASE_URL on a restricted role (e.g. the Atlas runtime).
+  const toolsDbUrl = env.SARVAM_TOOLS_DATABASE_URL ?? env.DATABASE_URL;
+  if (!overrides.sql && !toolsDbUrl) throw new Error('database_not_configured');
+  const sql = overrides.sql ?? getDbPools(toolsDbUrl!).auxSql;
   const now = overrides.now ?? (() => new Date());
   const signingKey = env.TIMELINE_SIGNING_PRIVATE_KEY ?? env.SIGNING_PRIVATE_KEY;
   if (!signingKey) throw new Error('timeline_signing_not_configured');
@@ -175,7 +177,7 @@ export function createProductionSarvamDeps(env: Record<string, string | undefine
         import('../../../../../../packages/shield/src/runtime'),
         import('../../../../../shield-api/src/ports'),
       ]);
-      const pools = overrides.sql ? { shieldSql: sql, auxSql: sql } : getDbPools(env.DATABASE_URL!);
+      const pools = overrides.sql ? { shieldSql: sql, auxSql: sql } : getDbPools(toolsDbUrl!);
       const runtime = createShieldRuntime(createShieldPorts({ ...pools, env, clock: { now } }));
       const body = await runtime.shieldTools.run('family_check', ctx, { claimed_name: 'Riya', asked_for: maskDigits(input.asked_for) });
       if (body.status !== 'checking' || typeof body.check_id !== 'string') throw new Error('shield_family_check_unavailable');
