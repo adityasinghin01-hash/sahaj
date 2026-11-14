@@ -1,5 +1,7 @@
 # Zapier Integrations (Z1, Z2, Z3, Z5)
 
+> K-ZAP (15 Nov): Z1/Z5 bodies and the Z2 response now also carry the snake_case fields the saved Zaps read (`occurred_at`, `start_at`, `week_start`, …). The examples below show only the original fields. See [docs/zapier/WIRING.md](../zapier/WIRING.md) for the current field lists.
+
 Sahaj Core 1 uses three minimal Zapier integration seams. Every webhook/report passes through its redaction boundary so **no phone numbers, OTPs, bank account numbers, or raw provider tokens** ever leave Sahaj. Outbound Zapier catch-hook delivery is strictly optional (env-gated) and **non-blocking** so a failed or slow webhook never blocks or rolls back Core 1 workflows.
 
 ---

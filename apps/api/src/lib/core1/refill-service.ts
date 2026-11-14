@@ -33,7 +33,7 @@ import {
   type Core1TimelinePort,
   type SupabaseClientLike,
 } from './wiring-common';
-import { postZapierHook, type ZapierDispatchOutcome, type ZapierFetch } from './zapier';
+import { nextIstReminderAt, postZapierHook, type ZapierDispatchOutcome, type ZapierFetch } from './zapier';
 import { serviceDatabase } from '../database';
 
 export interface RefillPermissionRow {
@@ -605,6 +605,8 @@ async function emitOptionalZapierWebhooks(params: {
   amountMinor: number;
   status: string;
   occurredAt: string;
+  permissionId: string | null;
+  chainHash: string;
 }): Promise<{ z1: ZapierDispatchOutcome; z5?: ZapierDispatchOutcome }> {
   const z1 = await postZapierHook({
     hook: 'ZAPIER_HOOK_Z1',
@@ -625,6 +627,8 @@ async function emitOptionalZapierWebhooks(params: {
       amountMinor: params.amountMinor,
       status: params.status,
       occurredAt: params.occurredAt,
+      permissionId: params.permissionId,
+      chainHash: params.chainHash,
     },
   });
 
@@ -642,7 +646,7 @@ async function emitOptionalZapierWebhooks(params: {
         personId: params.personId,
         entityId: params.medicine.id,
         label: params.medicine.label,
-        dueAt: params.occurredAt,
+        dueAt: nextIstReminderAt(params.occurredAt),
         summary: `Low stock threshold reached (${params.medicine.remainingCount} remaining) for ${params.medicine.label}.`,
         occurredAt: params.occurredAt,
       },
@@ -914,6 +918,8 @@ export async function executeRefillProposalCommand(
         amountMinor: gateRequest.amountMinor ?? 0,
         status: 'awaiting_approval',
         occurredAt: nowIso,
+        permissionId: decision.permissionId ?? null,
+        chainHash: tl.chainHash,
       });
 
       return Response.json(
@@ -1024,6 +1030,8 @@ export async function executeRefillProposalCommand(
       amountMinor: gateRequest.amountMinor ?? 0,
       status: 'authorized',
       occurredAt: nowIso,
+      permissionId: decision.permissionId ?? null,
+      chainHash: tl.chainHash,
     });
 
     return Response.json(
@@ -1202,6 +1210,8 @@ export async function executeRefillCommand(
         amountMinor: ar.amountMinor,
         status: 'delivered',
         occurredAt: nowIso,
+        permissionId: ar.permissionId,
+        chainHash: tl.chainHash,
       });
 
       return Response.json(
@@ -1497,6 +1507,8 @@ export async function executeRefillCommand(
       amountMinor: ar.amountMinor,
       status: 'authorized',
       occurredAt: nowIso,
+      permissionId: decision.permissionId ?? ar.permissionId,
+      chainHash: tl.chainHash,
     });
 
     return Response.json(

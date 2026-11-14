@@ -501,6 +501,14 @@ describe("AGY-X2: Core 2 G8 Gentle News, G9 After-Report (Zapier Z3) & Verified 
     expect(h.zapierCalls).toHaveLength(1);
     expect(h.zapierCalls[0].payload.schema).toBe("sahaj.zapier.z3.v1");
     expect(h.zapierCalls[0].payload.heard_count).toBe(1);
+    // K-ZAP: exact Z3 field list (documented in docs/zapier/WIRING.md); names/report stay in Sahaj.
+    expect(Object.keys(h.zapierCalls[0].payload).sort()).toEqual([
+      "accepted_at", "accepted_by_name", "closed_at", "deliveries_count", "event", "family_id",
+      "heard_count", "incident_id", "report", "resolution_duration_s", "schema", "summary_line",
+    ]);
+    expect(h.zapierCalls[0].payload.accepted_by_name).toBeNull();
+    expect(h.zapierCalls[0].payload.report).toBeNull();
+    expect(JSON.stringify(h.zapierCalls[0].payload)).not.toMatch(/Sharma|"(lat|lng|location|phone)"|9876543210|\+91/i);
 
     // Cross-family child cannot read this after-report
     const crossRead = await handleAfterReportGet(

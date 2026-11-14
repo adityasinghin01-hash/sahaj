@@ -619,5 +619,16 @@ describe('Core 1 Refill Approval Gate & Delivery Wiring', () => {
     expect(body.zapier.z5.error).toBe('webhook_failed');
     expect(calls).toHaveLength(2);
     expect(h.timelineEvents.filter(e => e.envelope.eventType === 'zapier.attempt')).toHaveLength(2);
+
+    // K-ZAP: producer wiring fills the Zap fields from the real signed step.
+    const authorizedRow = h.timelineEvents.find(e => e.envelope.eventType === 'core1.refill.authorized');
+    const z1Body = JSON.parse(calls.find(c => c.url.endsWith('/z1'))!.body);
+    expect(z1Body.chain_hash).toBe(authorizedRow!.chainHash);
+    expect(z1Body.decision).toBe('approved');
+    expect(z1Body.occurred_at).toMatch(/\+05:30$/);
+    const z5Body = JSON.parse(calls.find(c => c.url.endsWith('/z5'))!.body);
+    expect(z5Body.start_at).toMatch(/T10:00:00\+05:30$/);
+    expect(z5Body.end_at).toMatch(/T10:15:00\+05:30$/);
+    expect(z5Body.reminder_minutes_before).toBe(60);
   });
 });

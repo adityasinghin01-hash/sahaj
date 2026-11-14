@@ -21,7 +21,8 @@ import {
   type Core1TimelinePort,
   type SupabaseClientLike,
 } from './wiring-common';
-import { verifyZapierReportSecret } from './zapier';
+import { toIstIso, verifyZapierReportSecret } from './zapier';
+import { redactProseText } from '../core2-news/redaction';
 import { serviceDatabase } from '../database';
 
 export interface WeeklyReportDbFacts {
@@ -36,6 +37,8 @@ export interface WeeklyReportDbFacts {
 export interface FamilyReportStore {
   familyExists(familyId: string): Promise<boolean>;
   loadWeeklyFacts(familyId: string, periodStart: string, periodEnd: string): Promise<WeeklyReportDbFacts>;
+  /** Display name of the family's parent (Z2 `parent_name`). Optional; falls back to "Maa". */
+  getParentDisplayName?(familyId: string): Promise<string | null>;
 }
 
 export interface FamilyReportServiceDeps {
@@ -56,6 +59,20 @@ export function createSupabaseFamilyReportStore(db: SupabaseClientLike): FamilyR
         .maybeSingle();
       if (error) throw new Core1CommandError('family_lookup_failed', 503);
       return Boolean(data);
+    },
+
+    async getParentDisplayName(familyId) {
+      const { data, error } = await db
+        .from('people')
+        .select('display_name')
+        .eq('family_id', familyId)
+        .eq('role', 'parent')
+        .order('created_at', { ascending: true })
+        .limit(1)
+        .maybeSingle();
+      if (error || !data) return null;
+      const raw = (data as { display_name?: unknown }).display_name;
+      return typeof raw === 'string' ? raw : null;
     },
 
     async loadWeeklyFacts(familyId, periodStart, periodEnd) {
@@ -222,6 +239,99 @@ function buildWeeklyReportJson(params: {
   };
 }
 
+export interface ZapierZ2ReportFields {
+  week_start: string;
+  week_end: string;
+  parent_name: string;
+  checkin_summary: string;
+  mood_summary: string;
+  medicine_summary: string;
+  errand_summary: string;
+  alert_summary: string;
+  weekly_summary: string;
+}
+
+const plural = (n: number, one: string, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
+
+/** Short, redacted prose: no phone numbers, OTP-like digit runs, or line breaks. */
+function shortSafe(text: string, max = 160): string {
+  const cleaned = redactProseText(text.replace(/\s+/g, ' ').trim());
+  return cleaned.length <= max ? cleaned : `${cleaned.slice(0, max - 1).trimEnd()}…`;
+}
+
+/** Collects `label: value` notes the check-in service writes into timeline human lines. */
+function collectCheckInNotes(records: RawTimelineRecord[], label: 'mood' | 'medicines'): string[] {
+  const re = new RegExp(`${label}:\\s*([A-Za-z][A-Za-z '-]{0,30})`, 'i');
+  const out: string[] = [];
+  for (const r of records) {
+    const m = r.contentPreview ? re.exec(r.contentPreview) : null;
+    if (m) out.push(m[1].trim().toLowerCase());
+  }
+  return out;
+}
+
+/**
+ * Z2 template fields (Google Docs placeholders). Every value is a plain short string;
+ * week bounds are full timestamps with the Asia/Kolkata offset.
+ */
+export function buildZapierZ2Fields(params: {
+  periodStart: string;
+  periodEnd: string;
+  parentName: string | null;
+  facts: WeeklyReportDbFacts;
+}): ZapierZ2ReportFields {
+  const { facts } = params;
+  const parentName = shortSafe(params.parentName?.trim() || 'Maa', 60).replace(/<PHONE>|\*{6}/g, '').trim() || 'Maa';
+
+  const totalCalls = facts.calls.length;
+  const completedCalls = facts.calls.filter((c) => c.status === 'completed').length;
+  const checkin = totalCalls === 0
+    ? 'No check-in calls this week.'
+    : `${completedCalls} of ${plural(totalCalls, 'check-in call')} completed.`;
+
+  const moods = collectCheckInNotes(facts.timelineRecords, 'mood');
+  const distinctMoods = [...new Set(moods)].slice(0, 3);
+  const mood = moods.length === 0
+    ? 'No mood noted this week.'
+    : `Mood noted on ${plural(moods.length, 'check-in')}: ${distinctMoods.join(', ')}.`;
+
+  const meds = collectCheckInNotes(facts.timelineRecords, 'medicines');
+  const medicine = meds.length === 0
+    ? 'No medicine updates noted on check-ins this week.'
+    : `Medicines discussed on ${plural(meds.length, 'check-in')}: ${[...new Set(meds)].slice(0, 3).join(', ')}.`;
+
+  const refillsDone = facts.refills.filter((r) => r.status === 'executed').length;
+  const refillsPending = facts.refills.filter((r) => r.status === 'pending' || r.status === 'approved').length;
+  const errand = facts.refills.length === 0
+    ? 'No errands this week.'
+    : `${plural(facts.refills.length, 'medicine refill')}: ${refillsDone} completed, ${refillsPending} in progress.`;
+
+  const urgent = facts.incidents.length;
+  const resolved = facts.incidents.filter((i) => i.state === 'closed' || i.state === 'done').length;
+  const alertParts = [
+    urgent === 0 ? 'No urgent alerts' : `${plural(urgent, 'urgent alert')} (${resolved} resolved)`,
+    plural(facts.nudges.length, 'missed-call nudge'),
+    plural(facts.shieldEventsCount, 'scam warning'),
+  ];
+  const alert = `${alertParts.join(', ')}.`;
+
+  const weekly = urgent === 0
+    ? `A calm week for ${parentName}: ${checkin.toLowerCase().replace(/\.$/, '')}.`
+    : `${parentName} had ${plural(urgent, 'urgent alert')} this week; ${checkin.toLowerCase().replace(/\.$/, '')}.`;
+
+  return {
+    week_start: toIstIso(params.periodStart) ?? params.periodStart,
+    week_end: toIstIso(params.periodEnd) ?? params.periodEnd,
+    parent_name: parentName,
+    checkin_summary: shortSafe(checkin),
+    mood_summary: shortSafe(mood),
+    medicine_summary: shortSafe(medicine),
+    errand_summary: shortSafe(errand),
+    alert_summary: shortSafe(alert),
+    weekly_summary: shortSafe(weekly, 240),
+  };
+}
+
 /**
  * POST /api/core1/family-report:
  * Compiles redacted weekly report from real database rows (`calls`, `incidents`, `action_requests`/refills,
@@ -343,8 +453,13 @@ export async function executeWeeklyFamilyReportZapierGet(
       facts,
       nowDate,
     });
+    const parentName = deps.store.getParentDisplayName
+      ? await deps.store.getParentDisplayName(familyId).catch(() => null)
+      : null;
+    const z2Fields = buildZapierZ2Fields({ periodStart, periodEnd, parentName, facts });
 
-    return Response.json(report, { status: 200 });
+    // Nine top-level template fields for the Z2 Docs step, plus the earlier report keys.
+    return Response.json({ ...z2Fields, ...report }, { status: 200 });
   } catch (error) {
     if (error instanceof Core1CommandError) {
       return Response.json({ error: error.code }, { status: error.status });
