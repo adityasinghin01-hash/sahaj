@@ -44,7 +44,7 @@ function Cleanup {
        delete from public.outbox where family_id='$F'; delete from public.action_requests where family_id='$F'; delete from public.incidents where family_id='$F';
        delete from sahaj_private.call_content where family_id='$F'; alter table public.consents disable trigger consents_append_only;
        delete from public.consents where family_id='$F'; alter table public.consents enable trigger consents_append_only;
-       delete from public.calls where family_id='$F'; delete from public.people where family_id='$F'; delete from public.families where id='$F';" | Out-Null
+       delete from public.provider_identities where family_id='$F'; delete from public.calls where family_id='$F'; delete from public.people where family_id='$F'; delete from public.families where id='$F';" | Out-Null
 }
 try {
   Cleanup
@@ -56,6 +56,8 @@ try {
        insert into public.assignments(id,family_id,incident_id,person_id,expires_at) values('$ASG','$F','$INC','$R',now()+interval '1 hour');
        insert into public.outbox(id,family_id,kind,dedupe_key,payload_ciphertext,status,attempt_count,lease_token,lease_until,action_request_id) values
          ('$OB1','$F','call','conc1','x','processing',1,'$L1',now()+interval '10 minutes','$AR'),('$OB2','$F','call','conc2','x','processing',1,'$L2',now()+interval '10 minutes',null);
+       alter table public.outbox add column if not exists action text; alter table public.outbox add column if not exists incident_id uuid;
+       update public.outbox set action='urgent_responder', incident_id='$INC' where id='$OB1'; update public.outbox set action='check_in' where id='$OB2';
        select public.bind_outbox_dispatch('$F','$OB1','$R','twilio','twilio.create_call','$CALL_TW','$INC','$ASG');
        select public.bind_outbox_dispatch('$F','$OB2','$P','twilio','twilio.create_call','$CALL_REC');" | Out-Null
 
@@ -67,7 +69,7 @@ try {
   Check ([int](Sql "select count(*) from public.dispatch_ledger where outbox_id='$OB1'") -eq 1) 'one ledger row for the outbox'
 
   # 2. Responder acceptance replays in parallel return one proof and accept once.
-  Sql "select public.complete_dispatch('$F','dispatch:conc1:a1','CA$('d' * 32)',null,null,true);
+  Sql "select public.complete_dispatch('$F','dispatch:conc1:a1','CA$('d' * 32)','AC$('a' * 32)','$('c' * 64)',true);
        insert into public.raw_events(family_id,source,provider_event_id,event_type,metadata,status) values
         ('$F','twilio','ACX:gather:CAX','twilio.gather.response',jsonb_build_object('call_id','$CALL_TW','person_id','$R','digit','1'),'processed');" | Out-Null
   $acc = "select public.record_responder_acceptance('$F','ACX:gather:CAX')->>'proof_event_id';"

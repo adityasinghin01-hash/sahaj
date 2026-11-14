@@ -2,6 +2,8 @@
 -- NOT YET EXECUTED by its author (no Postgres was available): the parent runs it after review. Never run against the real project.
 -- Concurrency (two sessions) is covered separately by phase2_concurrency.ps1.
 begin;
+alter table public.outbox add column if not exists action text;
+alter table public.outbox add column if not exists incident_id uuid;
 insert into public.families(id,name) values
  ('b2000000-0000-4000-8000-000000000001','Synthetic Phase2 A'),('b2000000-0000-4000-8000-000000000002','Synthetic Phase2 B');
 insert into public.people(id,family_id,display_name,role) values
@@ -13,7 +15,8 @@ insert into public.calls(id,family_id,person_id,provider) values
  ('d2000000-0000-4000-8000-000000000002','b2000000-0000-4000-8000-000000000001','c2000000-0000-4000-8000-000000000003','twilio'),
  ('d2000000-0000-4000-8000-000000000003','b2000000-0000-4000-8000-000000000002','c2000000-0000-4000-8000-000000000002','sarvam'),
  ('d2000000-0000-4000-8000-000000000004','b2000000-0000-4000-8000-000000000001','c2000000-0000-4000-8000-000000000001','twilio'),
- ('d2000000-0000-4000-8000-000000000005','b2000000-0000-4000-8000-000000000001','c2000000-0000-4000-8000-000000000001','twilio');
+ ('d2000000-0000-4000-8000-000000000005','b2000000-0000-4000-8000-000000000001','c2000000-0000-4000-8000-000000000001','twilio'),
+ ('d2000000-0000-4000-8000-000000000006','b2000000-0000-4000-8000-000000000001','c2000000-0000-4000-8000-000000000001','twilio');
 insert into public.incidents(id,family_id,person_id,severity) values
  ('a2000000-0000-4000-8000-000000000001','b2000000-0000-4000-8000-000000000001','c2000000-0000-4000-8000-000000000001','urgent');
 insert into public.action_requests(id,family_id,person_id,action,expires_at) values
@@ -27,6 +30,53 @@ insert into public.outbox(id,family_id,kind,dedupe_key,payload_ciphertext,status
  ('e2000000-0000-4000-8000-000000000003','b2000000-0000-4000-8000-000000000002','call','k3','x','processing',1,'f2000000-0000-4000-8000-000000000003',now()+interval '1 minute',null),
  ('e2000000-0000-4000-8000-000000000004','b2000000-0000-4000-8000-000000000001','call','k4','x','processing',1,'f2000000-0000-4000-8000-000000000004',now()+interval '1 minute',null),
  ('e2000000-0000-4000-8000-000000000005','b2000000-0000-4000-8000-000000000001','call','k5','x','processing',1,'f2000000-0000-4000-8000-000000000005',now()+interval '1 minute','a3000000-0000-4000-8000-000000000002');
+
+-- care/domain actions (Phase 3 outbox.action) differ from provider operations (ledger.action)
+update public.outbox set action='check_in' where id in ('e2000000-0000-4000-8000-000000000001','e2000000-0000-4000-8000-000000000004','e2000000-0000-4000-8000-000000000005');
+update public.outbox set action='urgent_responder',incident_id='a2000000-0000-4000-8000-000000000001' where id='e2000000-0000-4000-8000-000000000002';
+update public.outbox set action_request_id='a3000000-0000-4000-8000-000000000002' where id='e2000000-0000-4000-8000-000000000004';
+
+-- Phase 3 predicates (c614a32 outbox_proof / outbox_acceptance), mirrored here without Phase 3's target_id column, plus the
+-- strict form the bridge requires: normalized_proof AND the stored ledger and binding rows. Both must hold for real proof.
+create function pg_temp.p3_delivery(p_outbox uuid,p_person uuid,p_strict boolean) returns text language plpgsql as $$
+declare o public.outbox;kinds text[];
+begin
+  select * into o from public.outbox where id=p_outbox;
+  if o.id is null or o.action_request_id is null then return null; end if;
+  select array_agg(distinct case e.event_type when 'delivery.confirmed' then 'delivered' else 'not_sent' end) into kinds
+  from public.raw_events e where e.family_id=o.family_id and e.status='processed' and e.source in ('twilio','sarvam','telecmi','whatsapp')
+    and e.event_type in ('delivery.confirmed','delivery.not_sent') and e.metadata->>'outbox_id'=o.id::text
+    and e.metadata->>'action_request_id'=o.action_request_id::text and e.metadata->>'action'=o.action and coalesce(e.metadata->>'dispatch_key','')<>''
+    and e.metadata->>'outcome'=case e.event_type when 'delivery.confirmed' then 'delivered' else 'confirmed_not_sent' end
+    and exists(select 1 from public.provider_identities pi where pi.family_id=o.family_id and pi.person_id=p_person and pi.source=e.source
+      and pi.account_id=e.metadata->>'account_id' and pi.enabled and pi.revoked_at is null)
+    and (not p_strict or (e.normalized_proof and exists(select 1 from public.dispatch_ledger l join public.dispatch_bindings b on b.outbox_id=l.outbox_id
+      where l.family_id=e.family_id and l.idempotency_key=e.metadata->>'dispatch_key' and l.outbox_id=o.id and l.provider=e.source
+        and l.provider_ref=e.metadata->>'provider_ref' and l.action=e.metadata->>'provider_action' and b.person_id=p_person)));
+  if kinds is null then return null; end if;
+  return kinds[1];
+end$$;
+create function pg_temp.p3_accept(p_outbox uuid,p_strict boolean) returns boolean language plpgsql as $$
+declare o public.outbox;r public.action_requests;
+begin
+  select * into o from public.outbox where id=p_outbox;
+  if o.id is null or o.action<>'urgent_responder' or o.incident_id is null or o.action_request_id is null then return false; end if;
+  select * into r from public.action_requests where id=o.action_request_id and family_id=o.family_id;
+  return exists(select 1 from public.assignments a
+    join public.incidents i on i.id=a.incident_id and i.family_id=a.family_id and i.person_id=r.person_id
+    join public.raw_events e on e.id=a.verified_by_provider_event and e.family_id=a.family_id
+    join public.calls c on c.family_id=a.family_id and c.id::text=e.metadata->>'call_id' and c.person_id=a.person_id and c.provider=e.source
+    where a.family_id=o.family_id and a.incident_id=o.incident_id and a.status='accepted' and a.person_id<>r.person_id
+      and e.status='processed' and e.event_type='responder.accepted' and e.source in ('twilio','sarvam','telecmi','whatsapp')
+      and e.metadata->>'outbox_id'=o.id::text and e.metadata->>'action_request_id'=r.id::text and e.metadata->>'action'='urgent_responder'
+      and e.metadata->>'incident_id'=o.incident_id::text and e.metadata->>'assignment_id'=a.id::text
+      and e.metadata->>'responder_person_id'=a.person_id::text and e.metadata->>'person_id'=a.person_id::text and c.external_id is not null
+      and e.metadata->>'subject_person_id'=i.person_id::text
+      and exists(select 1 from public.provider_identities pi where pi.family_id=o.family_id and pi.person_id=a.person_id and pi.source=e.source
+        and pi.account_id=e.metadata->>'account_id' and pi.enabled and pi.revoked_at is null)
+      and (not p_strict or (e.normalized_proof and exists(select 1 from public.dispatch_ledger l where l.family_id=e.family_id and l.outbox_id=o.id
+        and l.idempotency_key=e.metadata->>'dispatch_key' and l.provider_ref=c.external_id and l.status in ('dispatched','delivered')))));
+end$$;
 
 -- ---------------------------------------------------------------- privileges
 do $$ declare t text; begin
@@ -130,26 +180,39 @@ end $$;
 
 -- ---------------------------------------------------------------- normalized delivery proof and reconciliation
 do $$ declare fam uuid := 'b2000000-0000-4000-8000-000000000001'; tw uuid := 'd2000000-0000-4000-8000-000000000004'; o uuid := 'e2000000-0000-4000-8000-000000000004';
-  src uuid; src_done uuid; forged uuid; proof jsonb; ref text := 'CA'||repeat('b',32); k text := 'dispatch:o4:a1'; begin
+  src uuid; src_done uuid; forged uuid; proof jsonb; m jsonb; ref text := 'CA'||repeat('b',32); k text := 'dispatch:o4:a1'; begin
   perform public.bind_outbox_dispatch(fam,o,'c2000000-0000-4000-8000-000000000001','twilio','twilio.create_call',tw);
   perform public.claim_dispatch(fam,'c2000000-0000-4000-8000-000000000001',k,'twilio','twilio.create_call',o,'f2000000-0000-4000-8000-000000000004',tw);
   -- provider answered but bookkeeping failed: unknown WITH a reference, then identity repair links the call
   if not public.mark_dispatch_unknown(fam,k,'bookkeeping_failed',ref) then raise exception 'FAIL unknown'; end if;
-  if not public.bind_dispatch_identity(fam,k,null,null,false) then raise exception 'FAIL repair'; end if;
+  begin perform public.bind_dispatch_identity(fam,k,null,null,false); raise exception 'FAIL repair without account'; exception when invalid_parameter_value then null; end;
+  if not public.bind_dispatch_identity(fam,k,'AC'||repeat('a',32),repeat('d',64),false) then raise exception 'FAIL repair'; end if;
   insert into public.raw_events(family_id,source,provider_event_id,event_type,metadata,status) values
    (fam,'twilio','st-noanswer','twilio.call_status',jsonb_build_object('status','no-answer','call_id',tw,'person_id','c2000000-0000-4000-8000-000000000001'),'processed') returning id into src;
   insert into public.raw_events(family_id,source,provider_event_id,event_type,metadata,status) values
    (fam,'twilio','st-completed','twilio.call_status',jsonb_build_object('status','completed','call_id',tw),'processed') returning id into src_done;
   -- a generic (non-normalized) event with perfect-looking metadata is not proof
   insert into public.raw_events(family_id,source,provider_event_id,event_type,metadata,status) values
-   (fam,'twilio','forged-delivery','delivery.not_sent',jsonb_build_object('dispatch_key',k,'outcome','confirmed_not_sent','outbox_id',o,'provider_ref',ref,'action','twilio.create_call','action_request_id',null),'processed') returning id into forged;
+   (fam,'twilio','forged-delivery','delivery.not_sent',jsonb_build_object('dispatch_key',k,'outcome','confirmed_not_sent','outbox_id',o,'provider_ref',ref,'action','check_in','provider_action','twilio.create_call','action_request_id','a3000000-0000-4000-8000-000000000002','account_id','AC'||repeat('a',32),'person_id','c2000000-0000-4000-8000-000000000001'),'processed') returning id into forged;
+  -- Phase 3's non-strict predicate would accept the forged row; the strict one (normalized flag + ledger/binding join) must not
+  if pg_temp.p3_delivery(o,'c2000000-0000-4000-8000-000000000001',false) is distinct from 'not_sent' then raise exception 'FAIL forged row should fool only the non-strict predicate'; end if;
+  if pg_temp.p3_delivery(o,'c2000000-0000-4000-8000-000000000001',true) is not null then raise exception 'FAIL strict predicate accepted forged row'; end if;
   if public.reconcile_dispatch(fam,k,forged,'confirmed_not_sent') then raise exception 'FAIL forged event reconciled'; end if;
   begin perform public.record_delivery_proof(fam,src_done,'confirmed_not_sent'); raise exception 'FAIL completed call is proof'; exception when insufficient_privilege then null; end;
   begin perform public.record_delivery_proof(fam,src,'delivered'); raise exception 'FAIL call proves delivered'; exception when insufficient_privilege then null; end;
   begin perform public.record_delivery_proof('b2000000-0000-4000-8000-000000000002',src,'confirmed_not_sent'); raise exception 'FAIL cross-family proof'; exception when insufficient_privilege then null; end;
   proof := public.record_delivery_proof(fam,src,'confirmed_not_sent');
   if proof->>'dispatch_key'<>k or (proof->>'outbox_id')::uuid<>o then raise exception 'FAIL proof derivation'; end if;
-  if (select metadata->>'action_request_id' from public.raw_events where id=(proof->>'proof_event_id')::uuid) is not null then raise exception 'FAIL action_request_id invented'; end if;
+  select metadata into m from public.raw_events where id=(proof->>'proof_event_id')::uuid;
+  if m->>'action'<>'check_in' or m->>'provider_action'<>'twilio.create_call' or m->>'account_id'<>'AC'||repeat('a',32) or m->>'dispatch_key'<>k
+    or m->>'action_request_id'<>'a3000000-0000-4000-8000-000000000002' or m->>'provider_ref'<>ref or m->>'outcome'<>'confirmed_not_sent' then
+    raise exception 'FAIL common delivery metadata %',m;
+  end if;
+  if not (select normalized_proof from public.raw_events where id=(proof->>'proof_event_id')::uuid) then raise exception 'FAIL normalized flag'; end if;
+  -- the real proof satisfies the Phase 3 predicate in BOTH its current and its strict form (and the forged row is still ignored there)
+  if pg_temp.p3_delivery(o,'c2000000-0000-4000-8000-000000000001',false) is distinct from 'not_sent'
+    or pg_temp.p3_delivery(o,'c2000000-0000-4000-8000-000000000001',true) is distinct from 'not_sent' then raise exception 'FAIL real proof vs Phase 3 predicate'; end if;
+  if pg_temp.p3_delivery(o,'c2000000-0000-4000-8000-000000000002',true) is not null then raise exception 'FAIL proof matched another person'; end if;
   if public.record_delivery_proof(fam,src,'confirmed_not_sent')->>'proof_event_id'<>proof->>'proof_event_id' then raise exception 'FAIL proof replay'; end if;
   if public.reconcile_dispatch(fam,'dispatch:other:a1',(proof->>'proof_event_id')::uuid,'confirmed_not_sent') then raise exception 'FAIL other key'; end if;
   if public.reconcile_dispatch(fam,k,(proof->>'proof_event_id')::uuid,'delivered') then raise exception 'FAIL other outcome'; end if;
@@ -178,7 +241,9 @@ end $$;
 do $$ declare fam uuid := 'b2000000-0000-4000-8000-000000000001'; tw uuid := 'd2000000-0000-4000-8000-000000000002'; o uuid := 'e2000000-0000-4000-8000-000000000002';
   resp uuid := 'c2000000-0000-4000-8000-000000000003'; asg uuid := 'a4000000-0000-4000-8000-000000000001'; ref text := 'CA'||repeat('d',32);
   proof jsonb; sarvam_ev uuid; completed_ev uuid; p2 jsonb; m jsonb; begin
-  perform public.bind_outbox_dispatch(fam,o,resp,'twilio','twilio.create_call',tw,'a2000000-0000-4000-8000-000000000001',asg);
+  begin perform public.bind_outbox_dispatch(fam,o,resp,'twilio','twilio.create_call',tw,'a2000000-0000-4000-8000-0000000000ff',asg); raise exception 'FAIL other incident bound';
+  exception when insufficient_privilege or foreign_key_violation then null; end;
+  perform public.bind_outbox_dispatch(fam,o,resp,'twilio','twilio.create_call',tw,null,asg); -- incident comes from the outbox row
   -- connected/completed events and a Sarvam event are never acceptance, whatever their metadata says
   insert into public.raw_events(family_id,source,provider_event_id,event_type,metadata,status) values
    (fam,'sarvam','ev-conn','sarvam.outbound',jsonb_build_object('assignment_id',asg,'person_id',resp,'call_id',tw,'digit','1'),'processed') returning id into sarvam_ev;
@@ -191,7 +256,7 @@ do $$ declare fam uuid := 'b2000000-0000-4000-8000-000000000001'; tw uuid := 'd2
    (fam,'twilio','AC:gather:CA1','twilio.gather.response',jsonb_build_object('call_id',tw,'person_id',resp,'digit','1'),'processed');
   begin perform public.record_responder_acceptance(fam,'AC:gather:CA1'); raise exception 'FAIL accepted before dispatch'; exception when insufficient_privilege then null; end;
   perform public.claim_dispatch(fam,resp,'dispatch:o2:a1','twilio','twilio.create_call',o,'f2000000-0000-4000-8000-000000000002',tw);
-  perform public.complete_dispatch(fam,'dispatch:o2:a1',ref,null,null,true);
+  perform public.complete_dispatch(fam,'dispatch:o2:a1',ref,'AC'||repeat('a',32),repeat('c',64),true);
   -- wrong digit event
   insert into public.raw_events(family_id,source,provider_event_id,event_type,metadata,status) values
    (fam,'twilio','AC:gather:digit2','twilio.gather.response',jsonb_build_object('call_id',tw,'person_id',resp,'digit','2'),'processed');
@@ -205,14 +270,17 @@ do $$ declare fam uuid := 'b2000000-0000-4000-8000-000000000001'; tw uuid := 'd2
   proof := public.record_responder_acceptance(fam,'AC:gather:CA1');
   select metadata into m from public.raw_events where id=(proof->>'proof_event_id')::uuid;
   if m->>'incident_id'<>'a2000000-0000-4000-8000-000000000001' or m->>'assignment_id'<>asg::text or m->>'responder_person_id'<>resp::text
-    or m->>'person_id'<>'c2000000-0000-4000-8000-000000000001' or m->>'call_id'<>tw::text or m->>'outbox_id'<>o::text
+    or m->>'person_id'<>resp::text or m->>'subject_person_id'<>'c2000000-0000-4000-8000-000000000001' or m->>'call_id'<>tw::text
+    or m->>'account_id'<>'AC'||repeat('a',32) or m->>'dispatch_key'<>'dispatch:o2:a1' or m->>'provider_action'<>'twilio.create_call' or m->>'outbox_id'<>o::text
     or m->>'action_request_id'<>'a3000000-0000-4000-8000-000000000001' or m->>'action'<>'urgent_responder' or m->>'verified_by'<>'twilio_signature' then
     raise exception 'FAIL common metadata contract %',m;
   end if;
   if (select status from public.assignments where id=asg)<>'offered' then raise exception 'FAIL recording proof must not accept'; end if;
   if public.accept_assignment_verified(fam,asg,sarvam_ev) or public.accept_assignment_verified(fam,asg,completed_ev) then raise exception 'FAIL non-proof accepted'; end if;
   if public.accept_assignment_verified('b2000000-0000-4000-8000-000000000002',asg,(proof->>'proof_event_id')::uuid) then raise exception 'FAIL cross-family accept'; end if;
+  if pg_temp.p3_accept(o,false) then raise exception 'FAIL Phase 3 saw acceptance before the assignment was accepted'; end if;
   if not public.accept_assignment_verified(fam,asg,(proof->>'proof_event_id')::uuid) then raise exception 'FAIL valid accept'; end if;
+  if not pg_temp.p3_accept(o,false) or not pg_temp.p3_accept(o,true) then raise exception 'FAIL real responder.accepted vs Phase 3 predicate'; end if;
   if (select status from public.assignments where id=asg)<>'accepted' then raise exception 'FAIL status'; end if;
   if not public.accept_assignment_verified(fam,asg,(proof->>'proof_event_id')::uuid) then raise exception 'FAIL idempotent accept'; end if;
   p2 := public.record_responder_acceptance(fam,'AC:gather:CA1');
@@ -253,6 +321,29 @@ do $$ declare fam uuid := 'b2000000-0000-4000-8000-000000000001'; cid uuid := 'd
   if public.get_call_recording_slot(fam,cid,h1)<>'purged' then raise exception 'FAIL purged slot'; end if;
   if public.put_call_recording(fam,cid,yes,p1,now()+interval '30 days',h1)<>'purged' then raise exception 'FAIL restored after purge'; end if;
   if (public.get_call_media_metadata(fam,cid)->>'recording_object_path') is not null then raise exception 'FAIL path still exposed'; end if;
+end $$;
+-- shared consent maximum age (365 days, the same sahaj_private.consent_max_age() the Phase 3 gate reads)
+do $$ declare fam uuid := 'b2000000-0000-4000-8000-000000000001'; cid uuid := 'd2000000-0000-4000-8000-000000000006';
+  pid uuid := 'c2000000-0000-4000-8000-000000000001'; old uuid; young uuid; grantee uuid; exp timestamptz;
+  p text := 'b2000000-0000-4000-8000-000000000001/calls/d2000000-0000-4000-8000-000000000006/'||repeat('6',32)||'.wav'; begin
+  insert into public.consents(family_id,person_id,call_id,purpose,question,answer,version,created_at) values
+   (fam,pid,cid,'call_recording','Synthetic?',true,'v1',now()-interval '366 days') returning id into old;
+  begin perform public.put_call_recording(fam,cid,old,p,now()+interval '30 days',repeat('6',64)); raise exception 'FAIL expired consent stored';
+  exception when insufficient_privilege then null; end;
+  begin perform public.put_call_recording(fam,cid,gen_random_uuid(),p,now()+interval '30 days',repeat('6',64)); raise exception 'FAIL unknown consent';
+  exception when insufficient_privilege then null; end;
+  -- a purpose or call mismatch never grants, even when young
+  insert into public.consents(family_id,person_id,call_id,purpose,question,answer,version,created_at) values
+   (fam,pid,cid,'call_transcript','Synthetic?',true,'v1',now()-interval '1 hour') returning id into grantee;
+  begin perform public.put_call_recording(fam,cid,grantee,p,now()+interval '30 days',repeat('6',64)); raise exception 'FAIL wrong purpose granted';
+  exception when insufficient_privilege then null; end;
+  insert into public.consents(family_id,person_id,call_id,purpose,question,answer,version,created_at) values
+   (fam,pid,cid,'call_recording','Synthetic?',true,'v1',now()-interval '364 days') returning id into young;
+  if public.put_call_recording(fam,cid,young,p,now()+interval '30 days',repeat('6',64))<>'stored' then raise exception 'FAIL young consent'; end if;
+  select expires_at into exp from sahaj_private.call_content where family_id=fam and call_id=cid;
+  -- retention is capped at the grant's own expiry (about one day left), not the requested 30 days
+  if exp>now()+interval '2 days' or exp<=now() then raise exception 'FAIL retention not capped at consent expiry: %',exp; end if;
+  if (select count(*) from public.list_recording_purge_candidates(100,null) where call_id=cid)<>0 then raise exception 'FAIL premature'; end if;
 end $$;
 do $$ declare fam uuid := 'b2000000-0000-4000-8000-000000000001'; cid uuid := 'd2000000-0000-4000-8000-000000000005';
   pid uuid := 'c2000000-0000-4000-8000-000000000001'; yes uuid; p text := 'b2000000-0000-4000-8000-000000000001/calls/d2000000-0000-4000-8000-000000000005/'||repeat('3',32)||'.wav'; begin

@@ -1,68 +1,73 @@
-# Phase 2 contracts for KiroB / Phase 3 (outbox, authorization, workflow, proof)
+# Phase 2 contracts for Phase 3 (atomic enqueue, Atlas runner, proof consumers)
 
-Owner: Kiro A. Code: `apps/api/src/lib/provider-dispatch/**`, `recording-worker/**`, `provider-ingestion/**`, `apps/api/src/app/api/twilio/gather/**`.
-SQL: `infra/supabase/migrations/20261114201600_phase2_dispatch_recording.sql` (unapplied, single file, edited in place after review).
+Owner: Kiro A. Reconciled with Phase 3 `c614a32` (`atlas-runtime/CONTRACTS.md`, migrations `20261114201500` / `20261114210000`).
+Code: `apps/api/src/lib/provider-dispatch/**`, `recording-worker/**`, `provider-ingestion/**`, `apps/api/src/app/api/twilio/gather/**`.
+SQL: `infra/supabase/migrations/20261114201600_phase2_dispatch_recording.sql` (unapplied; must sort AFTER `20261114201500`, which creates `outbox.action`, `outbox.incident_id` and `consent_max_age()`).
 Tests: `apps/api/tests/{provider-dispatch,recording-worker,provider-ingestion}`, `infra/supabase/tests/phase2_dispatch_recording.sql`, `apps/api/tests/provider-dispatch/sql-concurrency.ps1`.
-The SQL and the two-session script have NOT been executed (no Postgres in the authoring environment). Run both on a scratch database first.
+**The SQL and both scripts have NOT been executed** (no Postgres in the authoring environment). TypeScript tests use in-memory models of the SQL rules.
 
-## 0. Rules every writer must follow
+## 0. Rules for every writer
 
-- **Lock order:** `people` (FOR NO KEY UPDATE) -> `calls` (FOR UPDATE) -> `call_content` / `assignments` / ledger rows. The `consents` insert trigger takes the person lock, so a refusal cannot be inserted between a consent read and the write that relied on it. Phase 3 enqueue, approval and revocation writers should use the same first lock for the same person.
-- **No future-dated consent:** `consents_before_insert` raises `23514` if `created_at > now()`.
-- **`service_role` has SELECT only** on `dispatch_ledger` and `dispatch_bindings` (explicit `REVOKE ALL ... FROM service_role` before the grant). All state changes go through the functions below.
-- **Normalized proof is distinguishable.** `raw_events.normalized_proof` is true only for rows written by `record_delivery_proof` / `record_responder_acceptance`. A trigger rejects setting it any other way, and consumers ignore events without it. A generic `ingest_raw_event` row with perfect-looking metadata is not proof.
+- **Lock order:** `people` (FOR NO KEY UPDATE) -> `calls` (FOR UPDATE) -> `call_content` / `assignments` / ledger rows. The `consents` insert trigger `consents_serialize` takes the person lock. Phase 3 triggers take a per-family advisory lock first; the two never wait on each other in the opposite order (recording writes do not take the family lock).
+- **Consent in the future:** refused by writers in both lanes (`consents_future` in Phase 3, `consents_serialize` here). Both are harmless together.
+- `service_role` has SELECT only on `dispatch_ledger` and `dispatch_bindings`. Changes go through the functions below.
+- `raw_events.normalized_proof` is set only by `record_delivery_proof` / `record_responder_acceptance` (trigger-guarded). Generic `ingest_raw_event` cannot create it, flip it, or forge a row that satisfies a strict consumer.
 
-## 1. Enqueue transaction -> `bind_outbox_dispatch` (REQUIRED, Phase 3)
+## 1. Phase 3 atomic enqueue MUST call the binding RPC
 
-In the SAME transaction that inserts the outbox row (and consumes approval/quota), call `bind_outbox_dispatch(family, outbox, person, provider, action, call?, incident?, assignment?)`. It records, once and immutably (update/delete trigger), WHO may be contacted, through WHICH provider action, for WHICH call. `action_request_id` is copied from the outbox row, never passed in. `claim_dispatch` refuses (`42501`) any outbox row without a binding and any claim whose person, provider, action or call differs from it, even with a valid lease inside the same family.
-- `action` must start with `provider.` (`sarvam.outbound_call`, `twilio.create_call`, `whatsapp.send_text`).
-- Urgent responder calls: pass `incident` and `assignment`; the assignment's person must equal `person` (the responder being called) and the outbox row's `action_request_id` must point at an `action_requests` row whose `action = 'urgent_responder'`.
-- Rebinding with different values raises `23505`. Same values is a no-op.
+```
+public.bind_outbox_dispatch(
+  p_family_id uuid, p_outbox_id uuid, p_person_id uuid, p_provider text, p_action text,
+  p_call_id uuid default null, p_incident_id uuid default null, p_assignment_id uuid default null) returns boolean
+```
+Call it in the SAME transaction as the `outbox` insert, after `outbox.action`, `.incident_id`, `.action_request_id` are set.
+- `p_person_id`: the person who will be contacted (for urgent responder calls, the RESPONDER, not the incident subject).
+- `p_provider`: `sarvam | twilio | whatsapp`. `p_action`: the PROVIDER operation, must start with `<provider>.`: `sarvam.outbound_call`, `twilio.create_call`, `whatsapp.send_text`. This is NOT `outbox.action` (the care/domain action such as `check_in`, `send_alert`, `urgent_responder`).
+- `p_call_id`: required for the two call operations: an existing `calls` row of that person, `external_id` null.
+- `p_incident_id`: optional; if the outbox row has `incident_id` it must match and is used when omitted. `p_assignment_id`: urgent responder only; its person must equal `p_person_id` and its incident the bound incident.
+- `action_request_id` is copied from the outbox row (never passed in). Rebinding with different values raises `23505`; identical is a no-op. Row is immutable (update/delete trigger).
+- Without a binding, `claim_dispatch` refuses the row (`42501`). With one, a claim whose person, provider, action or call differs is refused even with a valid lease inside the family.
 
-## 2. Outbox row -> `dispatchOutbound`
+## 2. Common verified proof (what the producers write, what Phase 3 reads)
 
-Command fields: `familyId`, `outboxId`, `outboxLease`, `attempt` (= `outbox.attempt_count`), `personId`, `callId` (call actions), `payload`, `aiDisclosureAttested` (Twilio only: TwiML speaks the AI disclosure). Key is `dispatch:<outboxId>:a<attempt>`.
-`dispatchOutbound` calls `finish_outbox` itself: `dispatched` -> success; `failed` -> `finish_outbox(false, code)`, a later attempt gets a new key; `delivery_unknown` -> `finish_outbox(false,'delivery_unknown')`, never reclaimed; `duplicate` -> outbox untouched (lease expiry makes it `delivery_unknown`); `denied` -> nothing claimed. A live ledger row for an outbox blocks any other key.
-`deps.authorize(cmd, key)` must re-evaluate current consent/permission/membership and return an `ActionAuthorization` for this person, action and key; anything else denies. `deps.resolveDestination(family, person, provider)` returns E.164 from `provider_identities.contact_ciphertext` filtered by BOTH family and person; the number never enters outbox payloads, commands, outcomes or logs.
-Run `sweepStaleClaims` on the cron tick.
+Raw provider callbacks stay raw. Proof is derived only by SQL from stored records: raw callback -> `calls.external_id` -> `dispatch_ledger` -> `dispatch_bindings` -> `outbox` / `action_requests` / `assignments` / `incidents` -> the provider account bound at dispatch.
+`account_id` comes from `provider_identities` rows written by `complete_dispatch` (server-configured account, never callback data): Sarvam `app_id` (kind `attempt`), Twilio `AccountSid` (`call`), WhatsApp `phone_number_id` (`message`); `attempt_id` = provider reference, `person_id` = the contacted person.
 
-## 3. Common verified proof (root contract) and who writes it
+### `delivery.confirmed` / `delivery.not_sent` (source = provider, `status='processed'`, `normalized_proof=true`)
+`outbox_id, action_request_id, action` (= `outbox.action`, care enum), `provider_action` (= ledger operation), `account_id`, `dispatch_key` (= `dispatch_ledger.idempotency_key`), `provider_ref`, `outcome` (`delivered` | `confirmed_not_sent`), `person_id`, `source_event_id`, `normalized=true`.
+Producer: `record_delivery_proof(family, raw_event_id, outcome)` via `normalizeDeliveryOutcome`. Status mapping (SQL = TS): `confirmed_not_sent` for Twilio `busy|no-answer|failed|canceled`, Sarvam `no_answer|busy|failed`, WhatsApp `failed`; `delivered` ONLY for WhatsApp `delivered|read`. A connected or completed call is never proof. A dispatch that timed out has no provider reference, so no callback can be linked to it and it stays `delivery_unknown`. Contradicting proof for one dispatch is refused.
+Consumers: `reconcile_dispatch(family,key,proof,outcome)` then `reconcile_outbox(outbox,proof,outcome)` (replaced here: needs normalized proof, equal outbox/request/care action/provider action/account, and a ledger row already reconciled with that exact proof).
 
-Raw provider callbacks stay raw. Normalized proof is created only by SQL, from stored records, never from callback fields.
+### `responder.accepted` (source `twilio`, `normalized_proof=true`, `verified_by='twilio_signature'`)
+`incident_id, assignment_id, responder_person_id, person_id` (= the OFFERED RESPONDER, equal to `responder_person_id`), `subject_person_id` (the incident's subject, must differ), `call_id, outbox_id, action_request_id, action='urgent_responder'` (= `outbox.action`), `provider_action, account_id, dispatch_key, source_event_id, normalized=true`.
+Producer: Gather route -> `record_responder_acceptance(family, gather_provider_event_id)` -> `accept_assignment_verified(family, assignment, proof)`; `assignments.verified_by_provider_event` is the normalized `responder.accepted` row, NOT the raw Gather event. `accept_assignment_verified` re-derives every field and demands exact equality.
+Phase 3 predicate parity: `infra/supabase/tests/phase2_dispatch_recording.sql` mirrors Phase 3's `outbox_proof` / `outbox_acceptance` and runs them against real proof (current and strict forms) and against a generic forged row (passes only the non-strict form). **Phase 3 should adopt the strict form:** add `e.normalized_proof` and join `dispatch_ledger` on `idempotency_key = metadata.dispatch_key AND outbox_id = o.id AND provider_ref = metadata.provider_ref`.
 
-### `delivery.confirmed` / `delivery.not_sent`
-Producer: `normalizeDeliveryOutcome(store, {familyId, sourceEventId, provider, status})` -> `record_delivery_proof(family, raw_event_id, outcome)`.
-- Source must be a durably `processed` raw event of type `twilio.call_status` / `sarvam.outbound` / `whatsapp.status` in the same family. The gateway now stores OUR `call_id` in the metadata of Twilio status and Sarvam outbound events (same family and person only); SQL resolves call -> `calls.external_id` -> ledger row -> binding. WhatsApp status events (not produced in this lane) must carry `provider_ref` in metadata.
-- Status mapping (SQL and TS agree): `confirmed_not_sent` for Twilio `busy|no-answer|failed|canceled`, Sarvam `no_answer|busy|failed`, WhatsApp `failed`. `delivered` only for WhatsApp `delivered|read`. A connected or completed call is never proof; those events stay pending and the ledger stays `delivery_unknown`.
-- Metadata written by SQL: `normalized=true, outcome, outbox_id, action_request_id (null if the outbox has none), action, dispatch_key, provider_ref, person_id, source_event_id`. Contradicting proof for the same dispatch is refused (`23505`).
-- Consumers: `reconcile_dispatch(family,key,proof,outcome)` then `reconcile_outbox(outbox,proof,outcome)` (replaced in this migration; it now needs normalized proof, equal outbox/request/action, and a ledger row already reconciled with that exact proof). Only `delivery_unknown` rows change. A dispatch that timed out has no provider reference, so no callback can be linked to it: it stays unknown for review. That is intended.
+## 3. Consent validity: ONE shared policy
 
-### `responder.accepted`
-Producer: the signed Gather route -> `record_responder_acceptance(family, gather_provider_event_id)` then `accept_assignment_verified(family, assignment, proof)`.
-- Metadata (all derived by SQL from the call -> twilio ledger row -> immutable binding -> assignment/incident/outbox/action request): `incident_id, assignment_id, responder_person_id, person_id (the incident's person), call_id, outbox_id, action_request_id, action='urgent_responder'`, plus `normalized=true, verified_by='twilio_signature', source_event_id`.
-- Requires: Twilio call placed by this system to the responder (ledger `dispatched|delivered`, `provider_ref = calls.external_id`), assignment `offered`, unexpired, press received inside its window, `action_requests.action='urgent_responder'`. `accept_assignment_verified` re-derives everything and requires exact equality with the proof; it is idempotent for the same proof and false for any other. One event verifies one assignment (unique index).
-- Phase 3 consumers should read `responder.accepted` with `normalized_proof=true` (or the `assignments.status='accepted'` row, which already requires the proof). The old `twilio.gather.accepted` name no longer exists.
+`sahaj_private.consent_max_age()` = 365 days is defined in both migrations (`create or replace`, identical) and read by Phase 3 `consent_current`, by `call_recording_consent` / `put_call_recording` / purge here, and mirrored in TS (`provider-ingestion/consent-policy.ts`, `CONSENT_MAX_AGE_MS`). A grant counts only while `created_at <= now` and `created_at > now - 365d` (strict); newest row for the exact call plus global refusals wins, ties go to refusal, refusals never age out, a global yes never grants, other purposes (`call_transcript`, `voice_share:*`) never grant `call_recording`. Stored recording retention is capped at `grant.created_at + 365d` in SQL and TS, and the purge treats an aged-out grant like a revoked one, so no stored recording survives the gate refusing it. If Phase 3 changes the value, change the single function and `CONSENT_MAX_AGE_MS` together (a TS test pins the number).
 
-## 4. Gather route
+## 4. Runner entrypoints (stable, gated, no live calls here)
 
-`POST /api/twilio/gather`: signature over the exact configured URL (`TWILIO_GATHER_CALLBACK_URL`) and account, stored call by `CallSid`, explicit digit `1`. Any other digit or no digit writes nothing. The assignment, incident, responder and outbox are never read from the request. The raw press is persisted (`twilio.gather.response`, id `<AC>:gather:<CA>`) before SQL resolves acceptance. Failure to prove any link returns 403 and no proof. The TwiML that places the call must use `<Gather input="dtmf" numDigits="1" action="<exact gather URL>">`; building that TwiML is outside this lane.
+All take injected dependencies; none reads the environment.
+- `runOutboxDispatchTick({ ...DispatchDeps, enabled, compose, workerId, limit?, leaseSeconds?, staleClaimSeconds? })` (`provider-dispatch`): when `enabled` is false it does nothing. Otherwise: sweep abandoned claims -> `claim_outbox` -> `get_dispatch_binding` -> trusted `compose(row, binding)` (must return exactly the bound operation; returns the provider payload, e.g. language or TwiML URL; no phone numbers) -> `dispatchOutbound` (reauthorize via `authorize`, ledger claim, adapter, atomic result, `finish_outbox`). Rows with no binding are finished `binding_missing` without any claim. `delivery_unknown` rows are never claimed again.
+- `runStatusNormalizationJob({ store, readRaw }, rawEventId)`: for `twilio.call_status` / `sarvam.outbound` / `whatsapp.status` raw events. Returns `{action:'complete'|'retry', code}`; completing never means delivered. Phase 3 currently completes these as facts: call this first in the `core1.provider_status` handler (and for the Sarvam events it routes to Atlas, so proof is written before Atlas reviews them).
+- `runRecordingJob(workerDeps, db, rawEventId)` (`recording-worker`): the `core1.recording` handler. `complete` for stored / already stored / ignored additional / permanent refusal (code `rejected:<why>`), `retry` for transient failures (finish the job failed with backoff).
+- `runRecordingPurgeTick({ store: purgeStore(), storage: recordingStorage(), enabled, now?, limit? })`: scheduler entrypoint; `enabled=false` lists and deletes nothing.
+- `runGatherAcceptance` is the route itself: `POST /api/twilio/gather`.
+Factories for the real stores: `dispatchStore()`, `recordingStore()`, `recordingStorage()`, `purgeStore()`, `gatherStore()` (service role, read env through `serviceDatabase()` only when called).
 
-## 5. Recordings
+## 5. Other contract points (unchanged)
 
-- Twilio: `twilio.recording.retrieval_requested` (existing). Sarvam: `sarvam.recording.retrieval_requested`, queued only when `SARVAM_RECORDING_RETRIEVAL=true`, the call disclosed AI and exact-call `call_recording` consent is effective; payload fields are only ids already stored or sent by Sarvam. The worker needs `deps.sarvam` (apiKey, orgId, workspaceId, appId); without it such events are rejected `sarvam_recording_unavailable`.
-- For outbound Sarvam calls the worker first confirms with Sarvam's List attempts that the stored attempt produced the interaction in the (unsigned) webhook body. Unconfirmed: rejected, nothing fetched.
-- `processRecordingEvent` outcomes: `stored | already_stored | ignored_additional` -> complete; `retry` -> fail with backoff; `rejected` -> do not retry.
-- First recording per call wins (`put_call_recording` serializes on the person and call locks; the second concurrent writer gets `ignored_additional`). A purged recording is never stored again (`purged`).
-- **Purge entrypoint (scheduler is the parent's):** `runRecordingPurge({store: purgeStore(), storage: recordingStorage(), now, limit})`. SQL lists rows past retention or whose consent is no longer effective; the worker deletes only the exact stored path (validated to be `<family>/calls/<call>/...` for that row), then `finish_recording_purge` compare-and-sets family, call and path. `p_as_of` can never exceed the database clock. After purge `get_call_media_metadata` returns a null path, so the media signer denies.
+- Dispatch key `dispatch:<outboxId>:a<attempt>`; one live ledger row per outbox regardless of key. `denied` / `failed` / `delivery_unknown` / `duplicate` semantics as in the code comments. `deps.authorize` must re-evaluate current consent/permission/membership; `deps.resolveDestination` must filter by family AND person and never log numbers.
+- Gather route: signed, exact configured URL (`TWILIO_GATHER_CALLBACK_URL`), stored call, explicit digit `1`; nothing identifying an assignment is read from the request. The TwiML that places the call must use `<Gather input="dtmf" numDigits="1" action="<exact gather URL>">`.
+- Recordings: Twilio and (opt-in, `SARVAM_RECORDING_RETRIEVAL=true` plus worker `sarvam` config) Sarvam; first recording per call wins; purged recordings are never stored again; purge deletes only `<family>/calls/<call>/...` exact stored paths.
+- Environment names introduced: `TWILIO_GATHER_CALLBACK_URL`, `SARVAM_RECORDING_RETRIEVAL`; worker config values are passed in by the caller.
 
-## 6. Environment names introduced (values are the parent's to set)
+## 6. Open items needing other lanes
 
-`TWILIO_GATHER_CALLBACK_URL`, `SARVAM_RECORDING_RETRIEVAL` (`true` to enable), and for the recording worker Sarvam config `SARVAM_API_KEY`, `SARVAM_ORG_ID`, `SARVAM_WORKSPACE_ID` (passed in by the caller; this lane never reads the environment). `.env.example` is not in this lane.
-
-## 7. Not done / needs a decision
-
-- Revocation fencing for writers outside this lane (Phase 3 approvals, memberships, permissions) is their job; they must adopt the lock order in section 0.
-- `whatsapp.status` ingestion route does not exist, so WhatsApp delivery proof has no producer yet.
-- Twilio media auth: Twilio's page says to use an API key SID and secret for media URLs. `fetchTwilioRecording` sends AccountSid:AuthToken Basic auth. Confirm in a sandbox or switch the config to an API key pair.
-- Twilio `.wav` redirect behaviour is not documented on the recording page, so a redirect still fails closed.
-- Sarvam recording availability timing after the webhook, and whether the attempts list is complete for the lookback window, are unconfirmed; the worker treats 404 as retryable and unconfirmed attempts as rejected.
+1. Phase 3 enqueue must call `bind_outbox_dispatch` and set `outbox.action` / `incident_id`; its `observe_delivery` / `outbox_acceptance` should add the strict join in section 2.
+2. Phase 3 cron must route `twilio.call_status` and the Sarvam/WhatsApp status events through `runStatusNormalizationJob`, `twilio.recording.retrieval_requested` and `sarvam.recording.retrieval_requested` through `runRecordingJob`, and schedule `runOutboxDispatchTick` / `runRecordingPurgeTick`. Phase 3's router lists only the Twilio recording event today.
+3. No producer exists for `whatsapp.status` events; WhatsApp `delivered|read` proof therefore cannot occur yet.
+4. Incident and assignment creation (Phase 4) is required before any urgent responder call can be bound.
+5. Twilio media Basic auth (API key pair vs AccountSid:AuthToken), Twilio `.wav` redirect behaviour and Sarvam recording timing remain unconfirmed (see `packages/adapters/README.md`).
