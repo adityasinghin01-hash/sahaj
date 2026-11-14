@@ -16,6 +16,13 @@ import {
   type WeeklyTipResponse,
   WeeklyTipInputSchema,
 } from "./phase2";
+import {
+  createPgGatewayAdminStore,
+  registerGatewayParentWithAdapter,
+  type GatewayParentInput,
+  type GatewayParentResult,
+} from "./gateway_admin";
+import { createPgHeartbeatStore, handleShieldHeartbeat } from "./heartbeat";
 import { createShieldPorts, getPortsStatus, type PortsStatus } from "@/ports";
 import { writeOutbox } from "@/ports/outbox";
 import { createPhase2Ports } from "@/ports/phase2";
@@ -40,6 +47,8 @@ export interface ShieldApp {
   recordBusyReply: (input: z.infer<typeof BusyReplyInputSchema>) => Promise<RecordBusyReplyResponse>;
   recordChildFeedback: (input: z.infer<typeof ChildFeedbackInputSchema>) => Promise<RecordFeedbackResponse>;
   getWeeklyTip: (input: z.infer<typeof WeeklyTipInputSchema>) => Promise<WeeklyTipResponse>;
+  registerGatewayParent: (input: GatewayParentInput) => Promise<GatewayParentResult>;
+  recordDeviceHeartbeat: (req: Request) => Promise<Response>;
   runDueJobs: () => Promise<CronRunResult>;
   checkDb: () => Promise<boolean>;
   listOutbox: (limit?: number) => Promise<OutboxRow[]>;
@@ -146,6 +155,9 @@ export function createShieldApp(env: Readonly<Record<string, string | undefined>
     fallbackHandleScheduledJob: (name, payload) => runtime.handleScheduledJob(name, payload),
   });
 
+  const gatewayStore = createPgGatewayAdminStore(auxSql);
+  const heartbeatStore = createPgHeartbeatStore(auxSql);
+
   return {
     env,
     portsStatus: getPortsStatus(env),
@@ -154,6 +166,26 @@ export function createShieldApp(env: Readonly<Record<string, string | undefined>
     recordBusyReply: phase2.submitBusyReply,
     recordChildFeedback: phase2.submitChildFeedback,
     getWeeklyTip: phase2.fetchWeeklyTip,
+    registerGatewayParent: (input) =>
+      registerGatewayParentWithAdapter({
+        store: gatewayStore,
+        runtimeRegister: (
+          runtime as {
+            registerGatewayParent?: (input: {
+              familyId: string;
+              parentId: string;
+              phone: string;
+            }) => Promise<unknown>;
+          }
+        ).registerGatewayParent,
+        input,
+      }),
+    recordDeviceHeartbeat: (req) =>
+      handleShieldHeartbeat(req, {
+        store: heartbeatStore,
+        pairingSecret: env.SHIELD_DEVICE_PAIRING_SECRET,
+        clock,
+      }),
     runDueJobs: () =>
       runDueShieldJobs({
         sql: auxSql,

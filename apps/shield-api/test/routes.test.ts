@@ -384,6 +384,12 @@ function makeFakeApp(envOverrides: Record<string, string | undefined> = {}) {
     async getWeeklyTip() {
       return { ok: false, status: 404, error: "family_not_found" };
     },
+    async registerGatewayParent() {
+      return { ok: false, status: 404, error: "parent_not_found" };
+    },
+    async recordDeviceHeartbeat() {
+      return Response.json({ error: "unauthorized" }, { status: 401 });
+    },
     async runDueJobs() {
       const results: { id: string; name: string; status: "done" | "failed"; result?: unknown }[] = [];
       for (const job of jobs) {

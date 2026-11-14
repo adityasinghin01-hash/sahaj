@@ -1,8 +1,10 @@
 import { z } from "zod";
-import { isShieldToolName, type ToolCtx } from "@sahaj/shield";
+import { isShieldToolName, type ShieldToolName, type ToolCtx } from "@sahaj/shield";
 import { getPortsStatus } from "@/ports";
 import type { ShieldApp } from "./app";
 import { isAllowedSarvamIp, verifyBearerToken, verifyHeaderToken } from "./auth";
+
+const PENDING_PHASE3_SARVAM_TOOLS = new Set(["experience_turn", "call_screen"]);
 
 const PairCodeBody = z
   .object({
@@ -96,7 +98,10 @@ export function createSarvamToolHandler(getApp: () => ShieldApp) {
       return Response.json({ error: "unauthorized" }, { status: 401 });
     }
     const { name } = await route.params;
-    if (!isShieldToolName(name)) {
+    if (name === "call_screen" && app.env.CALL_GATEWAY_ENABLED !== "1") {
+      return Response.json({ enabled: false }, { status: 404 });
+    }
+    if (!isShieldToolName(name) && !PENDING_PHASE3_SARVAM_TOOLS.has(name)) {
       return Response.json({ error: "unknown_tool" }, { status: 404 });
     }
     let body: unknown;
@@ -113,11 +118,14 @@ export function createSarvamToolHandler(getApp: () => ShieldApp) {
       return Response.json({ error: "missing_context" }, { status: 400 });
     }
     try {
-      const output = await app.runtime.shieldTools.run(name, ctx, toolInput);
+      const output = await app.runtime.shieldTools.run(name as ShieldToolName, ctx, toolInput);
       return Response.json(output);
     } catch (err) {
       if (err instanceof Error && err.message === "Shield tool parent not found") {
         return Response.json({ error: "parent_not_found" }, { status: 404 });
+      }
+      if (err instanceof Error && err.message === "Unknown Shield tool") {
+        return Response.json({ error: "tool_not_registered", tool: name }, { status: 501 });
       }
       return Response.json({ error: "server_error" }, { status: 500 });
     }

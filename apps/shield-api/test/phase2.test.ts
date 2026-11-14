@@ -460,6 +460,12 @@ function makeFakePhase2App(envOverrides: Record<string, string | undefined> = {}
     recordBusyReply: phase2.submitBusyReply,
     recordChildFeedback: phase2.submitChildFeedback,
     getWeeklyTip: phase2.fetchWeeklyTip,
+    async registerGatewayParent() {
+      return { ok: false, status: 404, error: "parent_not_found" };
+    },
+    async recordDeviceHeartbeat() {
+      return Response.json({ error: "unauthorized" }, { status: 401 });
+    },
     async runDueJobs() {
       const results: { id: string; name: string; status: "done" | "failed"; result?: unknown; error?: string }[] = [];
       for (const job of jobs) {

@@ -28,15 +28,15 @@ cleanup() {
   if [[ $STARTED_PG -eq 1 ]]; then
     "$PG_BIN/pg_ctl" -D "$PGDATA" -m fast -w stop >/dev/null 2>&1 || true
   fi
+  if [[ $rc -ne 0 && -f "$TMP/next.log" ]]; then
+    echo "--- next.log ---" >&2
+    cat "$TMP/next.log" >&2 || true
+  fi
   [[ -n "$TMP" && -d "$TMP" && "$TMP" == /tmp/shield-p2-pg.* ]] && rm -rf "$TMP"
   if [[ $rc -eq 0 ]]; then
     echo "PHASE2_E2E_RESULT: PASS"
   else
     echo "PHASE2_E2E_RESULT: FAIL (exit $rc)" >&2
-    if [[ -f "$TMP/next.log" ]]; then
-      echo "--- next.log ---" >&2
-      cat "$TMP/next.log" >&2 || true
-    fi
   fi
   exit $rc
 }
@@ -154,8 +154,11 @@ export SARVAM_TOOL_TOKEN="e2e-sarvam-token"
 export ALLOW_ANY_TOOL_IP="1"
 export DEMO_TIMER_SCALE="120"
 
+NEXT_BIN="$REPO_ROOT/node_modules/.bin/next"
+[[ -x "$NEXT_BIN" ]] || NEXT_BIN="$APP_DIR/node_modules/.bin/next"
+
 echo "== starting @sahaj/shield-api on http://127.0.0.1:$APP_PORT"
-(cd "$APP_DIR" && exec ./node_modules/.bin/next start -H 127.0.0.1 -p "$APP_PORT") >"$TMP/next.log" 2>&1 &
+(cd "$APP_DIR" && exec "$NEXT_BIN" start -H 127.0.0.1 -p "$APP_PORT") >"$TMP/next.log" 2>&1 &
 APP_PID=$!
 
 for _ in $(seq 1 60); do
