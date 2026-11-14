@@ -139,8 +139,20 @@ export const RulesFileSchema = z.object({
       packages: z.array(z.string().min(1)).min(1),
       reason: Reason,
     }),
-    P6: PhaseTwo,
-    P7: PhaseTwo,
+    P6: PhaseTwo.extend({
+      level: AlertLevel,
+      scam_type: ScamType,
+      caller_types: z.array(CallerType),
+      min_duration_ms: z.number().int().positive(),
+      multiplier_vs_normal: z.number().positive(),
+      reason: Reason,
+    }),
+    P7: PhaseTwo.extend({
+      level: AlertLevel,
+      scam_type: ScamType,
+      trusted_caller_types: z.array(CallerType).min(1),
+      reason: Reason,
+    }),
     P8: PhaseTwo.extend({
       level: AlertLevel,
       local_only: z.boolean(),

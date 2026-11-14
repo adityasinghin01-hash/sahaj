@@ -1,8 +1,8 @@
 import { describe, expect, it } from "vitest";
 import { Verdict } from "@sahaj/shared";
 import {
-  RAW_RULES, RULES, SCRIPT_TYPE_IDS, buildVerdict, callerType, findLinks, findPatterns, isApk, isOtp,
-  lookAlike, mask, scoreText, senderType,
+  RAW_RULES, RULES, SCRIPT_TYPE_IDS, buildVerdict, callerType, checkP6, checkP7, checkS4,
+  findLinks, findPatterns, isApk, isOtp, lookAlike, mask, scoreText, senderType,
 } from "../../src/rules";
 import fixtures from "./fixtures.json";
 
@@ -294,5 +294,121 @@ describe("phase 2 rules, boundaries, and spoofing defense", () => {
     });
     expect(spoofed.level).toBe("green");
     expect(spoofed.checks_fired).not.toContain("pattern.P9");
+  });
+
+  it("P6 fires yellow for long unsaved voice call via long_vs_normal or duration_ms >= 1200000, not on video/saved/short", () => {
+    const byFlag = buildVerdict({
+      kind: "call_state",
+      caller_type: "mobile_10",
+      at: 1763114400000,
+      context: { long_vs_normal: true, duration_ms: 300000 },
+    });
+    expect(byFlag.level).toBe("yellow");
+    expect(byFlag.scam_type).toBe("digital_arrest");
+    expect(byFlag.checks_fired).toContain("pattern.P6");
+    expect(byFlag.actions).toEqual(["alert_child"]);
+
+    const byDuration = buildVerdict({
+      kind: "call_in",
+      caller_type: "unknown",
+      at: 1763114400000,
+      context: { duration_ms: 1200000 },
+    });
+    expect(byDuration.level).toBe("yellow");
+    expect(byDuration.checks_fired).toContain("pattern.P6");
+
+    const saved = buildVerdict({
+      kind: "call_state",
+      caller_saved: true,
+      at: 1763114400000,
+      context: { long_vs_normal: true, duration_ms: 1500000 },
+    });
+    expect(saved.level).toBe("green");
+    expect(saved.checks_fired).not.toContain("pattern.P6");
+
+    const shortCall = buildVerdict({
+      kind: "call_state",
+      caller_type: "mobile_10",
+      at: 1763114400000,
+      context: { duration_ms: 1199999 },
+    });
+    expect(shortCall.level).toBe("green");
+    expect(shortCall.checks_fired).not.toContain("pattern.P6");
+
+    const videoCall = buildVerdict({
+      kind: "call_state",
+      caller_type: "mobile_10",
+      at: 1763114400000,
+      context: { video: true, long_vs_normal: true, duration_ms: 1500000 },
+    });
+    expect(videoCall.level).toBe("red");
+    expect(videoCall.checks_fired).toContain("pattern.P2");
+    expect(videoCall.checks_fired).not.toContain("pattern.P6");
+
+    const malformed = buildVerdict({
+      kind: "call_state",
+      caller_type: "mobile_10",
+      at: 1763114400000,
+      context: { long_vs_normal: "true", duration_ms: "1500000" },
+    });
+    expect(malformed.level).toBe("green");
+    expect(malformed.checks_fired).not.toContain("pattern.P6");
+
+    expect(checkP6({ kind: "call", at: 0, caller_type: "mobile_10", long_vs_normal: true })).toBe(true);
+    expect(checkP6({ kind: "call", at: 0, caller_type: "series_1600", long_vs_normal: true })).toBe(false);
+  });
+
+  it("P7 fires yellow for bank impersonation from non-1600 caller, and S4 gives green note for series_1600", () => {
+    const voiceHit = buildVerdict({
+      kind: "voice_report",
+      caller_type: "mobile_10",
+      at: 1763114400000,
+      context: { claimed_bank: true },
+    });
+    expect(voiceHit.level).toBe("yellow");
+    expect(voiceHit.scam_type).toBe("kyc_block");
+    expect(voiceHit.checks_fired).toContain("pattern.P7");
+    expect(voiceHit.reasons.some((r) => r.en.includes("1600") && r.hi.includes("1600"))).toBe(true);
+
+    const callHit = buildVerdict({
+      kind: "call_in",
+      caller: "9800000301",
+      at: 1763114400000,
+      context: { claimed_bank: true },
+    });
+    expect(callHit.level).toBe("yellow");
+    expect(callHit.checks_fired).toContain("pattern.P7");
+
+    const bank1600 = buildVerdict({
+      kind: "call_in",
+      caller_type: "series_1600",
+      at: 1763114400000,
+      context: { claimed_bank: true },
+    });
+    expect(bank1600.level).toBe("green");
+    expect(bank1600.checks_fired).not.toContain("pattern.P7");
+    expect(bank1600.checks_fired).toContain("caller.series_1600");
+    expect(bank1600.reasons.some((r) => r.en.toLowerCase().includes("registered bank number"))).toBe(true);
+
+    const s4Only = buildVerdict({ kind: "call_in", caller: "1600123456", at: 1763114400000 });
+    expect(s4Only.level).toBe("green");
+    expect(s4Only.reasons.length).toBeGreaterThanOrEqual(1);
+    expect(s4Only.reasons[0]?.en.toLowerCase()).toContain("registered bank number");
+
+    const malformedP7 = buildVerdict({
+      kind: "voice_report",
+      caller_type: "mobile_10",
+      at: 1763114400000,
+      context: { claimed_bank: "yes" },
+      local_level: "red",
+      matched_rules: ["pattern.P7"],
+    });
+    expect(malformedP7.level).toBe("green");
+    expect(malformedP7.checks_fired).not.toContain("pattern.P7");
+
+    expect(checkP7({ kind: "voice_report", at: 0, caller_type: "unknown", claimed_bank: true })).toBe(true);
+    expect(checkP7({ kind: "voice_report", at: 0, caller_type: "series_1600", claimed_bank: true })).toBe(false);
+    expect(checkS4({ caller_type: "series_1600" })).toBe(true);
+    expect(checkS4({ caller_type: "mobile_10" })).toBe(false);
   });
 });

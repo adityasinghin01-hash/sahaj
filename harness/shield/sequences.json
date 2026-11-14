@@ -175,5 +175,92 @@
       { "kind": "install", "at": 1763114400000, "package": "com.example.weddingcard", "installer": "com.whatsapp", "installed_hours_ago": 2, "is_system": false }
     ],
     "expect": { "level": "red", "pattern": "P3" }
+  },
+  {
+    "id": "seq_22",
+    "name": "P6 positive: unsaved call flagged long_vs_normal=true (yellow)",
+    "events": [
+      { "kind": "call_state", "at": 1763114400000, "number": "+919000000001", "caller_type": "mobile_10", "context": { "long_vs_normal": true, "duration_ms": 300000 } }
+    ],
+    "expect": { "level": "yellow", "pattern": "P6" }
+  },
+  {
+    "id": "seq_23",
+    "name": "P6 positive: unsaved call duration_ms >= 20 min without flag (yellow)",
+    "events": [
+      { "kind": "call_in", "at": 1763114400000, "number": "+919000000002", "context": { "duration_ms": 1200000 } }
+    ],
+    "expect": { "level": "yellow", "pattern": "P6" }
+  },
+  {
+    "id": "seq_24",
+    "name": "P6 negative: saved contact long call stays green",
+    "events": [
+      { "kind": "call_state", "at": 1763114400000, "number": "+919000000003", "saved_contact": true, "context": { "long_vs_normal": true, "duration_ms": 1500000 } }
+    ],
+    "expect": { "level": "green", "pattern": null }
+  },
+  {
+    "id": "seq_25",
+    "name": "P6 negative: short unsaved call (5 min) stays green",
+    "events": [
+      { "kind": "call_state", "at": 1763114400000, "number": "+919000000004", "context": { "duration_ms": 300000 } }
+    ],
+    "expect": { "level": "green", "pattern": null }
+  },
+  {
+    "id": "seq_26",
+    "name": "P6 negative: long unknown video call triggers P2 red, not P6",
+    "events": [
+      { "kind": "call_state", "at": 1763114400000, "number": "+919000000005", "context": { "video": true, "long_vs_normal": true, "duration_ms": 1500000 } }
+    ],
+    "expect": { "level": "red", "pattern": "P2", "not_patterns": ["P6"] }
+  },
+  {
+    "id": "seq_27",
+    "name": "P7 positive: voice_report claimed_bank=true with mobile_10 caller (yellow)",
+    "events": [
+      { "kind": "voice_report", "at": 1763114400000, "caller_type": "mobile_10", "context": { "claimed_bank": true } }
+    ],
+    "expect": { "level": "yellow", "pattern": "P7" }
+  },
+  {
+    "id": "seq_28",
+    "name": "P7 positive: call_in claimed_bank=true with non-1600 caller (yellow)",
+    "events": [
+      { "kind": "call_in", "at": 1763114400000, "number": "+919000000006", "context": { "claimed_bank": true } }
+    ],
+    "expect": { "level": "yellow", "pattern": "P7" }
+  },
+  {
+    "id": "seq_29",
+    "name": "P7 negative: 1600 caller with claimed_bank=true stays green with S4 note",
+    "events": [
+      { "kind": "voice_report", "at": 1763114400000, "caller_type": "series_1600", "context": { "claimed_bank": true } }
+    ],
+    "expect": { "level": "green", "pattern": null, "reason_includes": "registered bank number" }
+  },
+  {
+    "id": "seq_30",
+    "name": "S4 green note: series_1600 call stays green with informational reason",
+    "events": [
+      { "kind": "call_in", "at": 1763114400000, "number": "1600123456" }
+    ],
+    "expect": { "level": "green", "pattern": null, "reason_includes": "registered bank number" }
+  },
+  {
+    "id": "seq_31",
+    "name": "Negative: malformed P6/P7 context and spoofed client claims do not fire",
+    "events": [
+      {
+        "kind": "call_state",
+        "at": 1763114400000,
+        "number": "+919000000007",
+        "context": { "long_vs_normal": "yes", "duration_ms": "1500000", "claimed_bank": 1 },
+        "local_level": "red",
+        "matched_rules": ["pattern.P6", "pattern.P7"]
+      }
+    ],
+    "expect": { "level": "green", "pattern": null }
   }
 ]

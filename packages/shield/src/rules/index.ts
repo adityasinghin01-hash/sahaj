@@ -21,6 +21,9 @@ export {
   checkP3Notification,
   checkP3Install,
   checkP4Install,
+  checkP6,
+  checkP7,
+  checkS4,
   checkP9,
 } from "./patterns";
 export type {
@@ -30,6 +33,7 @@ export type {
   RuleAppOpenEvent,
   RuleNotificationEvent,
   RuleInstallEvent,
+  RuleVoiceReportEvent,
   PatternHit,
   Timestamp,
 } from "./patterns";

@@ -32,7 +32,7 @@
   "caller": {
     "rules": [
       { "id": "caller.series_1600", "type": "series_1600", "pattern": "^(\\+91|0091|91|0)?1600[0-9]{6}$", "flags": "", "score": -10,
-        "reason": { "hi": "1600 वाला नंबर — रजिस्टर्ड बैंक/बीमा कंपनी की कॉल", "en": "1600-series number — registered bank/insurer caller" } },
+        "reason": { "hi": "1600 वाला रजिस्टर्ड बैंक नंबर — असली बैंक/बीमा कंपनी की कॉल", "en": "1600-series registered bank number — official bank/insurer caller" } },
       { "id": "caller.series_140", "type": "series_140", "pattern": "^(\\+91|0091|91|0)?140[0-9]{7}$", "flags": "", "score": 5,
         "reason": { "hi": "140 वाला नंबर — विज्ञापन/टेलीमार्केटिंग कॉल", "en": "140-series number — telemarketing call" } },
       { "id": "caller.mobile_10", "type": "mobile_10", "pattern": "^(\\+91|0091|91|0)?[6-9][0-9]{9}$", "flags": "", "score": 5,
@@ -451,8 +451,32 @@
         "en": "A screen-sharing or remote-control app was detected — never share your screen with a stranger"
       }
     },
-    "P6": { "phase": 2, "id": "pattern.P6", "description": "placeholder" },
-    "P7": { "phase": 2, "id": "pattern.P7", "description": "placeholder" },
+    "P6": {
+      "phase": 2,
+      "id": "pattern.P6",
+      "level": "yellow",
+      "scam_type": "digital_arrest",
+      "description": "Long voice call with an unsaved caller (>= 20 min or >= 3x parent's normal call duration); video/WhatsApp calls stay P2",
+      "caller_types": ["mobile_10", "international", "series_140", "unknown"],
+      "min_duration_ms": 1200000,
+      "multiplier_vs_normal": 3,
+      "reason": {
+        "hi": "अनजान नंबर से बहुत लंबी कॉल चल रही है — अगर कोई डराए या पैसे मांगे तो परिवार से पूछ लें",
+        "en": "Unusually long call with an unsaved number — check with family if anyone pressures you or asks for money"
+      }
+    },
+    "P7": {
+      "phase": 2,
+      "id": "pattern.P7",
+      "level": "yellow",
+      "scam_type": "kyc_block",
+      "description": "Voice report or call claiming to be a bank when caller is not a registered 1600-series number",
+      "trusted_caller_types": ["series_1600"],
+      "reason": {
+        "hi": "Bank ke asli phone 1600 se shuru hote hain",
+        "en": "Real bank calls come from 1600 numbers"
+      }
+    },
     "P8": {
       "phase": 2,
       "id": "pattern.P8",

@@ -2,6 +2,7 @@ package app.sahaj.shield.rules
 
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.booleanOrNull
 import kotlinx.serialization.json.doubleOrNull
 import kotlinx.serialization.json.jsonArray
@@ -40,28 +41,51 @@ class ParityTest {
     }
 
     private fun JsonObject.strOrNull(key: String): String? =
-        this[key]?.jsonPrimitive?.let { if (it.isString) it.content else null }
+        (this[key] as? JsonPrimitive)?.let { if (it.isString) it.content else null }
 
     private fun JsonObject.boolOrDefault(key: String, default: Boolean = false): Boolean =
-        this[key]?.jsonPrimitive?.booleanOrNull ?: default
+        (this[key] as? JsonPrimitive)?.booleanOrNull ?: default
+
+    private fun JsonObject.longOrNull(key: String): Long? =
+        (this[key] as? JsonPrimitive)?.let { if (it.isString) null else it.longOrNull }
+
+    private fun JsonObject.doubleOrNull(key: String): Double? =
+        (this[key] as? JsonPrimitive)?.let { if (it.isString) null else it.doubleOrNull }
+
+    private fun JsonObject.ctx(): JsonObject? = this["context"] as? JsonObject
 
     private fun toSignalEvent(o: JsonObject): SignalEvent {
         val kind = o.getValue("kind").jsonPrimitive.content
-        val at = o.getValue("at").jsonPrimitive.longOrNull
+        val at = o.longOrNull("at")
             ?: error("Missing integer 'at' in sequence event: $o")
+        val ctx = o.ctx()
         return when (kind) {
-            "call" -> SignalEvent.Call(
+            "call", "call_in", "call_out", "call_state" -> SignalEvent.Call(
                 atMs = at,
-                endedAtMs = o["ended_at"]?.jsonPrimitive?.longOrNull,
+                endedAtMs = o.longOrNull("ended_at") ?: ctx?.longOrNull("ended_at"),
                 number = o.strOrNull("number"),
                 callerType = o.strOrNull("caller_type"),
-                savedContact = o.boolOrDefault("saved_contact"),
-                direction = o.strOrNull("direction"),
-                video = o.boolOrDefault("video"),
-                source = o.strOrNull("source"),
-                whatsappCallUnsaved = o.boolOrDefault("whatsapp_call_unsaved"),
-                durationMs = o["duration_ms"]?.jsonPrimitive?.longOrNull,
-                cancelled = o.boolOrDefault("cancelled"),
+                savedContact = o.boolOrDefault("saved_contact") || (ctx?.boolOrDefault("saved_contact") ?: false),
+                direction = o.strOrNull("direction") ?: when (kind) {
+                    "call_in" -> "in"
+                    "call_out" -> "out"
+                    else -> null
+                },
+                video = o.boolOrDefault("video") || (ctx?.boolOrDefault("video") ?: false),
+                source = o.strOrNull("source") ?: ctx?.strOrNull("source"),
+                whatsappCallUnsaved = o.boolOrDefault("whatsapp_call_unsaved") || (ctx?.boolOrDefault("whatsapp_call_unsaved") ?: false),
+                durationMs = o.longOrNull("duration_ms") ?: ctx?.longOrNull("duration_ms"),
+                longVsNormal = o.boolOrDefault("long_vs_normal") || (ctx?.boolOrDefault("long_vs_normal") ?: false),
+                claimedBank = o.boolOrDefault("claimed_bank") || (ctx?.boolOrDefault("claimed_bank") ?: false),
+                cancelled = o.boolOrDefault("cancelled") || (ctx?.boolOrDefault("cancelled") ?: false),
+            )
+            "voice_report" -> SignalEvent.VoiceReport(
+                atMs = at,
+                number = o.strOrNull("number"),
+                callerType = o.strOrNull("caller_type"),
+                savedContact = o.boolOrDefault("saved_contact") || (ctx?.boolOrDefault("saved_contact") ?: false),
+                claimedBank = o.boolOrDefault("claimed_bank") || (ctx?.boolOrDefault("claimed_bank") ?: false),
+                text = o.strOrNull("text"),
             )
             "sms" -> SignalEvent.Sms(
                 atMs = at,
@@ -72,29 +96,29 @@ class ParityTest {
             )
             "app_open" -> SignalEvent.AppOpen(
                 atMs = at,
-                packageName = o.strOrNull("package"),
-                onCallWithUnsaved = o.boolOrDefault("on_call_with_unsaved"),
-                savedContact = o.boolOrDefault("saved_contact"),
+                packageName = o.strOrNull("package") ?: ctx?.strOrNull("package"),
+                onCallWithUnsaved = o.boolOrDefault("on_call_with_unsaved") || (ctx?.boolOrDefault("on_call_with_unsaved") ?: false),
+                savedContact = o.boolOrDefault("saved_contact") || (ctx?.boolOrDefault("saved_contact") ?: false),
                 callerType = o.strOrNull("caller_type"),
             )
             "notification" -> SignalEvent.Notification(
                 atMs = at,
-                source = o.strOrNull("source"),
-                whatsappCallUnsaved = o.boolOrDefault("whatsapp_call_unsaved"),
-                callSeconds = o["call_seconds"]?.jsonPrimitive?.longOrNull,
-                attachmentApk = o.boolOrDefault("attachment_apk"),
-                cancelled = o.boolOrDefault("cancelled"),
-                endedAtMs = o["ended_at"]?.jsonPrimitive?.longOrNull,
-                savedContact = o.boolOrDefault("saved_contact"),
+                source = o.strOrNull("source") ?: ctx?.strOrNull("source"),
+                whatsappCallUnsaved = o.boolOrDefault("whatsapp_call_unsaved") || (ctx?.boolOrDefault("whatsapp_call_unsaved") ?: false),
+                callSeconds = o.longOrNull("call_seconds") ?: ctx?.longOrNull("call_seconds"),
+                attachmentApk = o.boolOrDefault("attachment_apk") || (ctx?.boolOrDefault("attachment_apk") ?: false),
+                cancelled = o.boolOrDefault("cancelled") || (ctx?.boolOrDefault("cancelled") ?: false),
+                endedAtMs = o.longOrNull("ended_at") ?: ctx?.longOrNull("ended_at"),
+                savedContact = o.boolOrDefault("saved_contact") || (ctx?.boolOrDefault("saved_contact") ?: false),
                 callerType = o.strOrNull("caller_type"),
                 text = o.strOrNull("text"),
             )
             "install" -> SignalEvent.Install(
                 atMs = at,
-                packageName = o.strOrNull("package"),
-                installer = o.strOrNull("installer"),
-                installedHoursAgo = o["installed_hours_ago"]?.jsonPrimitive?.doubleOrNull,
-                isSystem = o.boolOrDefault("is_system"),
+                packageName = o.strOrNull("package") ?: ctx?.strOrNull("package"),
+                installer = o.strOrNull("installer") ?: ctx?.strOrNull("installer"),
+                installedHoursAgo = o.doubleOrNull("installed_hours_ago") ?: ctx?.doubleOrNull("installed_hours_ago"),
+                isSystem = o.boolOrDefault("is_system") || (ctx?.boolOrDefault("is_system") ?: false),
             )
             else -> error("Unsupported sequence event kind: $kind")
         }
@@ -138,7 +162,7 @@ class ParityTest {
     @Test
     fun allSequencesMatchTypeScriptExpectations() {
         val sequences = Json.parseToJsonElement(sequencesJson).jsonArray
-        assertTrue(sequences.size >= 21, "Expected at least 21 harness sequences")
+        assertTrue(sequences.size >= 29, "Expected at least 29 harness sequences (seq_01..seq_29+)")
 
         for (el in sequences) {
             val s = el.jsonObject
@@ -146,7 +170,9 @@ class ParityTest {
             val events = s.getValue("events").jsonArray.map { toSignalEvent(it.jsonObject) }
             val expectObj = s.getValue("expect").jsonObject
             val expectLevel = parseLevel(expectObj.getValue("level").jsonPrimitive.content)
-            val expectPattern = expectObj["pattern"]?.jsonPrimitive?.let { if (it.isString) it.content else null }
+            val expectPattern = (expectObj["pattern"] as? JsonPrimitive)?.let { if (it.isString) it.content else null }
+            val notPatterns = expectObj["not_patterns"]?.jsonArray?.map { it.jsonPrimitive.content } ?: emptyList()
+            val expectReasonNote = expectObj.strOrNull("reason_includes")
 
             val lastRaw = s.getValue("events").jsonArray.last().jsonObject
             val spoofedLocalLevel = lastRaw.strOrNull("local_level")?.let { parseLevel(it) }
@@ -168,12 +194,20 @@ class ParityTest {
                     "$id expected pattern $expectPattern, got ${verdict.patterns}",
                 )
             }
+            for (np in notPatterns) {
+                assertFalse(verdict.patterns.contains(np), "$id should not fire $np, got ${verdict.patterns}")
+            }
+            if (expectReasonNote != null) {
+                assertTrue(verdict.reasons.isNotEmpty(), "$id expected informational reason, got empty reasons")
+            }
         }
     }
 
     @Test
-    fun phase2ThresholdsPackagesAndSpoofingDefenseMatchRulesJson() {
+    fun phase2AndPhase3ThresholdsPackagesAndSpoofingDefenseMatchRulesJson() {
         assertEquals(600_000L, engine.p2MinDurationMs())
+        assertEquals(1_200_000L, engine.p6MinDurationMs())
+        assertEquals(3, engine.p6MultiplierVsNormal())
         assertEquals(2_000L, engine.p9PollMs())
         assertTrue(engine.p9Packages().contains("com.phonepe.app"))
         assertTrue(engine.p4Packages().contains("com.anydesk.anydeskandroid"))

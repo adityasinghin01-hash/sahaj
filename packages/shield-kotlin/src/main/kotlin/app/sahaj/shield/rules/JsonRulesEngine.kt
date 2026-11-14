@@ -337,6 +337,8 @@ class JsonRulesEngine(rulesJson: String) : RulesEngine {
     fun p4Packages(): Set<String> = cfg.p4.packages
     fun p9PollMs(): Long = cfg.p9.pollMs
     fun p2MinDurationMs(): Long = cfg.p2.minDurationMs
+    fun p6MinDurationMs(): Long = cfg.p6.minDurationMs
+    fun p6MultiplierVsNormal(): Int = cfg.p6.multiplierVsNormal
 
     private fun resolveCallType(call: SignalEvent.Call): String =
         if (call.savedContact) "saved_contact" else (call.callerType ?: callerType(call.number))
@@ -403,6 +405,38 @@ class JsonRulesEngine(rulesJson: String) : RulesEngine {
         return pkg.isNotEmpty() && cfg.p4.packages.contains(pkg)
     }
 
+    fun checkP6(call: SignalEvent.Call, evalAtMs: Long? = null): Boolean {
+        if (call.cancelled || call.video) return false
+        if (checkP2Call(call, evalAtMs)) return false
+        if (call.savedContact) return false
+        if (!cfg.p6.callerTypes.contains(resolveCallType(call))) return false
+        if (call.longVsNormal) return true
+        val duration = callDurationMs(call, evalAtMs) ?: return false
+        return duration >= cfg.p6.minDurationMs
+    }
+
+    private fun isTrustedBankCaller(savedContact: Boolean, explicitType: String?, number: String?): Boolean {
+        if (explicitType == "series_1600") return true
+        val ct = if (savedContact) "saved_contact" else (explicitType ?: callerType(number))
+        return cfg.p7.trustedCallerTypes.contains(ct)
+    }
+
+    fun checkP7Call(call: SignalEvent.Call): Boolean {
+        if (!call.claimedBank || call.cancelled) return false
+        return !isTrustedBankCaller(call.savedContact, call.callerType, call.number)
+    }
+
+    fun checkP7VoiceReport(vr: SignalEvent.VoiceReport): Boolean {
+        if (!vr.claimedBank) return false
+        return !isTrustedBankCaller(vr.savedContact, vr.callerType, vr.number)
+    }
+
+    fun checkS4(callerTypeValue: String? = null, number: String? = null, savedContact: Boolean = false): Boolean {
+        if (callerTypeValue == "series_1600") return true
+        if (savedContact) return false
+        return (callerTypeValue ?: callerType(number)) == "series_1600"
+    }
+
     private fun checkP1OverCalls(sms: SignalEvent.Sms, calls: List<SignalEvent.Call>): Boolean {
         if (!isOtp(sms.text)) return false
         return calls.any { c ->
@@ -417,7 +451,14 @@ class JsonRulesEngine(rulesJson: String) : RulesEngine {
         val ids = linkedSetOf<String>()
         for (e in events) {
             when (e) {
-                is SignalEvent.Call -> if (checkP2Call(e, evalAtMs)) ids.add("P2")
+                is SignalEvent.Call -> {
+                    if (checkP2Call(e, evalAtMs)) ids.add("P2")
+                    if (checkP6(e, evalAtMs)) ids.add("P6")
+                    if (checkP7Call(e)) ids.add("P7")
+                }
+                is SignalEvent.VoiceReport -> {
+                    if (checkP7VoiceReport(e)) ids.add("P7")
+                }
                 is SignalEvent.AppOpen -> if (checkP9(e, calls)) ids.add("P9")
                 is SignalEvent.Notification -> {
                     if (checkP2Notification(e)) ids.add("P2")
@@ -458,14 +499,19 @@ class JsonRulesEngine(rulesJson: String) : RulesEngine {
     ): SequenceVerdict {
         val hits = mutableListOf<RuleHit>()
         val reasonIds = mutableListOf<String>()
+        val infoReasonIds = mutableListOf<String>()
         fun addReason(id: String) {
             if (cfg.reasonsById.containsKey(id) && !reasonIds.contains(id)) reasonIds.add(id)
+        }
+        fun addInfoReason(id: String) {
+            if (cfg.reasonsById.containsKey(id) && !infoReasonIds.contains(id)) infoReasonIds.add(id)
         }
 
         val lastSmsIdx = events.indexOfLast { it is SignalEvent.Sms }
         val lastSms = if (lastSmsIdx >= 0) events[lastSmsIdx] as SignalEvent.Sms else null
         val text = lastSms?.text?.takeIf { it.trim().isNotEmpty() }
         val lastCall = events.lastOrNull { it is SignalEvent.Call } as? SignalEvent.Call
+        val lastVoiceReport = events.lastOrNull { it is SignalEvent.VoiceReport } as? SignalEvent.VoiceReport
         val effectiveEvalAt = evalAtMs ?: events.lastOrNull()?.atMs
 
         var floor = Level.GREEN
@@ -500,6 +546,19 @@ class JsonRulesEngine(rulesJson: String) : RulesEngine {
             if (cRule != null) {
                 hits.add(RuleHit(cRule.id, cRule.score))
                 if (cRule.score > 0) addReason(cRule.id)
+                if (cType == "series_1600") addInfoReason(cRule.id)
+            }
+        } else if (
+            lastSms == null &&
+            lastVoiceReport != null &&
+            (lastVoiceReport.number != null || lastVoiceReport.callerType != null || lastVoiceReport.savedContact)
+        ) {
+            val cType = if (lastVoiceReport.savedContact) "saved_contact" else (lastVoiceReport.callerType ?: callerType(lastVoiceReport.number))
+            val cRule = cfg.callerRules.find { it.type == cType }
+            if (cRule != null) {
+                hits.add(RuleHit(cRule.id, cRule.score))
+                if (cRule.score > 0) addReason(cRule.id)
+                if (cType == "series_1600") addInfoReason(cRule.id)
             }
         }
 
@@ -529,6 +588,8 @@ class JsonRulesEngine(rulesJson: String) : RulesEngine {
                 "P2" -> Triple(cfg.p2.id, cfg.p2.level, cfg.p2.scamType)
                 "P3" -> Triple(cfg.p3.id, cfg.p3.level, cfg.p3.scamType)
                 "P4" -> Triple(cfg.p4.id, cfg.p4.level, cfg.p4.scamType)
+                "P6" -> Triple(cfg.p6.id, cfg.p6.level, cfg.p6.scamType)
+                "P7" -> Triple(cfg.p7.id, cfg.p7.level, cfg.p7.scamType)
                 "P9" -> Triple(cfg.p9.id, cfg.p9.level, cfg.p9.scamType)
                 else -> continue
             }
@@ -562,12 +623,14 @@ class JsonRulesEngine(rulesJson: String) : RulesEngine {
             }
         } + firedPatternIds).distinct()
 
+        val finalReasonIds = if (level == Level.GREEN) infoReasonIds else (reasonIds + infoReasonIds).distinct()
+
         return SequenceVerdict(
             level = level,
             scamType = scamType,
             patterns = findPatterns(events, effectiveEvalAt),
             matchedRules = matchedRules,
-            reasons = if (level == Level.GREEN) emptyList() else reasonIds.mapNotNull { cfg.reasonsById[it]?.hi },
+            reasons = finalReasonIds.mapNotNull { cfg.reasonsById[it]?.hi },
         )
     }
 

@@ -120,6 +120,24 @@ internal data class P4Config(
     val reason: ReasonText,
 )
 
+internal data class P6Config(
+    val id: String,
+    val level: Level,
+    val scamType: String,
+    val callerTypes: Set<String>,
+    val minDurationMs: Long,
+    val multiplierVsNormal: Int,
+    val reason: ReasonText,
+)
+
+internal data class P7Config(
+    val id: String,
+    val level: Level,
+    val scamType: String,
+    val trustedCallerTypes: Set<String>,
+    val reason: ReasonText,
+)
+
 internal data class P8Config(
     val id: String,
     val level: Level,
@@ -165,6 +183,8 @@ internal class ParsedRules(rulesJson: String) {
     val p2: P2Config
     val p3: P3Config
     val p4: P4Config
+    val p6: P6Config
+    val p7: P7Config
     val p8: P8Config
     val p9: P9Config
     val thresholds: ThresholdsConfig
@@ -338,6 +358,24 @@ internal class ParsedRules(rulesJson: String) {
             packages = p4Obj.reqStrList("packages").toSet(),
             reason = p4Obj.reqReason("reason"),
         )
+        val p6Obj = patternsObj.reqObj("P6")
+        p6 = P6Config(
+            id = p6Obj.reqStr("id"),
+            level = parseLevel(p6Obj.reqStr("level")),
+            scamType = p6Obj.reqStr("scam_type"),
+            callerTypes = p6Obj.reqStrList("caller_types").toSet(),
+            minDurationMs = p6Obj.reqLong("min_duration_ms"),
+            multiplierVsNormal = p6Obj.reqInt("multiplier_vs_normal"),
+            reason = p6Obj.reqReason("reason"),
+        )
+        val p7Obj = patternsObj.reqObj("P7")
+        p7 = P7Config(
+            id = p7Obj.reqStr("id"),
+            level = parseLevel(p7Obj.reqStr("level")),
+            scamType = p7Obj.reqStr("scam_type"),
+            trustedCallerTypes = p7Obj.reqStrList("trusted_caller_types").toSet(),
+            reason = p7Obj.reqReason("reason"),
+        )
         val p8Obj = patternsObj.reqObj("P8")
         p8 = P8Config(
             id = p8Obj.reqStr("id"),
@@ -387,6 +425,8 @@ internal class ParsedRules(rulesJson: String) {
         reasons[p2.id] = p2.reason
         reasons[p3.id] = p3.reason
         reasons[p4.id] = p4.reason
+        reasons[p6.id] = p6.reason
+        reasons[p7.id] = p7.reason
         reasons[p8.id] = p8.reason
         reasons[p9.id] = p9.reason
         reasonsById = reasons

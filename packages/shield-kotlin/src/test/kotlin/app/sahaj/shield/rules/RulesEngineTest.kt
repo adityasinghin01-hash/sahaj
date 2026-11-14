@@ -222,5 +222,62 @@ class RulesEngineTest {
         )
         assertTrue(needsAi.needsAi)
     }
+
+    @Test
+    fun phase3P6P7AndS4ParityChecks() {
+        val p6Flag = engine.evaluateSequence(
+            events = listOf(
+                SignalEvent.Call(atMs = 1_763_114_400_000L, callerType = "mobile_10", longVsNormal = true, durationMs = 300_000L),
+            ),
+        )
+        assertEquals(Level.YELLOW, p6Flag.level)
+        assertEquals("digital_arrest", p6Flag.scamType)
+        assertEquals(listOf("P6"), p6Flag.patterns)
+
+        val p6Duration = engine.evaluateSequence(
+            events = listOf(
+                SignalEvent.Call(atMs = 1_763_114_400_000L, callerType = "unknown", durationMs = 1_200_000L),
+            ),
+        )
+        assertEquals(Level.YELLOW, p6Duration.level)
+        assertEquals(listOf("P6"), p6Duration.patterns)
+
+        val p6VideoNotDouble = engine.evaluateSequence(
+            events = listOf(
+                SignalEvent.Call(atMs = 1_763_114_400_000L, callerType = "mobile_10", video = true, longVsNormal = true, durationMs = 1_500_000L),
+            ),
+        )
+        assertEquals(Level.RED, p6VideoNotDouble.level)
+        assertEquals(listOf("P2"), p6VideoNotDouble.patterns)
+
+        val p6Saved = engine.evaluateSequence(
+            events = listOf(
+                SignalEvent.Call(atMs = 1_763_114_400_000L, savedContact = true, longVsNormal = true, durationMs = 1_500_000L),
+            ),
+        )
+        assertEquals(Level.GREEN, p6Saved.level)
+        assertTrue(p6Saved.patterns.isEmpty())
+
+        val p7Voice = engine.evaluateSequence(
+            events = listOf(
+                SignalEvent.VoiceReport(atMs = 1_763_114_400_000L, callerType = "mobile_10", claimedBank = true),
+            ),
+        )
+        assertEquals(Level.YELLOW, p7Voice.level)
+        assertEquals("kyc_block", p7Voice.scamType)
+        assertEquals(listOf("P7"), p7Voice.patterns)
+        assertTrue(p7Voice.reasons.any { it.contains("1600") })
+
+        val p7AndS4Bank1600 = engine.evaluateSequence(
+            events = listOf(
+                SignalEvent.Call(atMs = 1_763_114_400_000L, number = "1600123456", claimedBank = true),
+            ),
+        )
+        assertEquals(Level.GREEN, p7AndS4Bank1600.level)
+        assertTrue(p7AndS4Bank1600.patterns.isEmpty())
+        assertTrue(p7AndS4Bank1600.matchedRules.contains("caller.series_1600"))
+        assertTrue(p7AndS4Bank1600.reasons.isNotEmpty())
+        assertTrue(engine.checkS4(callerTypeValue = "series_1600"))
+    }
 }
 
