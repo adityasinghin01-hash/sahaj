@@ -4,7 +4,9 @@ import { checkAction, respond } from "../brain/respond.js";
 import type { ShieldBrainDeps, StoredVerdict } from "../brain/types.js";
 import { createPairingCode, handleShieldEvent, handleShieldPair, type ShieldServerDeps } from "../server";
 import { scheduledShieldTools, handleShieldToolJob, isShieldJobName, FamilyCheckJobPayload, type ShieldJobDeps, type ScheduledToolDeps } from "../jobs";
-import { isShieldToolName, type ShieldToolName, type ShieldTool, type ToolCtx, type ShieldDeps } from "../tools";
+import { type ShieldTool, type ToolCtx, type ShieldDeps } from "../tools";
+import { drillAnswer, pickDrill, scamSense, DRILL_FALLBACK_LINE, type DrillDeps } from "../drills";
+import { buildEvidencePack, type EvidenceRequest } from "../evidence";
 import { createShieldRuntimePg } from "./pg";
 import { evaluateRules, scoreVoiceText } from "./rules";
 import type { ShieldRuntimePorts, ShieldRuntimeTestPorts, ShieldRuntimeDb } from "./types";
@@ -12,9 +14,15 @@ import type { ShieldRuntimePorts, ShieldRuntimeTestPorts, ShieldRuntimeDb } from
 export * from "./types";
 export { createShieldRuntimePg } from "./pg";
 
+/** Unified runtime registration, including the injected drill tool. */
+export const shieldTools = { ...scheduledShieldTools, drill_answer: drillAnswer } as const;
+export type ShieldToolName = keyof typeof shieldTools;
+export function isShieldToolName(name: string): name is ShieldToolName {
+  return Object.prototype.hasOwnProperty.call(shieldTools, name);
+}
 export interface BoundShieldTools {
   run<K extends ShieldToolName>(name: K, ctx: ToolCtx,
-    input: Parameters<(typeof scheduledShieldTools)[K]["run"]>[2]): ReturnType<(typeof scheduledShieldTools)[K]["run"]>;
+    input: Parameters<(typeof shieldTools)[K]["run"]>[2]): ReturnType<(typeof shieldTools)[K]["run"]>;
 }
 
 export function createShieldRuntime(ports: ShieldRuntimePorts | ShieldRuntimeTestPorts) {
@@ -131,8 +139,20 @@ export function createShieldRuntime(ports: ShieldRuntimePorts | ShieldRuntimeTes
     };
   }
 
+  function drillDeps(): DrillDeps {
+    if (!db.drills) throw new Error("Shield drill storage not configured");
+    const storage = db.drills;
+    return { db: { ...storage, withParentLock: (ctx, work) => track(storage.withParentLock(ctx, work)) }, stories: ports.drillStories ?? [], clock: ports.clock,
+      router: { understand: request => track(ports.router.understand(request)) } };
+  }
+
   const run = (async (name: ShieldToolName, ctx: ToolCtx, input: unknown) => {
     if (!isShieldToolName(name)) throw new Error("Unknown Shield tool");
+    if (name === "drill_answer") {
+      // The drill tool includes membership and storage work inside its deadline.
+      try { return track(drillAnswer.run(drillDeps(), ctx, input as Parameters<typeof drillAnswer.run>[2])); }
+      catch { return { score: 0, teach_line_hi: DRILL_FALLBACK_LINE }; }
+    }
     if (!await db.brain.getParent(ctx)) throw new Error("Shield tool parent not found");
     const tool: ShieldTool = scheduledShieldTools[name];
     return track(tool.run(toolDeps(ctx), ctx, input));
@@ -143,6 +163,12 @@ export function createShieldRuntime(ports: ShieldRuntimePorts | ShieldRuntimeTes
     handleShieldEvent: (request: Request) => handleShieldEvent(request, serverDeps),
     createPairingCode: (input: { familyId: string; userId: string }) => createPairingCode(serverDeps, input),
     shieldTools: { run } satisfies BoundShieldTools,
+    pickDrill: (input: ToolCtx & { now: Date }) => pickDrill(drillDeps(), input),
+    scamSense: (input: ToolCtx & { month: string }) => scamSense(drillDeps(), input),
+    buildEvidencePack: (input: EvidenceRequest) => {
+      if (!db.evidence || !ports.timeline) throw new Error("Shield evidence ports not configured");
+      return buildEvidencePack({ db: db.evidence, timeline: ports.timeline, clock: ports.clock }, input);
+    },
     async handleScheduledJob(name: string, payload: unknown) {
       if (name === RETRY_PARENT_JOB || name === NO_REACTION_JOB) return handleBrainJob(name, payload, brainDeps(db));
       if (isShieldJobName(name)) {

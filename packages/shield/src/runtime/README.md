@@ -7,7 +7,7 @@ import { createShieldRuntime } from "@sahaj/shield";
 const shield = createShieldRuntime(ports);
 ```
 
-Create one runtime per server process. `ports.sql` is a **service-role direct or session-mode Postgres connection pool** (`postgres(url, { prepare: false, max_pipeline: 1 })`). Dedicate this pool to Shield storage; callbacks such as `sign`, push and the scheduler must use their own connections if they access Postgres. Brain execution reserves a pool connection, so sharing its exhausted pool with callbacks would deadlock. Transaction-mode poolers are incompatible with the session advisory lock used to serialize brain execution across workers. The runtime uses the existing two Shield migrations and the core tables documented in `../db/README.md`; it performs no DDL. It does not own connection shutdown.
+Create one runtime per server process. `ports.sql` is a **service-role direct or session-mode Postgres connection pool** (`postgres(url, { prepare: false, max_pipeline: 1 })`). Dedicate this pool to Shield storage; callbacks such as `sign`, push and the scheduler must use their own connections if they access Postgres. Brain execution reserves a pool connection, so sharing its exhausted pool with callbacks would deadlock. Transaction-mode poolers are incompatible with the session advisory lock used to serialize brain execution across workers. The runtime uses the two base Shield migrations and the core tables documented in `../db/README.md`, plus the C-04 migration below for drills/evidence; it performs no DDL. It does not own connection shutdown.
 
 ## Exact outside-world ports
 
@@ -139,3 +139,57 @@ export const POST = async (req: Request, route: { params: Promise<{ name: string
 `pnpm -F @sahaj/shield typecheck` and `pnpm -F @sahaj/shield test`. The joined scenes use real handlers, real JSON rules, real graph and a real router with fake providers/effects. With `DATABASE_URL`, they use `createShieldRuntimePg` and the real existing DB layer; otherwise they inject `ShieldRuntimeDb` through `ShieldRuntimeTestPorts`. The test DB requires the migrations/core fixture schema and service-role access. To create a throwaway local cluster and run the **whole** Shield suite: `bash packages/shield/test/e2e/run-postgres.sh` (Postgres binaries default to `/opt/homebrew/bin`; override `PG_BIN`). This runner deletes only its own temporary cluster on exit.
 
 No production migration or external service calls happen at runtime construction. The host remains responsible for service credentials, auth helpers, durable scheduling, notification/call delivery, timeline persistence/retries and answer/reaction recording. A crash after verdict persistence but before every effect completes needs host reconciliation/idempotent delivery; this card does not add a transactional outbox. A masked `<URL:host>` only permits domain/root reputation checking, because the phone has already removed its original path.
+
+## C-04: helper drills and evidence packs
+
+Apply `20261114000400_shield_drills_evidence.sql` after the earlier Shield migrations. `createShieldRuntimePg` now supplies `db.drills` and `db.evidence`. They are optional on **offline test** storage for compatibility; the corresponding feature fails closed when its storage is absent.
+
+Add these two ports to enable the new features:
+
+```ts
+// All types are exported by @sahaj/shield.
+const extraPorts = {
+  drillStories: stories, // readonly DrillStory[]; inject the shared catalogue
+  timeline: {
+    async entriesFor(eventIds: string[]): Promise<EvidenceTimelineEntry[]> {
+      // Read the host's persisted, signed actions for exactly these DB event IDs.
+      return timelineStore.entriesFor(eventIds);
+    },
+    async chainHashFor(eventIds: string[]): Promise<string> {
+      // Return its real SHA-256 checkpoint as 64 hex characters.
+      return timelineStore.chainHashFor(eventIds);
+    },
+  },
+};
+```
+
+`DrillStory = { id, scam_type, story_hi, good_answers: string[], risky_answers: string[], teach_line_hi }`. No production stories are fabricated while the shared catalogue is absent. An empty catalogue returns no drill. With ten or fewer stories, the exact last-ten exclusion eventually exhausts the pool and returns null; more stories must be supplied before another unseen drill can be issued.
+
+`EvidenceTimelineEntry = { at: string, step: string, status: "ok" | "denied" | "failed" | "skipped", action?: string, details?: string, money_sent?: boolean }`. Resolve database event IDs to the host's existing event keys/verdict IDs inside this adapter. Read the actual signed records/checkpoint, with the host's normal snapshot/retry policy. `money_sent` must be an explicit parent report associated with the incident. No timeline implementation or signature verification is invented by Shield.
+
+The runtime adds:
+
+```ts
+await shield.pickDrill({ familyId, parentId, now: clock.now() }); // { drill_id, story_hi } | null
+await shield.shieldTools.run("drill_answer", { familyId, parentId }, { drill_id, said });
+await shield.scamSense({ familyId, parentId, month: "2026-11" });
+await shield.buildEvidencePack({ familyId, verdictId, viewerUserId });
+```
+
+Use `isShieldToolName` / `shieldTools` / `ShieldToolName` from the **package root or runtime** for the complete seven-tool registration. The legacy internal `src/tools` map stays unchanged. Input validation, family/parent membership checks, issuance lookup, AI scoring and answer writes are inside the drill tool's 2800 ms response budget. Its router soft budget is 1800 ms, each provider attempt requests 600 ms, and storage/provider failures produce a fixed kind fallback. A slow model uses keyword scoring: any affirmative risky phrase = zero, one good phrase = one, two or more good phrases = two. Local keyword checks happen before masking so the public helpline keyword cannot collide with a different masked number; only masked text reaches providers and storage. Numeric Unicode digits and separated numbers are masked. First answers are serialized and immutable. A timed-out late read/model result cannot initiate an answer write. Already-started database operations may settle after the speech deadline; the runtime keeps their lifecycle promise alive.
+
+Weekly means seven rolling days from the latest **asked** drill, including unanswered drills. Selection and answers use one parent-scoped advisory transaction lock across workers. `scamSense` uses UTC calendar months, averages completed 0–2 scores and multiplies by 2.5 (one decimal place). `drills_this_month` counts scored drills; unanswered ones are excluded. Trend compares the unrounded current average with the previous month's; no comparable answers means `flat`, and an empty current month displays zero. The tool sets `teach_line_played` when handing off its teaching line; physical audio playback is the host's responsibility.
+
+The evidence API authorizes a current `family_members.role = 'child'` before reading the red verdict and all its source events. It distinguishes planned actions from signed performed-action statuses, recognizes the existing server-authored `voice.money_sent` report, and says `unknown; ask Maa` when no money report exists. Its number field always says `number: ask Maa / check her call log`. The database stores **only receipts**: canonical creation time, the SHA-256 contents hash and original chain hash, family/verdict/viewer references. Child membership and red-incident scope are checked again at the receipt write.
+
+All returned pack fields satisfy the card's strict four-digit rule, including hash and time fields. `created_at` is a UTC RFC 850 display timestamp with a two-digit year (for example `Saturday, 14-Nov-26 10:00:00 GMT`), and `chain_hash` is losslessly encoded as `hex-ap:` plus 64 letters `a..p` for original hex nibbles `0..f`. Use `decodeChainHash(pack.chain_hash)` for the original standard hex checkpoint; `encodeChainHash` is also exported. The receipt keeps the original hex. No claim of verified signature is implied by the export itself. The contents hash covers the deterministic UTF-8 JSON of all returned pack fields **except export `created_at`**, so exporting unchanged incident content again has the same hash. The fixed helpline label alone retains `1930`.
+
+The existing Postgres runner remains the C-03 regression gate and applies only its original two migrations. Run the additional C-04 runner to apply the new migration and execute the real concurrency, storage, scope, constraint and API-role RLS tests:
+
+```sh
+bash packages/shield/test/drills/run-postgres.sh
+# Or against a disposable database with all three migrations and test role grants:
+SHIELD_DRILLS_DB_TEST_REQUIRED=1 DATABASE_URL=... pnpm -F @sahaj/shield test
+```
+
+The extra runner grants the throwaway service login permission to assume the two test API roles; this grant is test bootstrap only, never a production migration. Without that explicit C-04 test flag, its three database scenarios skip. Both runners delete only their own temporary cluster. Neither runner changes an existing database.

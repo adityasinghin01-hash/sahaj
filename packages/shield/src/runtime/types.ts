@@ -1,4 +1,6 @@
 import type { Sql } from "postgres";
+import type { DrillStore, DrillStory } from "../drills";
+import type { EvidenceDeps, EvidenceStore } from "../evidence";
 import type { understand, twoLock } from "@sahaj/adapters";
 import type { ShieldBrainDeps, StoredVerdict, TimelineRow, ChildCard } from "../brain/types.js";
 import type { ShieldServerDb } from "../server/types";
@@ -8,6 +10,9 @@ import type { ShieldEvent } from "@sahaj/shared";
 
 /** Extra persistence needed to join the graph to the existing server/tools DB. */
 export interface ShieldRuntimeDb {
+  /** Optional only for legacy offline storage fixtures. Production supplies both. */
+  drills?: DrillStore;
+  evidence?: EvidenceStore;
   server: ShieldServerDb;
   tools: ShieldJobDeps["db"];
   brain: ShieldBrainDeps["db"];
@@ -24,6 +29,10 @@ export type ShieldCircleInput = Parameters<ShieldBrainDeps["atlas"]["startCircle
 
 export interface ShieldRuntimePorts {
   sql: Sql;
+  /** Inject the shared catalogue when it is available; no production sample stories. */
+  drillStories?: readonly DrillStory[];
+  /** Required when building an evidence pack; absent configuration fails closed. */
+  timeline?: EvidenceDeps["timeline"];
   router: { understand: typeof understand; twoLock: typeof twoLock };
   whatsapp: ShieldDeps["whatsapp"] & ShieldBrainDeps["whatsapp"];
   /** Persist the child-app card and request push delivery. Receives no inbox text. */
