@@ -18,6 +18,7 @@ import type {
   MaaPersonRecord,
   MaaRepo,
   MaaUrgentIncidentRecord,
+  MaaUrgentState,
   MaaVoicePostRecord,
 } from './repo';
 import {
@@ -51,6 +52,14 @@ export interface MaaServiceDeps {
   now?: () => Date;
   replayGuard?: ReplayGuard;
   signedUrlSeconds?: number;
+  onUrgentIncidentCreated?: (event: {
+    familyId: string;
+    incidentId: string;
+    subjectPersonId: string;
+    severity: 'routine' | 'urgent' | 'critical';
+    assignments: MaaIncidentAssignmentRecord[];
+    state: MaaUrgentState;
+  }) => Promise<void>;
 }
 
 function nowOf(deps: MaaServiceDeps): Date {
@@ -789,6 +798,17 @@ export async function handleMaaUrgentCreate(request: Request, deps: MaaServiceDe
       promisedAt: null,
       createdAt: nowOf(deps).toISOString(),
     };
+
+    if (deps.onUrgentIncidentCreated) {
+      await deps.onUrgentIncidentCreated({
+        familyId: device.familyId,
+        incidentId: offer.incidentId,
+        subjectPersonId: device.personId,
+        severity: severityRaw,
+        assignments,
+        state: resolvedIncident.state,
+      });
+    }
 
     return jsonResponse(
       {

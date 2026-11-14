@@ -9,6 +9,12 @@ import { loadAtlasConfig } from "@/lib/atlas-runtime/config";
 import { buildProviderBridge } from "@/lib/atlas-runtime/bridge";
 import { phase2Entrypoints, providerConfigFromEnv } from "@/lib/atlas-runtime/providers";
 import type { RpcDb } from "@/lib/atlas-runtime/db";
+import { createProductionUrgentHelpDeps, processUrgentEscalationTick } from "@/lib/core1/urgent-help-service";
+import {
+  createProductionCheckInDeps,
+  processCheckInTick,
+  syncSarvamCheckInPostCalls,
+} from "@/lib/core1/check-in-service";
 
 export const runtime = "nodejs";
 export async function POST(request: Request) {
@@ -42,7 +48,26 @@ export async function POST(request: Request) {
     const providers = { dispatch, purge, status: bridge.statusJob ? "configured" : "unavailable", recording: { twilio: bridge.recordingJobs.twilio ? "configured" : "unavailable", sarvam: bridge.recordingJobs.sarvam ? "configured" : "unavailable" },
       dispatchCapabilities: bridge.dispatchCapabilities,
       unavailable: bridge.unavailable };
-    return NextResponse.json({ ...routed, workflow, providers, care_actions_run: 0, processing: "durable_workflow_queue" },
+
+    // Core 1 urgent responder escalation & check-in scheduler / post-call projection
+    const checkInDeps = createProductionCheckInDeps(process.env);
+    const urgentDeps = createProductionUrgentHelpDeps(process.env);
+    const sarvamProjection = await syncSarvamCheckInPostCalls(checkInDeps).catch(() => ({ projected: 0, retriedOrEscalated: 0 }));
+    const checkInRun = await processCheckInTick(checkInDeps).catch(() => ({ evaluated: 0, dispatched: 0, deferred: 0, exhausted: 0 }));
+    const urgentRun = await processUrgentEscalationTick(urgentDeps).catch(() => ({ acceptedNotified: 0, failedCallsAdvanced: 0, timeoutsAdvanced: 0 }));
+
+    return NextResponse.json({
+      ...routed,
+      workflow,
+      providers,
+      core1_wiring: {
+        sarvamProjection,
+        checkIn: checkInRun,
+        urgent: urgentRun,
+      },
+      care_actions_run: 0,
+      processing: "durable_workflow_queue",
+    },
       { status: routed.failed > 0 ? 503 : 200 });
   } catch (error) {
     return NextResponse.json({ error: error instanceof WebhookError ? error.code : "tick_failed" }, { status: error instanceof WebhookError ? error.status : 503 });

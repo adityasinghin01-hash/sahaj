@@ -1,4 +1,5 @@
 import { createSupabaseCore1Repository } from '@/lib/core1/repository';
+import { parseDemoTimerScale, scaleDurationSeconds } from '@/lib/core1/push-notify';
 import { serviceDatabase } from '@/lib/database';
 import { cedarMediaAuthorizer } from '@/lib/media/cedar-authorizer';
 import { voiceShareConsentPurpose, type ConsentRow, type MediaAuthorizationContext, type VoiceContentRow } from '@/lib/media/contracts';
@@ -303,6 +304,24 @@ export function createSupabaseMaaRepo(client: ServiceDbClient = serviceDatabase(
     },
 
     async createUrgentIncidentOffer(params) {
+      const scale = parseDemoTimerScale(process.env);
+      if (scale !== 1) {
+        const scaledSeconds = scaleDurationSeconds(params.offerTimeoutMinutes ?? 3, scale);
+        const { data, error } = await client.rpc('create_urgent_incident_offer_scaled', {
+          p_family_id: params.familyId,
+          p_subject_person_id: params.subjectPersonId,
+          p_severity: params.severity,
+          p_offer_timeout_seconds: scaledSeconds,
+        });
+        if (!error && data) {
+          const row = data as Record<string, unknown>;
+          return {
+            incidentId: String(row.incident_id),
+            assignmentId: typeof row.assignment_id === 'string' ? row.assignment_id : undefined,
+            state: String(row.state ?? 'offered') as MaaUrgentState,
+          };
+        }
+      }
       if (!core1Repo.createUrgentIncidentOffer) {
         throw new Error('maa_missing_urgent_incident_offer_rpc');
       }
