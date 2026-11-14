@@ -934,6 +934,8 @@ export async function executeRefillProposalCommand(
       );
     }
 
+    // Refuse a missing route before consuming the request or charging usage.
+    deps.outbox.assertRouteAvailable?.('core1.refill_vendor_order');
     // decision === 'allow'
     await deps.store.createProposalState({
       requestId,
@@ -1413,6 +1415,8 @@ export async function executeRefillCommand(
       );
     }
 
+    // Refuse a missing route before consuming the request or charging usage.
+    deps.outbox.assertRouteAvailable?.('core1.refill_vendor_order');
     // decision === 'allow'
     await deps.store.updateRefillState({
       familyId: actor.familyId,

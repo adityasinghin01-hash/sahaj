@@ -9,6 +9,8 @@ import { createSupabaseCore1Repository } from '../repository';
 import { createProductionRefillDeps, executeRefillProposalCommand } from '../refill-service';
 import { createSupabaseCore1TimelinePort, stableCore1Uuid } from '../wiring-common';
 import { defaultSendExpoPush } from '../voice-notify';
+import { enqueueAuthorizedSend, claimAuthorizedSend, claimAuthorizedPush } from '../authorized-send';
+import { dispatchStore } from '../../provider-dispatch/supabase-store';
 import type { Core1ServicePorts, FamilyMembership } from '../types';
 import { createCommandPorts, type CommandDeps } from './commands';
 import type { ToolContext, ToolName, ToolResult } from './handler';
@@ -138,29 +140,26 @@ export function createProductionSarvamDeps(env: Record<string, string | undefine
       await timeline.append({ familyId: ctx.familyId, eventType: 'core1.message.transcript', entityId: messageId,
         humanLine: `${label}: ${transcript}`, payload: { sender_id: ctx.parentId, recipient_id: recipient, label, transcript, media_kind: 'ai_transcript' },
         dedupeKey: `sarvam-message:${messageId}` });
-      const rows = await sql<{ expo_token: string }[]>`select t.expo_token from public.app_push_tokens t
-        join public.family_memberships m on m.family_id=t.family_id and m.user_id=t.user_id
-        where t.family_id=${ctx.familyId} and m.person_id=${recipient} and m.revoked_at is null`;
-      if (!rows.length) throw new Error('push_registration_missing');
-      // Claim before sending. A timed-out/ambiguous attempt stays "sending" and
-      // transfers instead of sending the same push twice on a webhook retry.
-      const pushKey = `sarvam-message-push:${messageId}`;
-      const claimed = await sql`insert into public.raw_events(family_id,source,provider_event_id,event_type,status,metadata)
-        values (${ctx.familyId},'core1_sarvam_push',${pushKey},'core1.message.push','processed','{"push_status":"sending"}'::jsonb)
-        on conflict(source,provider_event_id) do update set metadata='{"push_status":"sending"}'::jsonb
-        where raw_events.metadata->>'push_status'='failed' returning id`;
-      if (!claimed.length) {
-        const previous = (await sql`select metadata->>'push_status' as push_status from public.raw_events
-          where family_id=${ctx.familyId} and source='core1_sarvam_push' and provider_event_id=${pushKey}`)[0];
-        if (previous?.push_status === 'sent') return;
+      const queued = await enqueueAuthorizedSend(db, keyHex, { familyId: ctx.familyId,
+        subjectId: ctx.parentId, recipientId: recipient, kind: 'core1.sarvam_message_push',
+        sourceId: messageId, dedupeKey: `sarvam-message-push:${messageId}` });
+      if (env.EXPO_PUSH_ENABLED !== 'true' && env.EXPO_PUSH_ENABLED !== '1') throw new Error('push_disabled');
+      const claim = await claimAuthorizedSend(db, ctx.familyId, queued.id);
+      if (!claim) throw new Error('push_already_claimed');
+      const tokens = await claimAuthorizedPush(db, ctx.familyId, queued.id, claim.lease);
+      if (!tokens?.length) throw new Error('push_registration_missing');
+      const store = dispatchStore(db);
+      try {
+        const push = await defaultSendExpoPush(tokens.map(to => ({ to, title: "AI transcript of Maa's words",
+          body: transcript.slice(0, 500), sound: 'default', data: { message_id: messageId, kind: 'ai_transcript' } })));
+        await store.finishOutbox(queued.id, claim.lease, push.sent > 0, push.sent > 0 ? undefined : 'push_unavailable');
+        if (push.sent === 0 || push.failed > 0) throw new Error('push_unavailable');
+      } catch {
+        // The durable claim prevents a webhook replay from repeating an ambiguous provider request.
+        await db.from('outbox').update({ status: 'delivery_unknown', last_error_code: 'push_delivery_unknown' })
+          .eq('id', queued.id).eq('lease_token', claim.lease).eq('status', 'processing');
         throw new Error('push_delivery_unknown');
       }
-      const push = await defaultSendExpoPush(rows.map(row => ({ to: row.expo_token, title: "AI transcript of Maa's words",
-        body: transcript.slice(0, 500), sound: 'default', data: { message_id: messageId, kind: 'ai_transcript' } })));
-      const pushStatus = push.sent === 0 ? 'failed' : 'sent';
-      await sql`update public.raw_events set metadata=jsonb_build_object('push_status',${pushStatus}::text)
-        where family_id=${ctx.familyId} and source='core1_sarvam_push' and provider_event_id=${pushKey}`;
-      if (push.sent === 0 || push.failed > 0) throw new Error('push_unavailable');
     },
     async truthLine(ctx, input) {
       const result = await getCore2Service().querySarvamTruthLine(env.SARVAM_TOOL_TOKEN ?? null, {

@@ -320,12 +320,12 @@ describe('Core 1 Two-Way Voice Notify (Smartphone Push vs Keypad Twilio)', () =>
                 device: 'smartphone',
                 language: 'English',
               },
-        listPushTokensForPerson: async () => ['ExponentPushToken[maa-phone-1]'],
-        insertOutbox: async ({ id }) => ({ id, duplicate: false }),
-        updateOutboxStatus: async (id, status) => {
+        enqueueAuthorized: async () => ({ id: '11111111-1111-4111-8111-000000000001', duplicate: false }),
+        claim: async () => ({ lease: '11111111-1111-4111-8111-000000000001', attempt: 1, callId: null, personId: SYNTHETIC_PERSON_PARENT }),
+        claimPush: async () => ['ExponentPushToken[maa-phone-1]'],
+        updateOutboxStatus: async (id, _lease, status) => {
           outboxStatuses.push({ id, status });
         },
-        createScheduledTwilioCall: async () => 'call-unused',
       },
       sendPush: async (msgs) => {
         pushes.push(...msgs);
@@ -404,10 +404,10 @@ describe('Core 1 Two-Way Voice Notify (Smartphone Push vs Keypad Twilio)', () =>
                 device: 'smartphone',
                 language: 'English',
               },
-        listPushTokensForPerson: async () => [],
-        insertOutbox: async ({ id }) => ({ id, duplicate: false }),
+        enqueueAuthorized: async () => ({ id: '22222222-2222-4222-8222-000000000002', duplicate: false }),
+        claim: async () => ({ lease: '22222222-2222-4222-8222-000000000002', attempt: 1, callId: '33333333-3333-4333-8333-000000000003', personId: SYNTHETIC_PERSON_PARENT }),
+        claimPush: async () => null,
         updateOutboxStatus: async () => {},
-        createScheduledTwilioCall: async () => '33333333-3333-4333-8333-000000000003',
       },
       dispatch: {
         store,
@@ -463,9 +463,7 @@ describe('Core 1 Two-Way Voice Notify (Smartphone Push vs Keypad Twilio)', () =>
       dispatched: true,
       providerRef: CALL_SID,
     });
-    expect(boundCalls).toEqual([
-      'twilio:twilio.create_call:33333333-3333-4333-8333-000000000003',
-    ]);
+    expect(boundCalls).toEqual([]); // enqueue already bound the call atomically
     expect(twilioRequests).toHaveLength(1);
     const postedParams = new URLSearchParams(twilioRequests[0]!.body);
     expect(postedParams.get('Url')).toBe(
@@ -550,10 +548,10 @@ describe('Core 1 Twilio Keypad TwiML, Gather & Reply Recording', () => {
                   device: 'keypad',
                   language: 'Hindi',
                 },
-          listPushTokensForPerson: async () => ['ExponentPushToken[riya-phone-1]'],
-          insertOutbox: async ({ id }) => ({ id, duplicate: false }),
+          enqueueAuthorized: async () => ({ id: VOICE_POST_2_ID, duplicate: false }),
+          claim: async () => ({ lease: VOICE_POST_2_ID, attempt: 1, callId: null, personId: SYNTHETIC_PERSON_CHILD }),
+          claimPush: async () => ['ExponentPushToken[riya-phone-1]'],
           updateOutboxStatus: async () => {},
-          createScheduledTwilioCall: async () => '',
         },
         sendPush: async (msgs) => {
           replyPushBodies.push(...msgs.map((m) => m.body));

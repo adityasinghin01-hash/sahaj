@@ -155,13 +155,13 @@ export function createSupabaseMissedCallNudgeStore(db: SupabaseClientLike): Miss
     async listPushTokens(familyId, personId) {
       const { data: memberships, error: memErr } = await db
         .from('family_memberships')
-        .select('auth_user_id')
+        .select('user_id')
         .eq('family_id', familyId)
         .eq('person_id', personId)
         .is('revoked_at', null);
       if (memErr) throw new Core1CommandError('push_token_lookup_failed', 503);
       const userIds = (memberships ?? [])
-        .map((m: Record<string, unknown>) => m.auth_user_id)
+        .map((m: Record<string, unknown>) => m.user_id)
         .filter((v): v is string => typeof v === 'string');
       if (userIds.length === 0) return [];
 
@@ -287,6 +287,13 @@ export async function dispatchMissedCallCluster(
   const alertId = stableCore1Uuid(['core1-child-alert', outboxDedupeKey]);
   const pushCopy = formatMissedCallPushCopy(intent.tier, intent.callCount);
   const expoTokens = await deps.store.listPushTokens(intent.familyId, intent.recipientPersonId);
+  // Sign the requested cluster before authorization; provider call IDs are opaque strings,
+  // not UUIDs of public.calls rows. This durable source is also used by the TeleCMI job.
+  await deps.timeline.append({ familyId: intent.familyId, eventType: 'core1.missed_call_nudge.requested',
+    entityId: nudgeId, humanLine: 'A missed-call notification was requested.',
+    payload: { callerPersonId: intent.callerPersonId, recipientPersonId: intent.recipientPersonId,
+      callIds: intent.callIds, tier: intent.tier }, dedupeKey: `requested:${outboxDedupeKey}`,
+    occurredAt: (deps.now ?? (() => new Date()))().toISOString() });
 
   const outboxRes = await deps.outbox.enqueue({
     familyId: intent.familyId,
@@ -295,6 +302,7 @@ export async function dispatchMissedCallCluster(
     dedupeKey: outboxDedupeKey,
     payload: {
       channel: 'app_push',
+      nudgeId,
       whatsappDropped: true,
       familyId: intent.familyId,
       callerPersonId: intent.callerPersonId,
@@ -304,7 +312,6 @@ export async function dispatchMissedCallCluster(
       kind: intent.proposedNudge.kind,
       callCount: intent.callCount,
       callIds: intent.callIds,
-      expoTokens,
       notification: {
         title: pushCopy.title,
         body: pushCopy.body,

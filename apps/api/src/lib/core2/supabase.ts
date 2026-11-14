@@ -1168,45 +1168,11 @@ export function createSupabaseCore2Repository(db: SupabaseClient): Core2Reposito
 export function createSupabaseDispatchPort(db: SupabaseClient): Core2DispatchPort {
   return {
     async enqueueAuthorized(request) {
-      const { data: existing } = await db
-        .from("outbox")
-        .select("id")
-        .eq("family_id", request.familyId)
-        .eq("dedupe_key", request.dedupeKey)
-        .maybeSingle();
-      if (existing) {
-        return { outboxId: str((existing as Row).id), status: "pending" };
-      }
-
-      const { data, error } = await db
-        .from("outbox")
-        .insert({
-          family_id: request.familyId,
-          action_request_id: request.actionRequestId,
-          kind: request.kind,
-          dedupe_key: request.dedupeKey,
-          payload_ciphertext: request.payloadCiphertext,
-          status: "pending",
-        })
-        .select("id")
-        .single();
-      if (error || !data) throw new Core2Error("unavailable", 503, "Failed to enqueue outbox command.");
-      const outboxId = str((data as Row).id);
-
-      const { error: fenceErr } = await db.from("core2_dispatch_fences").upsert(
-        {
-          family_id: request.familyId,
-          outbox_id: outboxId,
-          trusted_contact_id: request.trustedContactId ?? null,
-          watch_id: request.watchId ?? null,
-          sos_id: request.sosId ?? null,
-          state: "armed",
-        },
-        { onConflict: "outbox_id" },
-      );
-      if (fenceErr) throw new Core2Error("unavailable", 503, "Failed to arm dispatch fence.");
-
-      return { outboxId, status: "pending" };
+      // Core 2 passes no durable request or Phase 3 workflow/incident/assignment binding.
+      // Its in-memory Cedar decision cannot authorize a dispatch ledger claim. Fail closed
+      // until the Core 2 owner supplies that contract; never insert a bare outbox row.
+      void db; void request;
+      throw new Core2Error('unavailable', 503, 'Core 2 authorized dispatch binding is not integrated.');
     },
   };
 }

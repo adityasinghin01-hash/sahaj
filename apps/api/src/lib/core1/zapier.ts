@@ -1,5 +1,4 @@
 import { createHash, timingSafeEqual } from 'node:crypto';
-import { redactSensitiveText } from '../../../../../packages/atlas/src/core1/family-reports';
 
 export type ZapierHookEnvKey = 'ZAPIER_HOOK_Z1' | 'ZAPIER_HOOK_Z5';
 
@@ -65,22 +64,9 @@ export function verifyZapierReportSecret(
   return { ok: true };
 }
 
-function sanitizeZapierValue(value: unknown): unknown {
-  if (typeof value === 'string') return redactSensitiveText(value);
-  if (Array.isArray(value)) return value.map(sanitizeZapierValue);
-  if (value && typeof value === 'object') {
-    const out: Record<string, unknown> = {};
-    for (const [k, v] of Object.entries(value)) {
-      out[k] = sanitizeZapierValue(v);
-    }
-    return out;
-  }
-  return value;
-}
-
 /**
- * Posts a redacted payload to a configured Zapier catch hook (`ZAPIER_HOOK_Z1` / `ZAPIER_HOOK_Z5`).
- * Never posts if the env var is unset, and never throws or blocks caller flow on delivery failure.
+ * Zapier has no authorized Phase 2 dispatch route yet. Keep the optional hook outcome
+ * explicit and never perform a direct HTTP send outside the authorized outbox.
  */
 export async function postZapierHook(params: {
   hook: ZapierHookEnvKey;
@@ -95,45 +81,5 @@ export async function postZapierHook(params: {
     return { sent: false, hook: params.hook, skippedReason: 'not_configured' };
   }
 
-  let parsed: URL;
-  try {
-    parsed = new URL(rawUrl);
-  } catch {
-    return { sent: false, hook: params.hook, skippedReason: 'invalid_url' };
-  }
-  if (parsed.protocol !== 'https:' && parsed.protocol !== 'http:') {
-    return { sent: false, hook: params.hook, skippedReason: 'invalid_url' };
-  }
-
-  const fetchFn = params.fetchImpl ?? (globalThis.fetch as ZapierFetch);
-  const timeoutMs = params.timeoutMs ?? 3000;
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), timeoutMs);
-
-  try {
-    const redacted = sanitizeZapierValue(params.payload);
-    const res = await fetchFn(parsed.toString(), {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify(redacted),
-      signal: controller.signal,
-    });
-    if (!res.ok) {
-      return {
-        sent: false,
-        hook: params.hook,
-        status: res.status,
-        error: `http_${res.status}`,
-      };
-    }
-    return { sent: true, hook: params.hook, status: res.status };
-  } catch (err) {
-    return {
-      sent: false,
-      hook: params.hook,
-      error: err instanceof Error ? err.message : 'zapier_post_failed',
-    };
-  } finally {
-    clearTimeout(timer);
-  }
+  return { sent: false, hook: params.hook, error: 'authorized_dispatch_route_unavailable' };
 }

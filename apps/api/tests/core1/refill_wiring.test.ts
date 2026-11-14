@@ -1,3 +1,4 @@
+import { createSupabaseCore1OutboxPort } from '@/lib/core1/wiring-common';
 import { generateKeyPairSync, randomBytes } from 'node:crypto';
 import { describe, it, expect } from 'vitest';
 import { verifyTimelineEvent, canonicalJson, signTimelineEvent, type SignedTimelineEvent } from '@/lib/timeline';
@@ -285,6 +286,19 @@ function createFakeRefillHarness(options?: {
 }
 
 describe('Core 1 Refill Approval Gate & Delivery Wiring', () => {
+  it('production route refusal does not consume or create an approved refill request', async () => {
+    const h = createFakeRefillHarness({ remainingCount: 5 });
+    h.deps.outbox = createSupabaseCore1OutboxPort({} as Parameters<typeof createSupabaseCore1OutboxPort>[0], '12'.repeat(32));
+    const result = await executeRefillProposalCommand(new Request('http://localhost/api/core1/refill-proposal', {
+      method: 'POST', headers: { 'content-type': 'application/json', authorization: 'Bearer token-assistant', 'idempotency-key': 'route-unavailable' },
+      body: JSON.stringify({ medicineId: h.medicineId, personId: h.maaPersonId, vendorId: h.vendorId }),
+    }), h.deps);
+    expect(result.status).toBe(503);
+    expect((await result.json()).error).toBe('authorized_dispatch_route_unavailable');
+    expect(h.actionRequests.size).toBe(0);
+    expect(h.outboxRows).toHaveLength(0);
+  });
+
   it('evaluates Cedar gate before outbox, enqueues allowed refill, writes signed timeline, and never decrements count early', async () => {
     const h = createFakeRefillHarness({ remainingCount: 5 });
 
@@ -564,7 +578,7 @@ describe('Core 1 Refill Approval Gate & Delivery Wiring', () => {
     expect(unapprovedVendor.outboxRows).toHaveLength(0);
   });
 
-  it('posts Z1 & Z5 Zapier catch hooks only when configured and never blocks core flow when webhook fails', async () => {
+  it('refuses configured Z1 & Z5 hooks until an authorized outbox route exists', async () => {
     const calls: Array<{ url: string; body: string }> = [];
     const h = createFakeRefillHarness({
       remainingCount: 2,
@@ -600,12 +614,9 @@ describe('Core 1 Refill Approval Gate & Delivery Wiring', () => {
     const body = await res.json();
     expect(body.status).toBe('authorized');
     expect(body.zapier.z1.sent).toBe(false);
-    expect(body.zapier.z1.error).toBe('zapier_network_timeout');
+    expect(body.zapier.z1.error).toBe('authorized_dispatch_route_unavailable');
     expect(body.zapier.z5.sent).toBe(false);
-    expect(calls).toHaveLength(2);
-    expect(calls.map((c) => c.url)).toEqual([
-      'https://hooks.zapier.test/z1',
-      'https://hooks.zapier.test/z5',
-    ]);
+    expect(body.zapier.z5.error).toBe('authorized_dispatch_route_unavailable');
+    expect(calls).toHaveLength(0);
   });
 });

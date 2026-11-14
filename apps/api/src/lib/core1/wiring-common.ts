@@ -1,3 +1,4 @@
+import { enqueueAuthorizedSend } from './authorized-send';
 import { createHash } from 'node:crypto';
 import type { FamilyMembership, FamilyRole, AuthPort } from './types';
 import { Core1CommandError } from './errors';
@@ -63,6 +64,7 @@ export interface Core1OutboxEnqueueResult {
 }
 
 export interface Core1OutboxPort {
+  assertRouteAvailable?(kind: string): void;
   enqueue(input: Core1OutboxEnqueueInput): Promise<Core1OutboxEnqueueResult>;
 }
 
@@ -276,50 +278,24 @@ export function createSupabaseCore1OutboxPort(
   encryptionKeyHex: string | undefined,
 ): Core1OutboxPort {
   return {
+    assertRouteAvailable(kind) {
+      if (kind !== 'core1.missed_call_push') throw new Core1CommandError('authorized_dispatch_route_unavailable', 503);
+    },
     async enqueue(input: Core1OutboxEnqueueInput): Promise<Core1OutboxEnqueueResult> {
-      const { data: existing, error: lookupErr } = await db
-        .from('outbox')
-        .select('id')
-        .eq('family_id', input.familyId)
-        .eq('dedupe_key', input.dedupeKey)
-        .maybeSingle();
-
-      if (lookupErr) {
-        throw new Core1CommandError('outbox_lookup_failed', 503);
+      // A vendor is not a provider contact person. Until a vendor dispatch contract exists,
+      // refuse instead of creating an undeliverable row or reusing an already consumed refill grant.
+      if (input.kind !== 'core1.missed_call_push' || input.action !== 'missed_call_nudge') {
+        throw new Core1CommandError('authorized_dispatch_route_unavailable', 503);
       }
-      if (existing) {
-        return { outboxId: String((existing as { id: string }).id), deduped: true };
+      const p = input.payload;
+      if (typeof p.callerPersonId !== 'string' || typeof p.recipientPersonId !== 'string'
+        || typeof p.nudgeId !== 'string') {
+        throw new Core1CommandError('authorized_send_binding_missing', 503);
       }
-
-      if (!encryptionKeyHex || !/^[0-9a-fA-F]{64}$/.test(encryptionKeyHex)) {
-        throw new Core1CommandError('encryption_not_configured', 503);
-      }
-
-      const plaintext = canonicalJson(input.payload);
-      const payloadHash = sha256Hex(plaintext);
-      const aad = `outbox:${input.familyId}:${input.dedupeKey}`;
-      const ciphertext = encryptWebhook(Buffer.from(plaintext, 'utf8'), encryptionKeyHex, aad);
-
-      const { data: inserted, error: insertErr } = await db
-        .from('outbox')
-        .insert({
-          family_id: input.familyId,
-          action_request_id: input.actionRequestId ?? null,
-          permission_id: input.permissionId ?? null,
-          kind: input.kind,
-          action: input.action,
-          dedupe_key: input.dedupeKey,
-          payload_ciphertext: ciphertext,
-          payload_hash: payloadHash,
-          status: 'pending',
-        })
-        .select('id')
-        .single();
-
-      if (insertErr || !inserted) {
-        throw new Core1CommandError('outbox_enqueue_failed', 503);
-      }
-      return { outboxId: String((inserted as { id: string }).id), deduped: false };
+      const sent = await enqueueAuthorizedSend(db, encryptionKeyHex, { familyId: input.familyId,
+        subjectId: p.callerPersonId, recipientId: p.recipientPersonId, sourceId: p.nudgeId,
+        kind: 'core1.missed_call_push', dedupeKey: input.dedupeKey });
+      return { outboxId: sent.id, deduped: sent.duplicate };
     },
   };
 }

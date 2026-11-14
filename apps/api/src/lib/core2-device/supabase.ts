@@ -36,6 +36,9 @@ export function createDeviceStore(db: SupabaseClient, signingKey: string, keyId:
       return data as Handover[];
     },
     async complete(job, timeline, notices) {
+      // The legacy RPC inserts bare outbox rows. Do not complete signed handover work
+      // claiming notices were queued until they carry real Phase 3 authorization.
+      if (notices.length) throw new Core2Error('unavailable', 503, 'Device notice authorization is not integrated.');
       for (let attempt = 0; attempt < 3; attempt++) {
         const { data: head, error: headError } = await db.from('timeline_stream_heads')
           .select('last_sequence,last_chain_hash').eq('family_id', job.family_id).maybeSingle();

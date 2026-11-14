@@ -10,12 +10,13 @@
 
 import { randomUUID } from 'node:crypto';
 import type { SupabaseClient } from '@supabase/supabase-js';
-import type { ActionAuthorization, FetchTransport } from '@sahaj/adapters';
+import type { FetchTransport } from '@sahaj/adapters';
 import { dispatchOutbound, type DispatchDeps } from '@/lib/provider-dispatch/dispatch';
 import { dispatchStore } from '@/lib/provider-dispatch/supabase-store';
 import { createContactResolver, type ContactDb } from '@/lib/provider-dispatch/contacts';
 import type { DispatchStore } from '@/lib/provider-dispatch/types';
-import { encryptWebhook } from '@/lib/webhook-security';
+import { enqueueAuthorizedSend, claimAuthorizedSend, claimAuthorizedPush, type SendClaim } from './authorized-send';
+import { createDispatchAuthorizer } from '../atlas-runtime/bridge';
 import { createSupabaseVoiceTimelinePort, type VoiceTimelinePort } from './voice-auth';
 
 export interface VoiceNotifyInput {
@@ -53,27 +54,16 @@ export interface ExpoPushMessage {
 
 export interface VoiceNotifyRepo {
   getPerson: (familyId: string, personId: string) => Promise<PersonDeviceInfo | null>;
-  listPushTokensForPerson: (familyId: string, personId: string) => Promise<string[]>;
-  insertOutbox: (input: {
-    id: string;
-    familyId: string;
-    dedupeKey: string;
-    payloadCiphertext: string;
-  }) => Promise<{ id: string; duplicate: boolean }>;
-  updateOutboxStatus: (
-    outboxId: string,
-    status: 'pending' | 'completed' | 'failed' | 'delivery_unknown',
-    lastErrorCode?: string | null,
-  ) => Promise<void>;
-  createScheduledTwilioCall: (input: {
-    familyId: string;
-    personId: string;
-  }) => Promise<string>;
+  enqueueAuthorized: (input: VoiceNotifyInput) => Promise<{ id: string; duplicate: boolean }>;
+  claim: (familyId: string, outboxId: string) => Promise<SendClaim | null>;
+  claimPush: (familyId: string, outboxId: string, lease: string) => Promise<string[] | null>;
+  updateOutboxStatus: (outboxId: string, lease: string, status: 'completed' | 'failed' | 'delivery_unknown', lastErrorCode?: string | null) => Promise<void>;
 }
 
 export interface VoiceNotifyDeps {
   repo: VoiceNotifyRepo;
   timeline?: VoiceTimelinePort;
+  pushEnabled?: boolean;
   sendPush?: (messages: ExpoPushMessage[]) => Promise<{ sent: number; failed: number }>;
   encryptionKeyHex?: string;
   keypadBaseUrl?: string;
@@ -122,6 +112,7 @@ function defaultFetchTransport(): FetchTransport {
 }
 
 function resolveTwilioConfigFromEnv() {
+  if (process.env.PROVIDER_DISPATCH_ENABLED !== 'true' || process.env.TWILIO_OUTBOUND_ENABLED !== 'true') return null;
   const accountSid = process.env.TWILIO_ACCOUNT_SID?.trim();
   const authToken = process.env.TWILIO_AUTH_TOKEN?.trim();
   const fromNumber = process.env.TWILIO_FROM_NUMBER?.trim();
@@ -174,77 +165,17 @@ export function createSupabaseVoiceNotifyDeps(db: SupabaseClient): VoiceNotifyDe
         language: String(row.language ?? 'Hindi'),
       };
     },
-    async listPushTokensForPerson(familyId, personId) {
-      const { data: members, error: mErr } = await db
-        .from('family_memberships')
-        .select('user_id')
-        .eq('family_id', familyId)
-        .eq('person_id', personId)
-        .is('revoked_at', null);
-      if (mErr || !members || members.length === 0) return [];
-      const userIds = (members as Array<{ user_id: string }>).map((m) => m.user_id);
-      const { data: tokens, error: tErr } = await db
-        .from('app_push_tokens')
-        .select('expo_push_token')
-        .in('user_id', userIds);
-      if (tErr || !tokens) return [];
-      return (tokens as Array<{ expo_push_token: string }>)
-        .map((t) => t.expo_push_token)
-        .filter((t) => typeof t === 'string' && t.length > 0);
+    async enqueueAuthorized(input) {
+      return enqueueAuthorizedSend(db, encryptionKeyHex, { familyId: input.familyId, subjectId: input.senderId,
+        recipientId: input.recipientId, sourceId: input.voicePostId, kind: 'core1.voice_notify', dedupeKey: `voice_notify:${input.voicePostId}` });
     },
-    async insertOutbox(input) {
-      const { data: existing } = await db
-        .from('outbox')
-        .select('id')
-        .eq('family_id', input.familyId)
-        .eq('dedupe_key', input.dedupeKey)
-        .maybeSingle();
-      if (existing && typeof (existing as { id?: string }).id === 'string') {
-        return { id: (existing as { id: string }).id, duplicate: true };
-      }
-      const { data, error } = await db
-        .from('outbox')
-        .insert({
-          id: input.id,
-          family_id: input.familyId,
-          kind: 'core1.voice_notify',
-          dedupe_key: input.dedupeKey,
-          payload_ciphertext: input.payloadCiphertext,
-          status: 'pending',
-        })
-        .select('id')
-        .single();
-      if (error) {
-        if ((error as { code?: string }).code === '23505') {
-          return { id: input.id, duplicate: true };
-        }
-        throw new Error('voice_outbox_insert_failed');
-      }
-      return { id: String((data as { id: string }).id), duplicate: false };
-    },
-    async updateOutboxStatus(outboxId, status, lastErrorCode) {
-      await db
-        .from('outbox')
-        .update({
-          status,
-          last_error_code: lastErrorCode ?? null,
-          completed_at: status === 'completed' ? new Date().toISOString() : null,
-        })
-        .eq('id', outboxId);
-    },
-    async createScheduledTwilioCall({ familyId, personId }) {
-      const { data, error } = await db
-        .from('calls')
-        .insert({
-          family_id: familyId,
-          person_id: personId,
-          provider: 'twilio',
-          status: 'scheduled',
-        })
-        .select('id')
-        .single();
-      if (error || !data) throw new Error('voice_call_insert_failed');
-      return String((data as { id: string }).id);
+    claim: (familyId, outboxId) => claimAuthorizedSend(db, familyId, outboxId),
+    claimPush: (familyId, outboxId, lease) => claimAuthorizedPush(db, familyId, outboxId, lease),
+    async updateOutboxStatus(outboxId, lease, status, lastErrorCode) {
+      const { error } = await db.from('outbox').update({ status, last_error_code: lastErrorCode ?? null,
+        completed_at: status === 'completed' ? new Date().toISOString() : null })
+        .eq('id', outboxId).eq('lease_token', lease).eq('status', 'processing');
+      if (error) throw new Error('voice_outbox_finish_failed');
     },
   };
 
@@ -256,25 +187,7 @@ export function createSupabaseVoiceNotifyDeps(db: SupabaseClient): VoiceNotifyDe
         identitySecret,
         transport: defaultFetchTransport(),
         providers: { twilio: twilioEnv.twilio },
-        async authorize(cmd, key): Promise<ActionAuthorization> {
-          const { data: post } = await db
-            .from('voice_posts')
-            .select('id,consent_id')
-            .eq('family_id', cmd.familyId)
-            .eq('recipient_id', cmd.personId)
-            .order('created_at', { ascending: false })
-            .limit(1)
-            .maybeSingle();
-          if (!post) throw new Error('voice_post_not_found');
-          return {
-            decision: 'allow',
-            consent: true,
-            personId: cmd.personId,
-            action: 'twilio.create_call',
-            idempotencyKey: key,
-            expiresAt: Date.now() + 120_000,
-          };
-        },
+        authorize: createDispatchAuthorizer(db),
         // Phase 2 contact registry (provider_identities, binding_kind='contact', versioned AAD, identity hash).
         // The dispatcher only dispatches through `resolveIdentity`, which binds the exact registry row into the claim.
         resolveDestination: createContactResolver(db as unknown as ContactDb, {
@@ -289,32 +202,12 @@ export function createSupabaseVoiceNotifyDeps(db: SupabaseClient): VoiceNotifyDe
   return {
     repo,
     timeline: createSupabaseVoiceTimelinePort(db),
+    pushEnabled: process.env.EXPO_PUSH_ENABLED === 'true' || process.env.EXPO_PUSH_ENABLED === '1',
     sendPush: defaultSendExpoPush,
     encryptionKeyHex,
     keypadBaseUrl: twilioEnv?.baseUrl,
     dispatch,
   };
-}
-
-function buildEncryptedOutboxPayload(
-  input: VoiceNotifyInput,
-  channel: 'smartphone_push' | 'keypad_call',
-  encryptionKeyHex?: string,
-): string {
-  const body = JSON.stringify({
-    voicePostId: input.voicePostId,
-    senderId: input.senderId,
-    recipientId: input.recipientId,
-    channel,
-  });
-  if (!encryptionKeyHex) {
-    return 'unencrypted_unavailable';
-  }
-  return encryptWebhook(
-    Buffer.from(body, 'utf8'),
-    encryptionKeyHex,
-    `voice_notify:${input.familyId}:${input.voicePostId}`,
-  );
 }
 
 export async function notifyVoicePost(
@@ -331,24 +224,22 @@ export async function notifyVoicePost(
   const channel: 'smartphone_push' | 'keypad_call' =
     recipient.device === 'smartphone' ? 'smartphone_push' : 'keypad_call';
 
-  const outboxIdCandidate = newId();
-  const inserted = await deps.repo.insertOutbox({
-    id: outboxIdCandidate,
-    familyId: input.familyId,
-    dedupeKey: `voice_notify:${input.voicePostId}`,
-    payloadCiphertext: buildEncryptedOutboxPayload(input, channel, deps.encryptionKeyHex),
-  });
+  const inserted = await deps.repo.enqueueAuthorized(input);
   const outboxId = inserted.id;
-
-  if (inserted.duplicate) {
-    return { channel, outboxId, dispatched: false, reason: 'duplicate' };
+  // Configuration gaps leave the authorized row pending without consuming a dispatch attempt.
+  if (channel === 'keypad_call' && (!deps.dispatch || !deps.keypadBaseUrl)) {
+    return { channel, outboxId, dispatched: false, reason: 'twilio_not_configured' };
   }
+  if (channel === 'smartphone_push' && deps.pushEnabled === false) {
+    return { channel, outboxId, dispatched: false, reason: 'push_disabled' };
+  }
+  const claim = await deps.repo.claim(input.familyId, outboxId);
+  if (!claim) return { channel, outboxId, dispatched: false, reason: 'duplicate' };
 
   if (channel === 'smartphone_push') {
-    const tokens = await deps.repo.listPushTokensForPerson(input.familyId, input.recipientId);
+    const tokens = await deps.repo.claimPush(input.familyId, outboxId, claim.lease);
     const bodyText = formatVoicePushBody(senderName, Boolean(input.replyToId));
-    if (tokens.length === 0) {
-      await deps.repo.updateOutboxStatus(outboxId, 'pending', 'no_push_tokens');
+    if (!tokens?.length) {
       return { channel, outboxId, dispatched: false, pushCount: 0, reason: 'no_push_tokens' };
     }
 
@@ -361,9 +252,14 @@ export async function notifyVoicePost(
     }));
 
     const pushSender = deps.sendPush ?? defaultSendExpoPush;
-    const pushOutcome = await pushSender(messages);
+    let pushOutcome: { sent: number; failed: number };
+    try { pushOutcome = await pushSender(messages); }
+    catch {
+      await deps.repo.updateOutboxStatus(outboxId, claim.lease, 'delivery_unknown', 'push_delivery_unknown');
+      return { channel, outboxId, dispatched: false, reason: 'push_delivery_unknown' };
+    }
     if (pushOutcome.sent > 0) {
-      await deps.repo.updateOutboxStatus(outboxId, 'completed', null);
+      await deps.repo.updateOutboxStatus(outboxId, claim.lease, 'completed', null);
       if (deps.timeline) {
         await deps.timeline.append({
           familyId: input.familyId,
@@ -379,31 +275,13 @@ export async function notifyVoicePost(
     }
 
     const reason = pushOutcome.failed > 0 ? 'push_send_failed' : 'push_disabled';
-    await deps.repo.updateOutboxStatus(outboxId, pushOutcome.failed > 0 ? 'failed' : 'pending', reason);
+    await deps.repo.updateOutboxStatus(outboxId, claim.lease, 'failed', reason);
     return { channel, outboxId, dispatched: false, pushCount: 0, reason };
   }
 
-  // Keypad device: call via Phase 2 Twilio dispatch pointing to AI-disclosed TwiML
-  if (!deps.dispatch || !deps.keypadBaseUrl) {
-    await deps.repo.updateOutboxStatus(outboxId, 'pending', 'twilio_not_configured');
-    return { channel, outboxId, dispatched: false, reason: 'twilio_not_configured' };
-  }
-
-  const callId = await deps.repo.createScheduledTwilioCall({
-    familyId: input.familyId,
-    personId: input.recipientId,
-  });
-
-  await deps.dispatch.store.bindOutbox({
-    familyId: input.familyId,
-    outboxId,
-    personId: input.recipientId,
-    provider: 'twilio',
-    action: 'twilio.create_call',
-    callId,
-  });
-
-  const outboxLease = newId();
+  // The atomic enqueue already created and bound the recipient's scheduled call.
+  if (!deps.dispatch || !deps.keypadBaseUrl || !claim.callId) throw new Error('voice_dispatch_binding_missing');
+  const callId = claim.callId;
   const twimlUrl = `${deps.keypadBaseUrl.replace(/\/+$/, '')}/api/core1/voice-messages/twilio/twiml?postId=${encodeURIComponent(input.voicePostId)}`;
   const outcome = await dispatchOutbound(
     { ...deps.dispatch.deps, store: deps.dispatch.store },
@@ -411,8 +289,8 @@ export async function notifyVoicePost(
       familyId: input.familyId,
       personId: input.recipientId,
       outboxId,
-      outboxLease,
-      attempt: 1,
+      outboxLease: claim.lease,
+      attempt: claim.attempt,
       callId,
       aiDisclosureAttested: true,
       payload: {
@@ -423,7 +301,6 @@ export async function notifyVoicePost(
   );
 
   if (outcome.status === 'dispatched') {
-    await deps.repo.updateOutboxStatus(outboxId, 'completed', null);
     if (deps.timeline) {
       await deps.timeline.append({
         familyId: input.familyId,
@@ -444,10 +321,5 @@ export async function notifyVoicePost(
   }
 
   const reason = 'code' in outcome ? outcome.code : outcome.status;
-  await deps.repo.updateOutboxStatus(
-    outboxId,
-    outcome.status === 'delivery_unknown' ? 'delivery_unknown' : 'failed',
-    reason,
-  );
   return { channel, outboxId, dispatched: false, reason };
 }

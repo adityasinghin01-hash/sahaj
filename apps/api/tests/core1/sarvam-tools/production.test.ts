@@ -3,10 +3,14 @@ import { createProductionSarvamDeps, trustedCommandPorts, type ProductionOverrid
 import { executeCore1Command } from '@/lib/core1/service';
 import { executeRefillProposalCommand } from '@/lib/core1/refill-service';
 import { getCore2Service } from '@/lib/core2';
+import { enqueueAuthorizedSend, claimAuthorizedSend, claimAuthorizedPush } from '@/lib/core1/authorized-send';
+import { dispatchStore } from '@/lib/provider-dispatch/supabase-store';
 import { defaultSendExpoPush } from '@/lib/core1/voice-notify';
 import { createSupabaseCore1TimelinePort } from '@/lib/core1/wiring-common';
 import { createShieldRuntime } from '../../../../../packages/shield/src/runtime';
 
+vi.mock('@/lib/core1/authorized-send', () => ({ enqueueAuthorizedSend: vi.fn(), claimAuthorizedSend: vi.fn(), claimAuthorizedPush: vi.fn() }));
+vi.mock('@/lib/provider-dispatch/supabase-store', () => ({ dispatchStore: vi.fn() }));
 vi.mock('@/lib/core1/service', () => ({ executeCore1Command: vi.fn() }));
 vi.mock('@/lib/core1/refill-service', () => ({ createProductionRefillDeps: vi.fn(() => ({ auth: {}, store: { getMedicine: vi.fn() } })), executeRefillProposalCommand: vi.fn() }));
 vi.mock('@/lib/core2', () => ({ getCore2Service: vi.fn() }));
@@ -16,7 +20,7 @@ vi.mock('../../../../shield-api/src/ports', () => ({ createShieldPorts: vi.fn(()
 vi.mock('@/lib/core1/wiring-common', async importOriginal => ({ ...await importOriginal<typeof import('@/lib/core1/wiring-common')>(), createSupabaseCore1TimelinePort: vi.fn() }));
 const ctx = { familyId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', parentId: 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb' };
 const id = 'cccccccc-cccc-4ccc-8ccc-cccccccccccc';
-const env = { WEBHOOK_ENCRYPTION_KEY: 'ab'.repeat(32), CALL_CONSENT_VERSION: 'v1', SARVAM_TOOL_TOKEN: 'test-token', TIMELINE_SIGNING_PRIVATE_KEY: 'fake-key-for-mocked-timeline' };
+const env = { EXPO_PUSH_ENABLED: 'true', WEBHOOK_ENCRYPTION_KEY: 'ab'.repeat(32), CALL_CONSENT_VERSION: 'v1', SARVAM_TOOL_TOKEN: 'test-token', TIMELINE_SIGNING_PRIVATE_KEY: 'fake-key-for-mocked-timeline' };
 const now = () => new Date('2026-11-15T00:00:00Z');
 function fixture() {
   const query = vi.fn(async (_q: string, _args: unknown[]): Promise<Record<string, unknown>[]> => [{ id }]);
@@ -36,7 +40,11 @@ function fixture() {
   return { deps, sql, query, db, chain, familyRun };
 }
 beforeEach(() => {
-  vi.clearAllMocks();
+  vi.resetAllMocks();
+  vi.mocked(enqueueAuthorizedSend).mockResolvedValue({ id, duplicate: false, channel: 'expo' });
+  vi.mocked(claimAuthorizedSend).mockResolvedValue({ lease: id, attempt: 1, callId: null, personId: id });
+  vi.mocked(claimAuthorizedPush).mockResolvedValue(['ExponentPushToken[fake]']);
+  vi.mocked(dispatchStore).mockReturnValue({ finishOutbox: vi.fn().mockResolvedValue(true) } as unknown as ReturnType<typeof dispatchStore>);
   vi.mocked(createSupabaseCore1TimelinePort).mockReturnValue({ append: vi.fn().mockResolvedValue({ sequence: 1, chainHash: 'hash', deduped: false }) });
   vi.mocked(executeCore1Command).mockResolvedValue({ eventId: id, commandType: 'urgent_help', status: 'queued', deduped: false });
   vi.mocked(executeRefillProposalCommand).mockResolvedValue(Response.json({ status: 'awaiting_approval' }));
@@ -116,22 +124,31 @@ describe('production integrations without provider calls', () => {
     const { deps } = fixture(); vi.mocked(executeRefillProposalCommand).mockResolvedValue(Response.json({ error: 'denied' }, { status: 403 }));
     await expect(deps.proposeRefill(ctx, id, id, 'turn-low')).rejects.toThrow();
   });
-  it('pushes a labeled text message using the actual token schema', async () => {
-    const { deps, query } = fixture(); query.mockResolvedValueOnce([{ id }]).mockResolvedValueOnce([{ expo_token: 'ExponentPushToken[fake]' }]);
+  it('pushes a labeled transcript only after authorized enqueue and a durable push claim', async () => {
+    const { deps, query } = fixture(); query.mockResolvedValue([{ id }]);
     await deps.sendTranscript(ctx, 'Riya ghar aa jao', "AI transcript of Maa's words", 'turn-message');
-    expect(defaultSendExpoPush).toHaveBeenCalledWith([expect.objectContaining({ title: "AI transcript of Maa's words", body: 'Riya ghar aa jao', data: expect.objectContaining({ kind: 'ai_transcript' }) })]);
-    expect(query.mock.calls[1][0]).toContain('t.expo_token');
-    expect(query.mock.calls[1][0]).toContain('m.person_id');
+    expect(enqueueAuthorizedSend).toHaveBeenCalledWith(expect.anything(), expect.any(String), expect.objectContaining({
+      familyId: ctx.familyId, subjectId: ctx.parentId, recipientId: id, kind: 'core1.sarvam_message_push',
+    }));
+    expect(claimAuthorizedPush).toHaveBeenCalledWith(expect.anything(), ctx.familyId, id, id);
+    expect(defaultSendExpoPush).toHaveBeenCalledWith([expect.objectContaining({ title: "AI transcript of Maa's words", body: 'Riya ghar aa jao' })]);
   });
-  it('transfers rather than claiming a push without a recipient registration', async () => {
-    const { deps, query } = fixture(); query.mockResolvedValueOnce([{ id }]).mockResolvedValueOnce([]);
+  it('transfers rather than sending without a recipient registration', async () => {
+    const { deps, query } = fixture(); query.mockResolvedValue([{ id }]);
+    vi.mocked(claimAuthorizedPush).mockResolvedValue(null);
     await expect(deps.sendTranscript(ctx, 'Riya ghar aa jao', "AI transcript of Maa's words", 'turn-message')).rejects.toThrow('push_registration_missing');
     expect(defaultSendExpoPush).not.toHaveBeenCalled();
   });
   it('does not send again when a prior push has uncertain delivery', async () => {
-    const { deps, query } = fixture();
-    query.mockResolvedValueOnce([{ id }]).mockResolvedValueOnce([{ expo_token: 'ExponentPushToken[fake]' }]).mockResolvedValueOnce([]).mockResolvedValueOnce([{ push_status: 'sending' }]);
-    await expect(deps.sendTranscript(ctx, 'Riya ghar aa jao', "AI transcript of Maa's words", 'turn-message')).rejects.toThrow('push_delivery_unknown');
+    const { deps, query } = fixture(); query.mockResolvedValue([{ id }]);
+    vi.mocked(claimAuthorizedSend).mockResolvedValue(null);
+    await expect(deps.sendTranscript(ctx, 'Riya ghar aa jao', "AI transcript of Maa's words", 'turn-message')).rejects.toThrow('push_already_claimed');
+    expect(defaultSendExpoPush).not.toHaveBeenCalled();
+  });
+  it('never calls push if durable gate authorization fails', async () => {
+    const { deps, query } = fixture(); query.mockResolvedValue([{ id }]);
+    vi.mocked(enqueueAuthorizedSend).mockRejectedValue(new Error('send_not_authorized'));
+    await expect(deps.sendTranscript(ctx, 'Riya ghar aa jao', "AI transcript of Maa's words", 'turn-message')).rejects.toThrow('send_not_authorized');
     expect(defaultSendExpoPush).not.toHaveBeenCalled();
   });
   it('replays an encrypted completed tool without repeating its effect', async () => {
