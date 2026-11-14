@@ -24,6 +24,26 @@ export function dispatchStore(db: RpcClient = serviceDatabase() as unknown as Rp
     return data;
   };
   return {
+    async bindOutbox(i) {
+      return (await call("bind_outbox_dispatch", {
+        p_family_id: i.familyId, p_outbox_id: i.outboxId, p_person_id: i.personId, p_provider: i.provider, p_action: i.action,
+        p_call_id: i.callId ?? null, p_incident_id: i.incidentId ?? null, p_assignment_id: i.assignmentId ?? null,
+      })) === true;
+    },
+    async recordDeliveryProof(familyId, sourceEventId, outcome) {
+      try {
+        const d = await call("record_delivery_proof", { p_family_id: familyId, p_source_event_id: sourceEventId, p_outcome: outcome }) as Record<string, unknown> | null;
+        if (!d || typeof d.proof_event_id !== "string" || typeof d.dispatch_key !== "string" || typeof d.outbox_id !== "string") return null;
+        return { proofEventId: d.proof_event_id, dispatchKey: d.dispatch_key, outboxId: d.outbox_id, outcome };
+      } catch (error) {
+        // Unprovable evidence (identity/status/binding refused) stays pending. Infrastructure failures are rethrown for retry.
+        if (error instanceof DispatchError && (error.code === "identity_mismatch" || error.code === "dispatch_conflict")) return null;
+        throw error;
+      }
+    },
+    async reconcileOutbox(outboxId, proofEventId, outcome) {
+      return (await call("reconcile_outbox", { p_outbox_id: outboxId, p_provider_event_id: proofEventId, p_outcome: outcome })) === true;
+    },
     async claim(i) {
       const data = await call("claim_dispatch", {
         p_family_id: i.familyId, p_person_id: i.personId, p_key: i.key, p_provider: i.provider, p_action: i.action,

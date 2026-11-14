@@ -45,11 +45,18 @@ export interface ClaimInput {
   familyId: string; personId: string; key: string; provider: DispatchProvider; action: DispatchAction;
   outboxId: string; outboxLease: string; callId?: string;
 }
+export interface BindInput {
+  familyId: string; outboxId: string; personId: string; provider: DispatchProvider; action: DispatchAction;
+  callId?: string; incidentId?: string; assignmentId?: string;
+}
+export interface DeliveryProof { proofEventId: string; dispatchKey: string; outboxId: string; outcome: ReconcileOutcome }
 export interface CompleteInput {
   familyId: string; key: string; providerRef: string; accountId?: string; identityHash?: string; aiDisclosed: boolean;
 }
 /** Service-role persistence. Every method maps to one atomic SQL function in the phase2 migration. */
 export interface DispatchStore {
+  /** Immutable target/provider/action/call binding of an outbox row. Called by the enqueue transaction owner. */
+  bindOutbox(input: BindInput): Promise<boolean>;
   claim(input: ClaimInput): Promise<"claimed" | "duplicate">;
   complete(input: CompleteInput): Promise<void>;
   bindIdentity(input: Omit<CompleteInput, "providerRef">): Promise<boolean>;
@@ -57,6 +64,9 @@ export interface DispatchStore {
   unknown(familyId: string, key: string, code: string, providerRef?: string): Promise<boolean>;
   sweepStale(olderThanSeconds: number): Promise<number>;
   reconcile(familyId: string, key: string, providerEventId: string, outcome: ReconcileOutcome): Promise<boolean>;
+  /** Normalize a durably processed raw provider callback into verified proof, derived entirely from stored records. Null when unprovable. */
+  recordDeliveryProof(familyId: string, sourceEventId: string, outcome: ReconcileOutcome): Promise<DeliveryProof | null>;
+  reconcileOutbox(outboxId: string, proofEventId: string, outcome: ReconcileOutcome): Promise<boolean>;
   acceptAssignment(familyId: string, assignmentId: string, providerEventId: string): Promise<boolean>;
   finishOutbox(outboxId: string, lease: string, success: boolean, errorCode?: string): Promise<boolean>;
 }

@@ -203,12 +203,27 @@ describe("identity and reference substitution", () => {
     expect(out.status).toBe("delivery_unknown"); // provider placed the call, binding refused, nothing resent
     expect(store.identities.get(`app-1|${attemptHash("att-1")}`)?.familyId).toBe(OTHER_FAMILY);
   });
-  it("a reused key for a different person is a conflict, not a duplicate", async () => {
-    const store = new FakeStore();
-    await store.claim({ familyId: FAMILY, personId: PERSON, key: KEY1, provider: "sarvam", action: "sarvam.outbound_call", outboxId: OUTBOX, outboxLease: LEASE });
-    await expect(store.claim({ familyId: FAMILY, personId: OTHER_PERSON, key: KEY1, provider: "sarvam", action: "sarvam.outbound_call", outboxId: OUTBOX, outboxLease: LEASE })).rejects.toMatchObject({ code: "dispatch_conflict" });
+  it("a valid lease cannot redirect the row to another person, provider, action or call in the same family", async () => {
+    const claim = { familyId: FAMILY, personId: PERSON, key: KEY1, provider: "sarvam" as const, action: "sarvam.outbound_call" as const, outboxId: OUTBOX, outboxLease: LEASE, callId: CALL };
+    for (const over of [{ personId: OTHER_PERSON }, { provider: "twilio" as const, action: "twilio.create_call" as const }, { action: "whatsapp.send_text" as const }, { callId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa" }, { callId: undefined }]) {
+      const store = new FakeStore(); store.autoBind = false;
+      await store.bindOutbox({ familyId: FAMILY, outboxId: OUTBOX, personId: PERSON, provider: "sarvam", action: "sarvam.outbound_call", callId: CALL });
+      await expect(store.claim({ ...claim, ...over })).rejects.toMatchObject({ code: "identity_mismatch" });
+      expect(store.ledger.size).toBe(0);
+    }
   });
-});
+  it("an outbox row with no binding cannot be claimed", async () => {
+    const store = new FakeStore(); store.autoBind = false; const t = scripted(ok());
+    expect(await dispatchOutbound(deps(store, t.transport), sarvamCmd())).toMatchObject({ status: "failed", code: "identity_mismatch" });
+    noNetwork(t);
+  });
+  it("bindings are immutable: a conflicting rebind is refused", async () => {
+    const store = new FakeStore();
+    const b = { familyId: FAMILY, outboxId: OUTBOX, personId: PERSON, provider: "sarvam" as const, action: "sarvam.outbound_call" as const, callId: CALL };
+    await store.bindOutbox(b);
+    expect(await store.bindOutbox(b)).toBe(true);
+    await expect(store.bindOutbox({ ...b, personId: OTHER_PERSON })).rejects.toMatchObject({ code: "dispatch_conflict" });
+  });});
 
 describe("failures before the external boundary send nothing", () => {
   it("unresolvable destination, missing provider config, ledger down, bad command", async () => {

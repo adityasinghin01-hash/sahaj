@@ -2,10 +2,10 @@ import { NextResponse } from "next/server";
 import { safeTokenEquals } from "../secrets";
 import { readWebhookBody } from "../webhook-security";
 import {
-  configuredDigits, handleSarvam, handleTeleCmi, handleTwilioRecording, handleTwilioStatus, toResult,
+  configuredDigits, handleSarvam, handleTeleCmi, handleTwilioGather, handleTwilioRecording, handleTwilioStatus, toResult,
   type GatewayResult, type TwilioConfig,
 } from "./gateway";
-import { providerStore } from "./store";
+import { gatherStore, providerStore } from "./store";
 
 export const LIMITS = { sarvam: 524288, telecmi: 16384, twilio: 65536 } as const;
 
@@ -43,7 +43,7 @@ export async function missedCall(request: Request, { params }: Params) {
 function twilioConfig(): TwilioConfig | null {
   const { TWILIO_ACCOUNT_SID: accountSid, TWILIO_AUTH_TOKEN: authToken } = process.env;
   if (!accountSid || !authToken) return null;
-  return { accountSid, authToken, statusUrl: process.env.TWILIO_STATUS_CALLBACK_URL, recordingUrl: process.env.TWILIO_RECORDING_CALLBACK_URL, consentVersion: process.env.CALL_CONSENT_VERSION || undefined };
+  return { accountSid, authToken, statusUrl: process.env.TWILIO_STATUS_CALLBACK_URL, recordingUrl: process.env.TWILIO_RECORDING_CALLBACK_URL, gatherUrl: process.env.TWILIO_GATHER_CALLBACK_URL, consentVersion: process.env.CALL_CONSENT_VERSION || undefined };
 }
 
 export async function twilioStatus(request: Request) {
@@ -61,5 +61,17 @@ export async function twilioRecording(request: Request) {
   try {
     const raw = await readWebhookBody(request, LIMITS.twilio);
     return send(await handleTwilioRecording(raw, request.headers.get("content-type"), request.headers.get("x-twilio-signature"), cfg, providerStore));
+  } catch (error) { return send(toResult(error)); }
+}
+
+/** Twilio Gather action callback for urgent responder calls. TwiML on success, JSON error otherwise. */
+export async function twilioGather(request: Request) {
+  const cfg = twilioConfig();
+  if (!cfg) return notConfigured("not_configured");
+  try {
+    const raw = await readWebhookBody(request, LIMITS.twilio);
+    const result = await handleTwilioGather(raw, request.headers.get("content-type"), request.headers.get("x-twilio-signature"), cfg, providerStore, gatherStore);
+    if (result.twiml) return new Response(result.twiml, { status: result.status, headers: { "Content-Type": "text/xml; charset=utf-8", "Cache-Control": "no-store" } });
+    return send(result);
   } catch (error) { return send(toResult(error)); }
 }

@@ -2,7 +2,8 @@ import { vi } from "vitest";
 import type { ActionAuthorization, FetchTransport } from "@sahaj/adapters";
 import { identityHash } from "../../src/lib/webhook-security";
 import {
-  DispatchError, dispatchKey, type ClaimInput, type CompleteInput, type DispatchCommand, type DispatchDeps, type DispatchStore,
+  DispatchError, dispatchKey, type BindInput, type ClaimInput, type CompleteInput, type DeliveryProof, type DispatchCommand, type DispatchDeps,
+  type DispatchStore, type ReconcileOutcome,
 } from "../../src/lib/provider-dispatch";
 
 export const FAMILY = "11111111-1111-4111-8111-111111111111";
@@ -33,15 +34,29 @@ export class FakeStore implements DispatchStore {
   outbox = new Map<string, { familyId: string; lease: string; finished?: { success: boolean; code?: string } }>();
   failComplete = false; failUnknown = false; failClaim = false; failFinish = false;
   events: string[] = [];
+  /** immutable outbox bindings (SQL: dispatch_bindings). autoBind models the enqueue transaction having bound the row. */
+  bindings = new Map<string, BindInput>();
+  autoBind = true;
+  /** raw provider callbacks already durably processed: id -> {provider, family, call, status} */
+  rawEvents = new Map<string, { familyId: string; provider: string; callId: string; status: string }>();
+  proofs = new Map<string, { familyId: string; key: string; outcome: ReconcileOutcome; outboxId: string; source: string }>();
   constructor() {
     this.calls.set(CALL, { familyId: FAMILY, personId: PERSON, ai: false });
     this.outbox.set(OUTBOX, { familyId: FAMILY, lease: LEASE });
   }
   private k = (familyId: string, key: string) => `${familyId}|${key}`;
+  async bindOutbox(i: BindInput) {
+    const have = this.bindings.get(i.outboxId);
+    if (have && JSON.stringify(have) !== JSON.stringify(i)) throw new DispatchError("dispatch_conflict");
+    this.bindings.set(i.outboxId, i); return true;
+  }
   async claim(i: ClaimInput) {
     if (this.failClaim) throw new DispatchError("dispatch_store_unavailable");
     const o = this.outbox.get(i.outboxId);
     if (!o || o.familyId !== i.familyId || o.lease !== i.outboxLease) throw new DispatchError("stale_lease");
+    if (!this.bindings.has(i.outboxId) && this.autoBind) this.bindings.set(i.outboxId, { familyId: i.familyId, outboxId: i.outboxId, personId: i.personId, provider: i.provider, action: i.action, callId: i.callId });
+    const b = this.bindings.get(i.outboxId);
+    if (!b || b.familyId !== i.familyId || b.personId !== i.personId || b.provider !== i.provider || b.action !== i.action || b.callId !== i.callId) throw new DispatchError("identity_mismatch");
     if (i.callId) {
       const c = this.calls.get(i.callId);
       if (!c || c.familyId !== i.familyId || c.personId !== i.personId) throw new DispatchError("identity_mismatch");
@@ -93,7 +108,27 @@ export class FakeStore implements DispatchStore {
     r.status = "delivery_unknown"; r.code = code; r.ref = r.ref ?? ref; return true;
   }
   async sweepStale() { let n = 0; for (const r of this.ledger.values()) if (r.status === "claimed") { r.status = "delivery_unknown"; r.code = "claim_expired"; n++; } return n; }
-  async reconcile() { return false; }
+  async recordDeliveryProof(familyId: string, sourceEventId: string, outcome: ReconcileOutcome): Promise<DeliveryProof | null> {
+    const e = this.rawEvents.get(sourceEventId);
+    if (!e || e.familyId !== familyId) return null;
+    const call = this.calls.get(e.callId);
+    if (!call || !call.external || call.familyId !== familyId) return null;
+    const row = [...this.ledger.entries()].find(([, r]) => r.familyId === familyId && r.provider === e.provider && r.ref === call.external);
+    if (!row || !(["dispatched", "delivery_unknown"] as string[]).includes(row[1].status)) return null;
+    const ok = outcome === "confirmed_not_sent" && (e.provider === "twilio" ? ["busy", "no-answer", "failed", "canceled"] : ["no_answer", "busy", "failed"]).includes(e.status);
+    if (!ok) return null;
+    const key = row[0].split("|")[1]!;
+    const id = `proof:${key}:${outcome}`;
+    this.proofs.set(id, { familyId, key, outcome, outboxId: row[1].outboxId, source: e.provider });
+    return { proofEventId: id, dispatchKey: key, outboxId: row[1].outboxId, outcome };
+  }
+  async reconcile(familyId: string, key: string, eventId: string, outcome: ReconcileOutcome) {
+    const p = this.proofs.get(eventId), r = this.ledger.get(this.k(familyId, key));
+    if (!p || !r || p.familyId !== familyId || p.key !== key || p.outcome !== outcome || r.status !== "delivery_unknown" || r.outboxId !== p.outboxId) return false;
+    r.status = outcome === "delivered" ? "delivered" : "not_sent"; return true;
+  }
+  outboxReconciled: string[] = [];
+  async reconcileOutbox(outboxId: string, eventId: string) { const p = this.proofs.get(eventId); if (!p || p.outboxId !== outboxId) return false; this.outboxReconciled.push(outboxId); return true; }
   async acceptAssignment() { return false; }
   async finishOutbox(outboxId: string, lease: string, success: boolean, code?: string) {
     if (this.failFinish) throw new DispatchError("dispatch_store_unavailable");
