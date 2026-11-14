@@ -153,7 +153,7 @@ describe("sarvam transcript retention", () => {
   it("does not look up consent when the payload has no content, and rejects malformed content", async () => {
     const store = calls([]);
     await handleSarvam(buf(outbound()), sarvam, () => store);
-    expect(store.findCall).not.toHaveBeenCalled();
+    expect(store.findConsents).not.toHaveBeenCalled(); // call lookup is allowed: it only attaches our call id for delivery proof
     expect(store.ingest.mock.calls[0][0].review).toBeUndefined();
     for (const bad of [{ interaction_transcript: "x" }, { final_agent_variables: [] }]) {
       await expect(handleSarvam(buf(outbound(bad)), sarvam, () => calls([]))).rejects.toMatchObject({ status: 400 });

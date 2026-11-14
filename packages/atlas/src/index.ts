@@ -126,18 +126,20 @@ export function createAtlas(ports: AtlasPorts, checkpointer: BaseCheckpointSaver
     .addEdge('wait', 'observe').addEdge('sign', END)
     .compile({ checkpointer });
 
-  const config = (scope: JobScope) => ({ configurable: { thread_id: atlasThreadId(scope) }, recursionLimit: 100 });
-  async function start(scope: JobScope) {
+  const config = (scope: JobScope, signal?: AbortSignal) => ({ configurable: { thread_id: atlasThreadId(scope) }, recursionLimit: 100, ...(signal ? { signal } : {}) });
+  /** signal cancels the run: LangGraph stops scheduling nodes and rejects; port calls also check the lease guard. */
+  async function start(scope: JobScope, options: { signal?: AbortSignal } = {}) {
     assertScope(scope);
     return ports.withJobLock(scope, async () => {
       await load(scope); // Verify persisted family ownership before reading the checkpoint.
       const existing = await graph.getState(config(scope));
       if (existing.values && Object.keys(existing.values).length) return existing;
-      await graph.invoke({ familyId: scope.familyId, jobId: scope.jobId }, config(scope));
+      options.signal?.throwIfAborted();
+      await graph.invoke({ familyId: scope.familyId, jobId: scope.jobId }, config(scope, options.signal));
       return graph.getState(config(scope));
     });
   }
-  async function resume(scope: JobScope) {
+  async function resume(scope: JobScope, options: { signal?: AbortSignal } = {}) {
     assertScope(scope);
     return ports.withJobLock(scope, async () => {
       await load(scope);
@@ -146,7 +148,8 @@ export function createAtlas(ports: AtlasPorts, checkpointer: BaseCheckpointSaver
       if (snapshot.values.familyId !== scope.familyId || snapshot.values.jobId !== scope.jobId) throw new Error('Atlas checkpoint scope mismatch');
       if (!snapshot.next.length) return snapshot;
       const interrupted = snapshot.tasks.some(task => task.interrupts?.length);
-      await graph.invoke(interrupted ? new Command({ resume: { wake: true } }) : null, config(scope));
+      options.signal?.throwIfAborted();
+      await graph.invoke(interrupted ? new Command({ resume: { wake: true } }) : null, config(scope, options.signal));
       return graph.getState(config(scope));
     });
   }

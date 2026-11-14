@@ -244,7 +244,7 @@ describe("trusted authorization decision", () => {
   it("runs after path/expiry checks and before storage stat or signing, with explicit context", async () => {
     const w = world();
     expect((await createMediaService(w.deps).voicePost("tok-child", POST)).ok).toBe(true);
-    expect(w.events).toEqual(["authorize", "stat", "sign"]);
+    expect(w.events).toEqual(["authorize", "stat", "authorize", "sign"]);
     expect(w.contexts[0]).toMatchObject({
       action: "read_voice_media", familyId: FAM,
       actor: { userId: CHILD_U, personId: CHILD_P, role: "child" },

@@ -6,8 +6,6 @@ import { verifyWhatsAppSignature } from "./security";
 const GRAPH = "https://graph.facebook.com";
 const NUMERIC_ID = /^\d{1,32}$/;
 const MEDIA_ID = /^[A-Za-z0-9_-]{1,128}$/;
-/** Fail closed to this exact host; deployments must explicitly configure additional verified hosts. */
-export const DEFAULT_MEDIA_HOSTS = ["lookaside.fbsbx.com"] as const;
 const AUDIO_TYPES = new Set(["audio/ogg", "audio/mpeg", "audio/mp4", "audio/aac", "audio/amr"]);
 const MAX_MEDIA_BYTES = 16 * 1024 * 1024;
 
@@ -90,11 +88,12 @@ export async function sendWhatsAppAudio(deps: WhatsAppSendDeps, request: Provide
 export async function fetchWhatsAppMedia(
   deps: WhatsAppConfig,
   request: ProviderRequest<{ mediaId: string }>,
-  opts: { maxBytes?: number; allowedHosts?: readonly string[] } = {},
+  opts: { maxBytes?: number; /** Exact media hosts (or "*.suffix") the deployment has confirmed from Meta responses. There is no default: Meta documents the URL as opaque. */ allowedHosts: readonly string[] },
 ): Promise<ProviderResult<{ data: Uint8Array; mimeType: string }>> {
   requireAuthorization(request, "whatsapp.media.read"); checkConfig(deps);
   const { mediaId } = request.payload;
   if (!MEDIA_ID.test(mediaId)) throw new AdapterError("invalid_payload", "whatsapp");
+  if (!Array.isArray(opts?.allowedHosts) || opts.allowedHosts.length === 0) throw new AdapterError("invalid_payload", "whatsapp");
   const max = opts.maxBytes ?? MAX_MEDIA_BYTES;
   const auth = { Authorization: `Bearer ${deps.accessToken}` };
   const meta = await send(`${GRAPH}/${deps.graphVersion}/${mediaId}`, { method: "GET", headers: auth },
@@ -103,7 +102,7 @@ export async function fetchWhatsAppMedia(
   const mime = typeof info.mime_type === "string" ? info.mime_type.split(";")[0]!.trim().toLowerCase() : "";
   if (typeof info.url !== "string" || !AUDIO_TYPES.has(mime)) throw new AdapterError("provider_rejected", "whatsapp");
   if (typeof info.file_size === "number" && info.file_size > max) throw new AdapterError("payload_too_large", "whatsapp");
-  const url = assertSafeUrl(info.url, opts.allowedHosts ?? DEFAULT_MEDIA_HOSTS, "whatsapp");
+  const url = assertSafeUrl(info.url, opts.allowedHosts, "whatsapp");
   const file = await send(url.toString(), { method: "GET", headers: auth },
     { provider: "whatsapp", transport: deps.transport, timeoutMs: deps.timeoutMs ?? 30_000, maxBytes: max, readOnly: true });
   if (typeof info.sha256 === "string" && /^[a-f0-9]{64}$/i.test(info.sha256)) {
