@@ -1,6 +1,7 @@
 import * as React from 'react';
 import { useLocalSearchParams } from 'expo-router';
 import { Btn, Card, Field, Notice, T } from '../sahaj/ui';
+import { LiveHeardBadge } from '../sahaj/live-heard-badge';
 import {
   type Core2Api,
   type Reassurance,
@@ -150,6 +151,7 @@ function ReassuranceCard({ row }: { row: Reassurance }) {
         </T>
       ) : null}
       <T>{t(row.delivery_verified ? 'verified' : 'unverified')}</T>
+      <LiveHeardBadge deliveryId={row.id} messageKind="core2_reassurance" />
       <T>{row.occurred_at ?? row.created_at}</T>
     </Card>
   );

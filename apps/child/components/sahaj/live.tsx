@@ -2,6 +2,7 @@ import { Core2Links } from '../core2/links';
 import * as React from 'react';
 import { AlarmSettings } from './alarm-settings';
 import { LiveCore1HomeSection } from './core1-screens';
+import { Core1Links } from './core1-links';
 import { Linking, Platform, Share, Switch, View } from 'react-native';
 import { router } from 'expo-router';
 import type { AppHarness, AppVerification } from '@sahaj/shared';
@@ -108,6 +109,8 @@ export function LiveHome() {
         </Hero>
       ) : null}
       <LiveCore1HomeSection />
+      {/* Maa's day, voice, refills and urgent help live in the section above; free times is the one it lacks. */}
+      <Core1Links only={['freeTimes']} />
       <Section title="Latest alert">
         {latest ? (
           <Tap onPress={() => router.push({ pathname: '/alert', params: { id: latest.id } })}>

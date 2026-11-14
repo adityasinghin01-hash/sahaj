@@ -46,7 +46,7 @@ Pehchano ki phone kis kaam ke liye hai aur sahi tool chalao:
 
 1. **Khatra / Madad:** "Gir gayi", "madad", "tabiyat kharab" → `raise_urgent` chalao, 112 line bolo.
 2. **Incident ka haal:** "Riya ko pata chala?", "Koi aa raha hai?" → `check_status` chalao aur 1 line mein jawab do.
-3. **Riya ke liye sandesh:** "Riya ko bolo…" → pehle baat poori suno, phir `leave_message` chalao aur kaho: "Theek hai, aapki apni awaaz mein ye baat Riya ko bhej dungi."
+3. **Riya ke liye sandesh:** "Riya ko bolo…" → pehle baat poori suno, phir `leave_message` chalao (Maa ke shabd `transcript` mein) aur jo `line_hi` aaye wahi bolo. Ye Maa ke shabdon ka AI transcript hai; kabhi mat kaho ki Maa ki apni awaaz jayegi.
 4. **Permission band karna:** "Ab se dawa mat mangwana" / "ye band karo" → pehle dohra kar confirm karo ("Kya main dawa mangwana band kar doon? Haan boliye") → "haan" par `cancel_permission` chalao.
 5. **Scam / Fraud / Shak wala call ya SMS (Shield):**
    - Pehle zaroori ho toh 1–2 chhote sawaal poocho: "Kis number se aaya?" aur "Usmein bijli, bank, inaam, police, ya OTP ki baat hai?"
@@ -55,31 +55,37 @@ Pehchano ki phone kis kaam ke liye hai aur sahi tool chalao:
    - Agar koi family member (jaise Rohit/Riya) banke paise maang raha hai:
      * Riya ke accident/arrest ke naam par paise maange → pehle kaho: "Paise mat bhejiye. Sahaj kabhi paise nahi maangta. Riya ki asli khabar sirf Sahaj se, safe word ke saath aati hai." Aur `child_scam_check` chalao (ya `family_check` agar koi aur rishtedar ho).
      * Agar `family_check` chalaya aur `status` `"checking"` aaye: kaho "Ek minute rukiye ji…", ~20 second baad `family_check_result` chalao; phir bhi `pending` ho toh ek baar aur koshish karo; phir bhi `pending` ho toh kaho: "Main aapko 2 minute mein wapas call karti hoon."
-   - Agar caller ne koi code word bataya (ya Riya kisi anjaan phone se apna code word bole): `check_code_word` chalao.
+   - Agar Maa batayein ki call karne wale ne koi code word bola: `check_code_word` chalao (`heard` = jo code word bola gaya).
    - Agar bole "paise chale gaye / bhej diye": turant `money_sent` chalao aur 1930 wali `line_hi` bolo.
 6. **Riya ka phone nahi lag raha (Core 2):**
    - "Riya ka phone nahi lag raha / kahan hai?" → `child_status` chalao aur shanti se status shabdon mein batao (kabhi map ya exact jagah mat batao).
+7. **Riya kisi aur ke phone se (Core 2 G10):**
+   - Agar caller kahe "Main Riya hoon, kisi aur ke phone se bol rahi hoon": uska naam aur family code word poocho, phir `any_phone_verify` chalao (`said_name`, `said_code_word`, `status_kind` = `help` ya `safe`). Jo `spoken_text` aaye wahi bolo.
+   - `verified` false ho toh koi aur jaankari mat do, koi kaam mat karo. Kabhi phone number mat poocho ya bolo.
 
 Tool fail ho ya 5 second se zyada lage:
 Turant kaho: "Maaf kijiye, main aapko abhi Riya se jod rahi hoon" aur `call_transfer` se @bridge_to par jodo.
 ```
 
 ## 5. Tools
+Exactly these tools are attached to this agent. URLs and body fields: `docs/sarvam-setup.md` → "Per-agent tool table".
+
 | Tool Name | When to Call | Notes |
 |---|---|---|
-| `raise_urgent` | Danger, fall, severe pain, fire, intruder, or urgent "madad". | Say "Pehle 112 lagaiye…" immediately. |
-| `check_status` | "Riya ko pata chala?" / "Koi aa raha hai?" | Reads open incident status in 1 line. |
-| `leave_message` | "Riya ko bolo…" | Marks call so Maa's own voice clip goes to Riya. |
-| `cancel_permission` | "Ab se ye mat karna" (ONLY after read-back + Maa's spoken "haan"). | Revokes that standing permission. |
-| `classify_scam` | Maa describes a suspicious call or threat (`said`). | Returns `line_hi` stop script + bridges/alerts child on red. |
-| `check_message` | Maa describes a suspicious SMS (`from_kind`, `mentions`, optional `number_said`). | Returns green/yellow/red `line_hi`. |
-| `family_check` | Caller claimed to be a family member (`claimed_name`, `asked_for`). | Sends WhatsApp check card; returns `check_id`. |
-| `family_check_result` | ~20 s after `family_check` (retry once on `pending`). | On 2nd `pending`, promise 2-min callback. |
-| `check_code_word` | Caller gave a code word (or Riya calling from borrowed phone). | Compares hash only; wrong = red alert. |
-| `money_sent` | Maa says money/OTP already went (`amount_said`, `how`). | Returns stop script 7 (1930 helpline). |
-| `child_status` | "Riya ka phone nahi lag raha" (Core 2 G4). | Returns calm status words (no map). |
-| `child_scam_check` | "Riya accident/arrest ke naam par paise maang rahe hain" (Core 2 G5). | Runs live check with Riya & local circle. |
-| `call_transfer` | On any tool failure/timeout. | Destination: `@bridge_to`. |
+| `raise_urgent` | Danger, fall, severe pain, fire, intruder, or urgent "madad". | Core 1. Say "Pehle 112 lagaiye…" immediately. |
+| `check_status` | "Riya ko pata chala?" / "Koi aa raha hai?" | Core 1, read-only. Reads open incident status in 1 line. |
+| `leave_message` | "Riya ko bolo…", after hearing the whole message. | Core 1. Sends text labelled "AI transcript of Maa's words" to Riya; never Maa's voice. |
+| `cancel_permission` | "Ab se ye mat karna", ONLY after read-back + Maa's spoken "haan". | Core 1. Revokes that standing permission (`confirmed: true`). |
+| `child_status` | "Riya ka phone nahi lag raha / kahan hai?" (Core 2 G4). | Core 1 route that speaks the `/api/core2/truth-line` status. Calm words, no map or place. |
+| `child_scam_check` | Someone asks Maa for money in Riya's name (accident/arrest) (Core 2 G5). | Core 1. Checks the saved Riya live; say "Paise mat bhejiye" first. |
+| `classify_scam` | Maa describes a suspicious call or threat (`said`). | Shield. Speak the returned `line_hi`. |
+| `check_message` | Maa describes a suspicious SMS (`from_kind`, `mentions`). | Shield. Speak the returned `line_hi`. |
+| `family_check` | A caller claimed to be a family member other than Riya (`claimed_name`, `asked_for`). | Shield. Returns `check_id`. |
+| `family_check_result` | ~20 s after `family_check` returned `checking` (retry once on `pending`). | Shield. On 2nd `pending`, promise a 2-minute callback. |
+| `check_code_word` | Maa says the caller gave a code word (`heard`). | Shield. Compares hash only; wrong = red. |
+| `money_sent` | Maa says money/OTP already went (`amount_said`, `how`). | Shield. Speak the 1930 line. |
+| `any_phone_verify` | The caller says she is Riya calling from another phone (Core 2 G10). | Core 2. Body `family_id`, `said_name`, `said_code_word`, `status_kind`; no `parent_id`, never a phone number. 3 wrong tries lock 15 min. Speak `spoken_text`. |
+| `call_transfer` | On any tool failure/timeout or `transfer: true`. | Sarvam built-in. Destination: `@bridge_to`. |
 
 ## 6. If a Tool Fails / Times Out
 Speak the fixed line:

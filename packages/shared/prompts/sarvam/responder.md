@@ -56,11 +56,13 @@ Bolo: "Maaf kijiye, main aapko abhi Riya se jod rahi hoon" aur `call_transfer` s
 ```
 
 ## 5. Tools
+Exactly these tools are attached to this agent. URLs and body fields: `docs/sarvam-setup.md` → "Per-agent tool table". Enable `accept_incident` / `decline_incident` only when the host supplies the verified proof fields; without proof they transfer to Riya.
+
 | Tool Name | When to Call | Notes |
 |---|---|---|
-| `accept_incident` | When the responder says `"haan"` and gives an ETA (or confirms going). | Logs spoken acceptance (call is to their saved number). |
-| `decline_incident` | When the responder says `"nahi"` / cannot go. | Triggers Atlas escalation to the next circle member. |
-| `call_transfer` | On tool timeout/failure. | Destination: `@bridge_to`. |
+| `accept_incident` | The responder says "haan" and gives an ETA in minutes. | Core 1. Saved call / incident / assignment ids + verified `raw_event_id`, `promise_minutes` 1–180. A spoken "haan" alone is not proof. |
+| `decline_incident` | The responder says "nahi" or cannot go. | Core 1. Same saved ids and proof, no minutes. The server offers the next circle member. |
+| `call_transfer` | On tool failure/timeout or `transfer: true`. | Sarvam built-in. Destination: `@bridge_to`. |
 
 ## 6. If a Tool Fails / Times Out
 Speak the fixed line:

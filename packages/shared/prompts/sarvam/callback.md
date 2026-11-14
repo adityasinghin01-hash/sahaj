@@ -62,12 +62,14 @@ Bolo: "Maaf kijiye, main aapko abhi Riya se jod rahi hoon" aur `call_transfer` s
 ```
 
 ## 5. Tools
+Exactly these tools are attached to this agent. URLs and body fields: `docs/sarvam-setup.md` → "Per-agent tool table".
+
 | Tool Name | When to Call | Notes |
 |---|---|---|
-| `raise_urgent` | On confirmed emergency/help needed (not on `"galti se"`). | Speak "Pehle 112 lagaiye…" immediately. |
-| `classify_scam` | If the missed calls were because of a scam call/message. | Returns stop script + alerts Riya. |
-| `money_sent` | If on a `family_check_answer` callback Maa says she already sent money/OTP. | Returns 1930 stop script 7. |
-| `call_transfer` | On tool timeout/failure. | Destination: `@bridge_to`. |
+| `raise_urgent` | Maa confirms she needs help (not on "galti se lag gaya"). | Core 1. Read back first, then say "Pehle 112 lagaiye…" immediately. |
+| `classify_scam` | The missed calls were about a scam call or message. | Shield. Speak the returned `line_hi`. |
+| `money_sent` | On a `family_check_answer` callback, Maa says money/OTP already went. | Shield. Speak the 1930 line (stop script 7). |
+| `call_transfer` | On tool failure/timeout or `transfer: true`. | Sarvam built-in. Destination: `@bridge_to`. |
 
 ## 6. If a Tool Fails / Times Out
 Speak the fixed line:

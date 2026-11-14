@@ -86,6 +86,8 @@ An incomplete or uncertain mutation transfers on retry instead of repeating its 
 | `<PUBLIC_URL>/api/core1/sarvam/medicine_count` | POST | `medicine_id` (matched saved medicine UUID), `count` (absolute remaining tablets, integer 0–999), optional `vendor_id` (saved approved pharmacy UUID) | checkin, checkin_hearing |
 | `<PUBLIC_URL>/api/core1/sarvam/accept_incident` | POST | `call_id: "@call_id"`, `incident_id: "@incident_id"`, `assignment_id: "@assignment_id"`, `responder_person_id: "@responder_person_id"`, `raw_event_id: "@raw_event_id"` (verified normalized provider proof), `promise_minutes` (integer 1–180) | responder, **only when the host supplies verified proof** |
 | `<PUBLIC_URL>/api/core1/sarvam/decline_incident` | POST | Same saved IDs/proof as accept, without `promise_minutes` | responder, **only when the host supplies verified proof** |
+| `<PUBLIC_URL>/api/core1/matcher/free-time-tool` (tool name `save_free_time`) | POST | `said` (what Maa said about when she is free, e.g. `shaam 6 ke baad free hoon`) | checkin, checkin_hearing |
+| `<PUBLIC_URL>/api/core2/any-phone/verify` (tool name `any_phone_verify`) | POST | `family_id: "@family_id"`, `said_name`, `said_code_word`, `status_kind` (`help` or `safe`), optional `call_ref: "@call_id"`. **No `parent_id`** (the route rejects unknown fields) and never a phone number. Speak `spoken_text`. | Madad |
 
 The keypad truth line remains **`POST <PUBLIC_URL>/api/core2/truth-line`**, with the same bearer and `{ "family_id": "@family_id", "parent_id": "@parent_id" }`, optional `subject_person_id`. `child_status` imports that service and speaks fixed calm words from its status; it returns no location, map, contact number or address.
 
@@ -99,6 +101,20 @@ Consent writes use the existing purposes `check_in`, `call_recording`, and `call
 
 The urgent tools import the existing Core 1 `urgent_help` command; at baseline it only queues the command, so the urgent-help lane must finish its execution/persistence wiring before live use. A queued command does **not** prove that a responder has accepted. Responder Core 2 HTTP routes already exist, but no bare Sarvam spoken "haan" can serve as normalized acceptance proof. Keep the responder tools disabled until the host supplies proof for the saved call/assignment; absent or mismatched proof transfers to Riya.
 
+### Per-agent tool table (paste exactly these; nothing else)
+
+Each prompt file's "Tools" table lists the same set with one line on when to call it. `call_transfer` is Sarvam's built-in transfer to `@bridge_to` on every agent.
+
+| Agent | Prompt file | Shield tools (`<PUBLIC_URL>/api/sarvam/tool/<name>`) | Core 1 / Core 2 tools (URLs in the table above) |
+|---|---|---|---|
+| Madad (inbound keypad helper) | `madad.md` | `classify_scam`, `check_message`, `family_check`, `family_check_result`, `check_code_word`, `money_sent` | `raise_urgent`, `check_status`, `leave_message`, `cancel_permission`, `child_status` (speaks the `/api/core2/truth-line` status), `child_scam_check`, `any_phone_verify` |
+| Daily check-in | `checkin.md` (+ `drill_checkin.md` section 3) | `classify_scam`, `drill_answer` | `record_consent`, `reschedule`, `mark_private`, `medicine_count`, `save_free_time`, `raise_urgent` |
+| Daily check-in, hearing mode | `checkin_hearing.md` | `classify_scam` | `record_consent`, `reschedule`, `mark_private`, `medicine_count`, `save_free_time`, `raise_urgent` |
+| Responder | `responder.md` | none | `accept_incident`, `decline_incident` (only when the host supplies verified proof) |
+| Callback | `callback.md` | `classify_scam`, `money_sent` | `raise_urgent` |
+| Experience drill | `experience_drill.md` | `experience_turn` | none |
+| Call gateway screener | `call_gateway.md` | `call_screen` | none |
+
 ## 2. Agent: daily check-in (outbound)
 
 - **Prompt file:** `packages/shared/prompts/sarvam/checkin.md` (copy section 4 "System Prompt" into the system prompt, section 3 into the first message). For hearing mode, make a second agent from `checkin_hearing.md`.
@@ -111,7 +127,8 @@ The urgent tools import the existing Core 1 `urgent_help` command; at baseline i
 - **Variables the prompt also uses** (`@address_form`, `@greeting`, `@hearing_mode`, `@consent_done`, `@last_summary`, `@open_requests`, `@pending_voice`, `@fraud_tip`, `@bridge_to`, `@medicines_list`, `@drill_id`, `@drill_story`, `@drill_praise`, `@family_id`, `@parent_id`): give each one an empty default in the dashboard, so the agent still works when the server doesn't send it. See section 9 for which of these are not sent yet.
 - **Fraud tip of the week:** `GET <PUBLIC_URL>/api/sarvam/checkin-vars?family_id=<family id>` with header `Authorization: Bearer <SARVAM_TOOL_TOKEN>`. It returns `fraud_tip_hi`, `fraud_tip_en`, `as_of`. Use `fraud_tip_hi` for `@fraud_tip`.
 - **Shield tools:** `classify_scam`, `drill_answer`.
-- **Core 1 tools:** add `record_consent`, `reschedule`, `mark_private`, `raise_urgent`, `medicine_count` using the Core 1 tools URLs above, for both normal and hearing-mode agents. `call_transfer` is Sarvam's built-in transfer to `@bridge_to`.
+- **Shield tools (hearing mode):** `classify_scam` only. The weekly drill segment goes into the normal check-in agent.
+- **Core 1 tools:** add `record_consent`, `reschedule`, `mark_private`, `raise_urgent`, `medicine_count`, `save_free_time` using the Core 1 tools URLs above, for both normal and hearing-mode agents. `call_transfer` is Sarvam's built-in transfer to `@bridge_to`.
 - **Post-call webhook:** `<PUBLIC_URL>/api/sarvam/webhook/<SARVAM_WEBHOOK_SECRET>`. The server already puts this URL on every outbound call it places. If the dashboard also has a field for it, paste the same URL.
 - **Send back:** the agent id → `SARVAM_AGENT_ID_CHECKIN`, and its published version number → `SARVAM_AGENT_VERSION`.
 
@@ -123,6 +140,7 @@ The urgent tools import the existing Core 1 `urgent_help` command; at baseline i
 - **Shield tools:** `classify_scam`, `check_message`, `family_check`, `family_check_result`, `check_code_word`, `money_sent`.
   - After `family_check` returns `status: "checking"`, wait about 20 s, then call `family_check_result` with the same `check_id`. This order is already in the prompt.
 - **Core 1 tools:** add `raise_urgent`, `check_status`, `leave_message`, `cancel_permission`, `child_status`, `child_scam_check` using the Core 1 tools URLs above.
+- **Core 2 tool:** add `any_phone_verify` (`<PUBLIC_URL>/api/core2/any-phone/verify`) for when the caller says she is Riya on another phone. Its body carries `family_id` but not `parent_id`.
 - **Post-call webhook:** paste `<PUBLIC_URL>/api/sarvam/webhook/<SARVAM_WEBHOOK_SECRET>` if the dashboard has the field. Inbound call reports don't carry our family ids, so the server just replies `ok` and records nothing. That is expected.
 - **Send back:** the inbound phone number shown on the agent (write it as `+91` followed by 10 digits) and the agent id. The lead keeps the number in the env file; don't post it anywhere else.
 

@@ -35,6 +35,7 @@ import {
   sendMaaVoiceReply,
   type MaaVoiceItem,
 } from '@/lib/maa-api';
+import { reportMaaPlaybackFinished } from '@/lib/maa-heard';
 import { useT } from '@/lib/prefs';
 import { cn } from '@/lib/utils';
 
@@ -203,6 +204,29 @@ function Player({
     void markMaaVoicePlayed(item.id);
   }, [item, livePaired]);
 
+  // "Maa heard it" proof: a device-signed ack, sent only when playback reaches its natural end.
+  const reportedHeardRef = React.useRef<string | null>(null);
+  const reportHeardOnce = React.useCallback(
+    (next: AudioStatus) => {
+      if (!livePaired || !item || reportedHeardRef.current === item.id) return;
+      const clipDurationS = Math.max(1, Math.round(next.duration > 0 ? next.duration : (item.duration_s ?? 1)));
+      const playedDurationS = Math.round(Math.max(next.currentTime, next.duration));
+      reportedHeardRef.current = item.id;
+      void reportMaaPlaybackFinished({
+        messageKind: 'core1_voice_post',
+        deliveryId: item.id,
+        voicePostId: item.id,
+        clipDurationS,
+        playedDurationS,
+        playbackFinished: true,
+      }).then((res) => {
+        // Let a later full replay retry if this one failed (e.g. network); the server dedupes receipts.
+        if (!res.ok && reportedHeardRef.current === item.id) reportedHeardRef.current = null;
+      });
+    },
+    [item, livePaired],
+  );
+
   React.useEffect(() => {
     if (!mediaUrl) {
       playerRef.current?.remove();
@@ -228,6 +252,7 @@ function Player({
         duration: next.duration,
         didJustFinish: next.didJustFinish,
       });
+      if (next.didJustFinish) reportHeardOnce(next);
 
       if (autoPlay && !autoPlayedRef.current && next.isLoaded) {
         autoPlayedRef.current = true;
@@ -254,7 +279,7 @@ function Player({
         playerRef.current = null;
       }
     };
-  }, [autoPlay, markPlayedOnce, mediaUrl]);
+  }, [autoPlay, markPlayedOnce, mediaUrl, reportHeardOnce]);
 
   React.useEffect(() => {
     if (useRealAudio || !demoPlaying) return;

@@ -177,6 +177,7 @@ const en = {
   voice_send_failed: 'Could not send your reply. Try again.',
   madad_send_failed: 'Could not reach Sahaj server. Try again or call Riya.',
   retry: 'Try again',
+  ask_riya_now: 'Hear Riya now',
 } as const;
 
 export type StringKey = keyof typeof en | keyof typeof sharedEn;
@@ -343,6 +344,7 @@ const hi: Record<keyof typeof en, string> = {
   voice_send_failed: 'आपका जवाब नहीं जा सका। फिर कोशिश करें।',
   madad_send_failed: 'सहज सर्वर तक बात नहीं पहुँच सकी। फिर कोशिश करें या रिया को कॉल करें।',
   retry: 'फिर कोशिश करें',
+  ask_riya_now: 'रिया से अभी सुनें',
 };
 
 export const STRINGS: Record<'en' | 'hi', Record<StringKey, string>> = {

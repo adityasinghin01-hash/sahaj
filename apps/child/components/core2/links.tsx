@@ -9,6 +9,8 @@ export function Core2Links() {
       <Btn label={t('watch')} kind="teal" onPress={() => router.push('/watch')} />
       <Btn label={t('safeTitle')} kind="ghost" onPress={() => router.push('/safe')} />
       <Btn label={t('contacts')} kind="ghost" onPress={() => router.push('/circle')} />
+      <Btn label={t('preferences')} kind="ghost" onPress={() => router.push('/permissions')} />
+      <Btn label={t('proofLink')} kind="ghost" onPress={() => router.push('/proof')} />
     </Card>
   );
 }

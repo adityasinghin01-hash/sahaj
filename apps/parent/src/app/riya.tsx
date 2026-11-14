@@ -1,6 +1,6 @@
 // "Riya kaisi hai?" → one calm status line from demo data. Never a map or a location.
 import { router } from 'expo-router';
-import { House, Phone } from 'lucide-react-native';
+import { House, Phone, Sparkles } from 'lucide-react-native';
 import { View } from 'react-native';
 
 import { BackBar, BigBtn, M, MaaScreen } from '@/components/sahaj/maa';
@@ -27,6 +27,8 @@ export default function Riya() {
         </View>
       </View>
       <BigBtn kind="go" icon={Phone} label={t('call_riya')} onPress={() => call(family.riya.phone)} />
+      {/* Fresh proof of life: Sahaj asks Riya to say a word now, Maa hears it with a time stamp. */}
+      <BigBtn className="mt-4" kind="soft" icon={Sparkles} label={t('ask_riya_now')} onPress={() => router.push('/proof')} />
       <BigBtn className="mt-4" kind="soft" icon={House} label={t('home')} onPress={() => router.dismissTo('/')} />
     </MaaScreen>
   );

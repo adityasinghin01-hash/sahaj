@@ -1,5 +1,6 @@
 import { useSession } from '@/lib/session';
 import { LiveHome, LiveLoading } from '@/components/sahaj/live';
+import { Core1Links } from '@/components/sahaj/core1-links';
 import { Icon } from '@/components/ui/icon';
 import {
   Btn,
@@ -178,6 +179,11 @@ function DemoHome() {
           </Hero>
         </View>
       </Pop>
+
+      {/* Core 1: every Maa screen one tap from home */}
+      <Section title="Maa’s care · माँ की देखभाल">
+        <Core1Links only={['maaDay', 'refills', 'freeTimes', 'urgent']} />
+      </Section>
 
       {/* Needs your yes */}
       <Section

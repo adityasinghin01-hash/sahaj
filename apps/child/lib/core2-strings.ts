@@ -152,6 +152,7 @@ export const core2Strings = {
     hi: 'निजी जानकारी साझा करने की अनुमति',
   },
   savePreferences: { en: 'Save sharing preferences', hi: 'साझा करने की अनुमति सुरक्षित करें' },
+  proofLink: { en: 'Answer Maa’s “are you okay?” check', hi: 'माँ के “ठीक हो?” सवाल का जवाब दें' },
 } as const;
 export type Core2String = keyof typeof core2Strings;
 export function core2Text(lang: Lang, key: Core2String) {

@@ -58,6 +58,7 @@ import { ApiError } from '@/lib/api';
 import type { Level } from '@/lib/demo';
 import { cn } from '@/lib/utils';
 import { useVoicePlayer, useVoiceRecorder } from '@/lib/voice-recorder';
+import { LiveHeardBadge } from './live-heard-badge';
 
 function formatInr(amountMinor: number): string {
   const rupees = amountMinor / 100;
@@ -750,6 +751,11 @@ export function LiveVoiceScreen() {
                   Heard at {formatDateTime(item.played_at)}
                 </T>
               ) : null}
+              {item.direction === 'outbound' ? (
+                <View className="mt-2">
+                  <LiveHeardBadge deliveryId={item.id} messageKind="core1_voice_post" />
+                </View>
+              ) : null}
               <View className="mt-3 flex-row gap-2">
                 <Btn
                   label={isLoading ? 'Loading…' : isPlaying ? s.stopVoice : s.playVoice}
@@ -909,6 +915,18 @@ export function LiveUrgentScreen() {
               )}
             </Card>
           </Section>
+
+          {active.state === 'done' || active.state === 'closed' ? (
+            <Btn
+              label={s.afterReport}
+              icon={FileText}
+              kind="ghost"
+              className="mt-4"
+              onPress={() =>
+                router.push({ pathname: '/after-report', params: { incidentId: active.id } })
+              }
+            />
+          ) : null}
         </>
       ) : null}
     </Screen>

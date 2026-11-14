@@ -4,6 +4,7 @@ import Constants from 'expo-constants';
 import { router, usePathname, useRootNavigationState } from 'expo-router';
 import { createApi } from './api';
 import { useSession, type Session } from './session';
+import { routeForPush, type PushRoute } from './push-routes';
 
 import type { Notification } from 'expo-notifications';
 import { offerDndAccessOnce, prepareShieldChannels } from './shield-alarm';
@@ -61,7 +62,7 @@ export function PushNotifications() {
   const { ready, session } = useSession();
   const navigation = useRootNavigationState();
   const pathname = usePathname();
-  const [pending, setPending] = React.useState<{ id?: string; test?: true } | null>(null);
+  const [pending, setPending] = React.useState<PushRoute | null>(null);
   const handled = React.useRef<string | null>(null);
   React.useEffect(() => {
     if (Platform.OS === 'web') return;
@@ -70,17 +71,10 @@ export function PushNotifications() {
     const receive = (notification: Notification) => {
       if (!active) return;
       const key = `${notification.request.identifier}:${notification.date}`;
-      const data = notification.request.content.data;
       if (key === handled.current) return;
-      if (data?.alarm_test === true) {
-        handled.current = key;
-        setPending({ test: true });
-        return;
-      }
-      const id = data?.verdict_id;
-      if (typeof id !== 'string' || !/^[A-Za-z0-9_-]{1,128}$/.test(id)) return;
       handled.current = key;
-      setPending({ id });
+      // Unknown or malformed data opens home; routeForPush never throws.
+      setPending(routeForPush(notification.request.content.data));
     };
     void import('expo-notifications').then(async (notifications) => {
       if (!active) return;
@@ -110,21 +104,21 @@ export function PushNotifications() {
   }, []);
   React.useEffect(() => {
     if (!pending || !ready || !navigation?.key) return;
-    if (pending.test) {
-      router.push({ pathname: '/alert', params: { alarm_test: 'true' } });
+    const done = () => {
       setPending(null);
       void import('expo-notifications').then((notifications) => notifications.clearLastNotificationResponseAsync()).catch(() => {});
-      return;
+    };
+    if (pending.needsSession) {
+      if (!session) {
+        if (pathname !== '/sign-in') router.push('/sign-in');
+        return;
+      }
+      // Let sign-in finish its storage write and default redirect before opening the screen.
+      if (pathname === '/sign-in') return;
     }
-    if (!session) {
-      if (pathname !== '/sign-in') router.push('/sign-in');
-      return;
-    }
-    // Let sign-in finish its storage write and default redirect before opening the alert.
-    if (pathname === '/sign-in') return;
-    router.push({ pathname: '/alert', params: { id: pending.id } });
-    setPending(null);
-    void import('expo-notifications').then((notifications) => notifications.clearLastNotificationResponseAsync()).catch(() => {});
+    if (pending.pathname === '/') router.navigate('/');
+    else router.push({ pathname: pending.pathname, params: pending.params });
+    done();
   }, [pending, ready, session, navigation?.key, pathname]);
   React.useEffect(() => {
     if (Platform.OS === 'web' || !ready) return;
