@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Throwaway-Postgres test for the Shield Postgres layer (card K-B3): packages/shield/src/db.
+# Throwaway-Postgres test for the Shield Postgres layer (cards K-B3, K-B5): packages/shield/src/db.
 # Usage: bash infra/supabase/test/run-shield-db-test.sh
 # Needs local Postgres binaries (default /opt/homebrew/bin; override with PG_BIN) and the
 # workspace installed (pnpm install). No Docker. The cluster lives in a temp dir and is deleted after.
@@ -10,7 +10,9 @@ HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 MIGRATIONS=(
   "$HERE/../migrations/20261114000100_shield.sql"
   "$HERE/../migrations/20261114000200_shield_pairing.sql"
+  "$HERE/../migrations/20261114000300_shield_busy_warnings.sql"
 )
+RLS_SQL="$HERE/shield_busy_warnings_rls.sql"
 PKG="$(cd "$HERE/../../../packages/shield" && pwd)"
 VITEST="$PKG/node_modules/.bin/vitest"
 DB=shield_db_test
@@ -19,7 +21,7 @@ for bin in initdb pg_ctl psql; do
   [[ -x "$PG_BIN/$bin" ]] || { echo "missing $PG_BIN/$bin" >&2; exit 2; }
 done
 [[ -x "$VITEST" ]] || { echo "missing $VITEST (run pnpm install)" >&2; exit 2; }
-for m in "${MIGRATIONS[@]}"; do [[ -f "$m" ]] || { echo "missing $m" >&2; exit 2; }; done
+for m in "${MIGRATIONS[@]}" "$RLS_SQL"; do [[ -f "$m" ]] || { echo "missing $m" >&2; exit 2; }; done
 
 TMP="$(mktemp -d /tmp/shield-pg.XXXXXX)"
 PGDATA="$TMP/data"
@@ -99,6 +101,10 @@ for m in "${MIGRATIONS[@]}"; do
   "${PSQL[@]}" -d "$DB" -f "$m"
 done
 
-echo "== vitest run test/db"
+echo "== RLS checks (busy_streaks, scam_indicators)"
+"${PSQL[@]}" -d "$DB" -f "$RLS_SQL" 2>&1 | sed 's/^psql:[^:]*:[0-9]*: //'
+# pipefail propagates a psql failure through sed.
+
+echo "== vitest run test/db + *.db.test.ts (busy, warnings)"
 cd "$PKG"
-DATABASE_URL="postgres://service_role@localhost:$PORT/$DB" SHIELD_DB_TEST_REQUIRED=1 "$VITEST" run test/db
+DATABASE_URL="postgres://service_role@localhost:$PORT/$DB" SHIELD_DB_TEST_REQUIRED=1 "$VITEST" run test/db .db.test.ts
