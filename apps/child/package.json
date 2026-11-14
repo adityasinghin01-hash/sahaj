@@ -48,7 +48,9 @@
     "tailwindcss": "^3.4.14",
     "tailwindcss-animate": "^1.0.7",
     "@sahaj/shared": "workspace:*",
-    "zod": "^4.1.0"
+    "zod": "^4.1.0",
+    "expo-notifications": "~58.1.9",
+    "expo-secure-store": "~58.0.3"
   },
   "devDependencies": {
     "@babel/core": "^7.26.0",

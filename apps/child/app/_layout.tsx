@@ -1,4 +1,5 @@
 import '@/global.css';
+import { PushNotifications } from '@/lib/notifications';
 import { Btn, Card, T, palette } from '@/components/sahaj/ui';
 
 import {
@@ -51,6 +52,7 @@ export default function RootLayout() {
         <Stack.Screen name="(tabs)" />
         <Stack.Screen name="sos" options={{ presentation: 'fullScreenModal', animation: 'fade' }} />
       </Stack>
+      <PushNotifications />
       <PortalHost />
       <DemoOverlay />
     </>

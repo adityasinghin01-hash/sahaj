@@ -90,6 +90,8 @@ class SahajShieldModule : Module() {
       s
     }
 
+    Function("getServerAddress") { shield.secure.load()?.baseUrl ?: "" }
+
     // Non-sensitive display choices only. Device credentials remain in SecureStore.
     Function("getUiPreferences") {
       val prefs = context.getSharedPreferences("sahaj_ui", Context.MODE_PRIVATE)

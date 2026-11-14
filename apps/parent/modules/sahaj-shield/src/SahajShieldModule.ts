@@ -16,6 +16,8 @@ import type {
 
 declare class SahajShieldModule extends NativeModule<SahajShieldModuleEvents> {
   getStatus(): ShieldStatus;
+  /** Public origin only, from encrypted pairing storage. */
+  getServerAddress(): string;
   getUiPreferences(): { lang: string; size: string };
   setUiPreferences(lang: 'en' | 'hi', size: 'large' | 'xlarge'): void;
   requestSmsPermission(): Promise<boolean>;

@@ -314,7 +314,18 @@ internal class ShieldRuntime private constructor(val app: Context) {
 
   fun savePairing(p: Pairing) {
     val url = URL(p.baseUrl)
-    require(url.protocol == "https" || (debuggable && url.protocol == "http")) { "baseUrl must be https" }
+    val host = url.host.removePrefix("[").removeSuffix("]")
+    val octets = host.split('.').map { it.toIntOrNull() }
+    val ipv4 = octets.size == 4 && octets.all { it != null && it in 0..255 }
+    val local = host in setOf("localhost", "::1") || (ipv4 && (
+      octets[0] == 127 || octets[0] == 10 ||
+      (octets[0] == 192 && octets[1] == 168) ||
+      (octets[0] == 172 && octets[1]!! in 16..31) ||
+      (octets[0] == 169 && octets[1] == 254)
+    ))
+    require(url.protocol == "https" || (debuggable && url.protocol == "http" && local)) { "baseUrl must be https" }
+    require(host.isNotBlank() && url.userInfo == null && url.query == null && url.ref == null &&
+      (url.path.isEmpty() || url.path == "/")) { "baseUrl must be an origin" }
     require(p.deviceId.isNotBlank() && p.deviceSecret.length >= 16) { "deviceId/deviceSecret missing" }
     secure.save(p)
     kickSender()

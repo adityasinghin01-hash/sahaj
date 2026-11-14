@@ -36,7 +36,14 @@
         }
       ],
       "expo-status-bar",
-      "expo-font"
+      "expo-font",
+      [
+        "expo-notifications",
+        {
+          "defaultChannel": "shield-alerts"
+        }
+      ],
+      "expo-secure-store"
     ],
     "experiments": {
       "typedRoutes": true

@@ -24,16 +24,17 @@ import {
   type LucideIcon,
 } from 'lucide-react-native';
 import * as React from 'react';
-import { ActivityIndicator, AppState, Linking, View } from 'react-native';
+import { ActivityIndicator, AppState, Linking, TextInput, View } from 'react-native';
 
 import { BackBar, BigBtn, M, MaaScreen, Tick, successHaptic, useFont } from '@/components/sahaj/maa';
 import { Tap } from '@/components/sahaj/ui';
 import { Icon } from '@/components/ui/icon';
-import { pairWithCode, type PairResult } from '@/lib/pairing';
+import { defaultServerAddress, pairWithCode, type PairResult } from '@/lib/pairing';
 import { useT } from '@/lib/prefs';
 import { RESTRICTED_SETTINGS_SDK, STEPS, sessionDone, type StepId } from '@/lib/setup';
 import { shield, shieldAvailable, type ShieldFeatures, type ShieldStatus } from '@/lib/shield';
 import { cn } from '@/lib/utils';
+import { validateServerAddress } from '@/lib/server-address';
 
 const ICONS: Record<StepId, LucideIcon> = {
   pair: Smartphone,
@@ -208,30 +209,62 @@ function PairPad({ paired, onPaired }: { paired: boolean; onPaired: () => void }
   const { t } = useT();
   const font = useFont();
   const [code, setCode] = React.useState('');
+  const [serverAddress, setServerAddress] = React.useState(defaultServerAddress);
+  const [addressError, setAddressError] = React.useState<string | null>(null);
+  const [editingAddress, setEditingAddress] = React.useState(false);
   const [result, setResult] = React.useState<PairResult | null>(null);
   const [busy, setBusy] = React.useState(false);
 
   const press = async (d: string) => {
-    if (busy || paired) return;
+    if (busy || (paired && !editingAddress)) return;
+    try {
+      if (serverAddress.trim()) validateServerAddress(serverAddress);
+      setAddressError(null);
+    } catch {
+      setAddressError('Enter an HTTPS server address. Local HTTP works only in development.');
+      return;
+    }
     const nextCode = (code + d).slice(0, 6);
     setCode(nextCode);
     setResult(null);
     if (nextCode.length === 6) {
       setBusy(true);
-      const r = await pairWithCode(nextCode);
+      const r = await pairWithCode(nextCode, serverAddress);
       setBusy(false);
       setResult(r);
       if (r === 'failed') setCode('');
-      else onPaired();
+      else { setEditingAddress(false); onPaired(); }
     }
   };
 
-  if (paired) {
-    return <M v="strong" className="text-ok-ink">{result === 'demo' ? t('pair_demo') : t('pair_ok')} ✓</M>;
-  }
+
   const keys = ['1', '2', '3', '4', '5', '6', '7', '8', '9', '', '0', 'del'];
+  const addressField = (
+    <View className="mb-5">
+      <M v="strong">Server address</M>
+      <TextInput
+        accessibilityLabel="Server address"
+        value={serverAddress}
+        editable={!busy}
+        onChangeText={(value) => {
+          setServerAddress(value); setCode(''); setResult(null); setAddressError(null); setEditingAddress(true); sessionDone.delete('pair');
+        }}
+        placeholder="https://your-shield-server"
+        autoCapitalize="none"
+        autoCorrect={false}
+        keyboardType="url"
+        className="mt-2 min-h-[60px] rounded-2xl border-2 border-sand-line bg-white px-4 text-lg text-ink"
+      />
+      <M v="small" className="mt-2">Enter Riya’s server link, then her pairing code. A successful pairing saves the address securely.</M>
+      {addressError ? <M v="small" className="text-danger-ink">{addressError}</M> : null}
+    </View>
+  );
+  if (paired && !editingAddress) {
+    return <View>{addressField}<M v="strong" className="text-ok-ink">{result === 'demo' ? t('pair_demo') : t('pair_ok')} ✓</M></View>;
+  }
   return (
     <View>
+      {addressField}
       <View className="flex-row justify-between">
         {Array.from({ length: 6 }).map((_, i) => (
           <View key={i} className={cn('h-[68px] w-[48px] items-center justify-center rounded-2xl border-2 bg-white', i === code.length ? 'border-brand' : 'border-sand-line')}>

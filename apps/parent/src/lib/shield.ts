@@ -40,6 +40,7 @@ async function safeAsync<T>(fn: () => Promise<T>, fallback: T): Promise<T> {
 }
 
 export const shield = {
+  getServerAddress: () => safe(() => SahajShield.getServerAddress(), ''),
   getUiPreferences: () => safe(() => SahajShield.getUiPreferences(), { lang: 'en', size: 'large' }),
   setUiPreferences: (lang: 'en' | 'hi', size: 'large' | 'xlarge') =>
     safe(() => SahajShield.setUiPreferences(lang, size), undefined),
