@@ -70,3 +70,43 @@ Persistent local Postgres 16 + `@sahaj/shield-api` + background cron loop + no-p
    - Bearer token: the JWT printed by `mint-lab-token.mjs`
    - Never paste `SUPABASE_JWT_SECRET` into the app.
 
+
+## Joined lab v2: all 3 cores behind one door (`lab-up2.sh`)
+
+`@sahaj/shield-api` and `@sahaj/api` (Singhal's Core 1 / Core 2 / provider webhooks) run side by side behind one
+zero-dependency path proxy (`proxy.mjs`). Everything lives in `~/.sahaj-lab2` with its own Postgres cluster
+(`127.0.0.1:54339`, db `sahaj_lab2`), so the v1 lab above is never touched.
+
+| Port | Process | Notes |
+|---|---|---|
+| `LAB2_PROXY_PORT` 3200 (3100 after switch-over) | door (`proxy.mjs`, door mode) | `/api/core1`, `/api/core2`, `/api/twilio`, `/api/missed-call`, `/api/sarvam/post-call`, `/api/media`, `/api/cron/tick`, `/api/health/liveness`, `/api/health/readiness`, exact `/api/whatsapp`, exact `/api/sarvam/tool/ping` → apps/api; everything else → shield-api (`/api/health` stays shield's) |
+| 3201 | `@sahaj/shield-api` | `DATABASE_URL` = service_role on the lab cluster |
+| 3202 | `@sahaj/api` | `SAHAJ_LAB_MODE=1`: bearer tokens verified locally with `SUPABASE_JWT_SECRET` (`apps/api/src/lib/lab-auth.ts`) |
+| 3203 | supabase gateway (`proxy.mjs`, supabase mode) | `/rest/v1/*` → PostgREST; `/auth/v1`, `/storage/v1` → 501 |
+| 3204 | PostgREST (`brew install postgrest`, arm64 `/opt/homebrew`) | connects as lab-only `authenticator` (`sql/lab2_platform.sql`) |
+| 54339 | PostgreSQL 16 | `~/.sahaj-lab2/pg` |
+
+```bash
+bash scripts/lab/lab-reset2.sh          # fresh DB: bootstrap + lab platform + ALL migrations + demo seed + real demo phones (encrypted)
+bash scripts/lab/lab-up2.sh             # Postgres, PostgREST, gateway, both servers, door, cron (shield cron-worker + /api/cron/tick)
+LAB2_PROVIDERS=off bash scripts/lab/lab-up2.sh   # same, but no AI/Sarvam/Expo/Langfuse keys (no paid calls, no real dialling)
+set -a; source ~/dev/sahaj-secrets/shield.env; set +a; node scripts/lab/joined-smoke.mjs   # health, lab login, Core 2, Core 1, Shield signatures
+LAB_DIR=~/.sahaj-lab2 LAB_API_URL=http://127.0.0.1:3200 DATABASE_URL=postgres://service_role@127.0.0.1:54339/sahaj_lab2 node scripts/lab/scenes.mjs --only A
+bash scripts/lab/lab-down2.sh           # stops everything in ~/.sahaj-lab2 (LAB2_KEEP_PG=1 keeps Postgres)
+node --test scripts/lab/proxy.test.mjs  # proxy unit tests (loopback only)
+```
+
+Real phones: `load-phones.ts` reads `LAB_PHONE_*` from the secrets file at runtime and writes them only as encrypted
+`provider_identities` rows (`source=sarvam`) through the Shield contact port. Maa's keypad is her enabled call target;
+her smartphone is stored disabled (`LAB_MAA_PRIMARY=smartphone` + `lab-reset2.sh` flips it). Numbers are never printed.
+No `WHATSAPP_*` variable reaches either server.
+
+### Switch-over (keep the tunnel URL)
+
+The cloudflared quick tunnel forwards to `http://127.0.0.1:3100`; it is never stopped or restarted here.
+
+1. `bash scripts/lab/lab-reset2.sh` (v1 keeps running), optionally `bash scripts/lab/lab-up2.sh` + smoke on 3200, then `LAB2_KEEP_PG=1 bash scripts/lab/lab-down2.sh`.
+2. `bash scripts/lab/lab-down.sh` stops the v1 cron loop, the v1 shield-api on 3100 and v1 Postgres. It does not touch `tunnel.pid`.
+3. `LAB2_PROXY_PORT=3100 bash scripts/lab/lab-up2.sh`
+4. `curl "$(cat ~/.sahaj-lab/public-url.txt)/api/health"` and `.../api/health/readiness`.
+5. Rollback: `bash scripts/lab/lab-down2.sh && bash scripts/lab/lab-up.sh`.
