@@ -732,6 +732,46 @@ on conflict (id) do update
       two_person_required = excluded.two_person_required,
       revoked_at          = null;
 
+-- 10c. Core 1 / Core 2 authorized-send permissions the lab smoke fixtures used to add (K-GREEN): without them the
+--      live demo refuses (correctly) Riya<->Maa voice messages, keypad leave_message, missed-call nudges, Riya's
+--      urgent responder offer to Rohit and her own watch check-in. All bound to the family principal and an
+--      existing consent; Cedar + SQL fences still check consent, targets and limits.
+-- ============================================================================
+insert into public.permissions (
+  id, family_id, person_id, principal_id, action, decision, limits,
+  valid_from, expires_at, period_start, period_end,
+  max_uses, used_count, max_amount_minor,
+  target_ids, vendor_ids, item_ids,
+  consent_id, two_person_required, revoked_at, created_at
+) values
+  ('77777777-7777-4777-8777-777777777730', '11111111-1111-4111-8111-111111111111', '22222222-2222-4222-8222-222222222222',
+   '44444444-4444-4444-8444-444444444441', 'voice_message', 'allow', '{"title":"Riya voice message to Maa (app push / keypad call)"}'::jsonb,
+   '2026-11-01T00:00:00+05:30'::timestamptz, '2026-12-31T23:59:59+05:30'::timestamptz,
+   '2026-11-01T00:00:00+05:30'::timestamptz, '2026-12-31T23:59:59+05:30'::timestamptz,
+   1000, 0, 0, array['22222222-2222-4222-8222-222222222221'], '{}', '{}', '88888888-8888-4888-8888-888888888805', false, null, '2026-11-01T10:07:00+05:30'::timestamptz),
+  ('77777777-7777-4777-8777-777777777731', '11111111-1111-4111-8111-111111111111', '22222222-2222-4222-8222-222222222221',
+   '44444444-4444-4444-8444-444444444441', 'voice_message', 'allow', '{"title":"Maa message to Riya (keypad leave_message / app reply push)"}'::jsonb,
+   '2026-11-01T00:00:00+05:30'::timestamptz, '2026-12-31T23:59:59+05:30'::timestamptz,
+   '2026-11-01T00:00:00+05:30'::timestamptz, '2026-12-31T23:59:59+05:30'::timestamptz,
+   1000, 0, 0, array['22222222-2222-4222-8222-222222222222'], '{}', '{}', '88888888-8888-4888-8888-888888888804', false, null, '2026-11-01T10:07:00+05:30'::timestamptz),
+  ('77777777-7777-4777-8777-777777777732', '11111111-1111-4111-8111-111111111111', '22222222-2222-4222-8222-222222222221',
+   '44444444-4444-4444-8444-444444444441', 'missed_call_nudge', 'allow', '{"title":"Maa missed call -> nudge push to Riya"}'::jsonb,
+   '2026-11-01T00:00:00+05:30'::timestamptz, '2026-12-31T23:59:59+05:30'::timestamptz,
+   '2026-11-01T00:00:00+05:30'::timestamptz, '2026-12-31T23:59:59+05:30'::timestamptz,
+   1000, 0, 0, array['22222222-2222-4222-8222-222222222222'], '{}', '{}', '88888888-8888-4888-8888-888888888801', false, null, '2026-11-01T10:07:00+05:30'::timestamptz),
+  ('77777777-7777-4777-8777-777777777733', '11111111-1111-4111-8111-111111111111', '22222222-2222-4222-8222-222222222222',
+   '44444444-4444-4444-8444-444444444441', 'urgent_responder', 'allow', '{"title":"Riya Core 2 urgent responder -> Rohit"}'::jsonb,
+   '2026-11-01T00:00:00+05:30'::timestamptz, '2026-12-31T23:59:59+05:30'::timestamptz,
+   '2026-11-01T00:00:00+05:30'::timestamptz, '2026-12-31T23:59:59+05:30'::timestamptz,
+   1000, 0, 0, array['22222222-2222-4222-8222-222222222223'], '{}', '{}', '88888888-8888-4888-8888-888888888810', false, null, '2026-11-01T10:07:00+05:30'::timestamptz),
+  ('77777777-7777-4777-8777-777777777734', '11111111-1111-4111-8111-111111111111', '22222222-2222-4222-8222-222222222222',
+   '44444444-4444-4444-8444-444444444441', 'check_in', 'allow', '{"title":"Riya going-home watch check-in to herself"}'::jsonb,
+   '2026-11-01T00:00:00+05:30'::timestamptz, '2026-12-31T23:59:59+05:30'::timestamptz,
+   '2026-11-01T00:00:00+05:30'::timestamptz, '2026-12-31T23:59:59+05:30'::timestamptz,
+   1000, 0, 0, array['22222222-2222-4222-8222-222222222222'], '{}', '{}', '88888888-8888-4888-8888-888888888810', false, null, '2026-11-01T10:07:00+05:30'::timestamptz)
+on conflict (id) do update set revoked_at = null, used_count = 0, expires_at = excluded.expires_at,
+  principal_id = excluded.principal_id, target_ids = excluded.target_ids, consent_id = excluded.consent_id;
+
 -- ============================================================================
 -- 11. Core 2 Child Safety (Riya's trusted contacts, reassurance prefs, device)
 --     Priya = Rank 1 local friend in Bengaluru (approved, consented, active)
