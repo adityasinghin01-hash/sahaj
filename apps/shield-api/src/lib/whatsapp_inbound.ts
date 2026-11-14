@@ -110,7 +110,11 @@ export function createWhatsappWebhookHandlers(
       const token = getEnv().WHATSAPP_VERIFY_TOKEN;
       const supplied = url.searchParams.get("hub.verify_token");
       if (!token || !supplied || url.searchParams.get("hub.mode") !== "subscribe" ||
-          !timingSafeEqual(sha256(token), sha256(supplied))) return new Response("Forbidden", { status: 403 });
+          !timingSafeEqual(sha256(token), sha256(supplied))) {
+        console.info(JSON.stringify({ evt: "shield.whatsapp_webhook.verify", ok: false }));
+        return new Response("Forbidden", { status: 403 });
+      }
+      console.info(JSON.stringify({ evt: "shield.whatsapp_webhook.verify", ok: true }));
       return new Response(url.searchParams.get("hub.challenge") ?? "", { headers: { "content-type": "text/plain; charset=utf-8" } });
     },
     async POST(req: Request): Promise<Response> {
@@ -139,15 +143,21 @@ export function createWhatsappWebhookHandlers(
       finally { reader?.releaseLock(); }
       const raw = Buffer.concat(chunks);
       const expected = createHmac("sha256", secret).update(raw).digest();
-      if (!timingSafeEqual(expected, Buffer.from(signature.slice(7), "hex"))) return Response.json({ error: "unauthorized" }, { status: 401 });
+      if (!timingSafeEqual(expected, Buffer.from(signature.slice(7), "hex"))) {
+        console.info(JSON.stringify({ evt: "shield.whatsapp_webhook.post", signature: "bad" }));
+        return Response.json({ error: "unauthorized" }, { status: 401 });
+      }
       let payload: unknown;
       try { payload = JSON.parse(raw.toString("utf8")); }
       catch { return Response.json({ ok: true }); }
       // Reduce to enums and hashes before handing anything to background work.
       const answers: WhatsappAnswerInput[] = [];
+      let messageCount = 0, statusCount = 0;
       for (const entry of array(object(payload).entry)) {
         for (const change of array(object(entry).changes)) {
+          statusCount += array(object(object(change).value).statuses).length;
           for (const item of array(object(object(change).value).messages)) {
+            messageCount += 1;
             const message = object(item);
             const answer = reply(message);
             if (!answer || typeof message.id !== "string" || !message.id ||
@@ -159,6 +169,9 @@ export function createWhatsappWebhookHandlers(
           }
         }
       }
+      // Ops visibility for webhook delivery checks: counts and enums only.
+      console.info(JSON.stringify({ evt: "shield.whatsapp_webhook.post", signature: "ok", messages: messageCount,
+        statuses: statusCount, family_check_answers: answers.length }));
       if (answers.length) {
         try {
           const app = getApp();
