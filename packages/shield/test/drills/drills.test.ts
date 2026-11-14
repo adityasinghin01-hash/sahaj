@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { drillAnswer, pickDrill, scamSense, type DrillDeps } from "../../src/drills";
+import { drillAnswer, pickDrill, scamSense, DRILL_PRAISE_LINE, HELPER_DRILL_STORIES, type DrillDeps } from "../../src/drills";
+import { HELPER_DRILLS, ScamType } from "@sahaj/shared";
 
 import { maskPrivate } from "../../src/drills/privacy";
 import { fixture, stories, now } from "./helpers";
@@ -18,22 +19,52 @@ describe("helper drills", () => {
     expect(await ask(deps, new Date(now.getTime() + 7 * 86400000 - 1))).toBeNull();
     expect(await ask(deps, new Date(now.getTime() + 7 * 86400000))).toMatchObject({ drill_id: "otp" });
   });
-  it("excludes all ten recent stories and returns null when the pool is exhausted", async () => {
+  it("rotates: unseen stories first, then the least recently asked one (never runs dry)", async () => {
     const { deps, rows } = fixture();
     await ask(deps); await ask(deps, new Date(now.getTime() + 7 * 86400000));
-    expect(await ask(deps, new Date(now.getTime() + 14 * 86400000))).toBeNull();
+    expect(await ask(deps, new Date(now.getTime() + 14 * 86400000))).toMatchObject({ drill_id: "power" });
+    expect(await ask(deps, new Date(now.getTime() + 21 * 86400000))).toMatchObject({ drill_id: "otp" });
     for (let i = 0; i < 10; i++) rows.push({ ...rows[0]!, drill_id: `other-${i}`, asked_at: new Date(now.getTime() + (i + 3) * 7 * 86400000).toISOString() });
     expect(await ask(deps, new Date(now.getTime() + 14 * 7 * 86400000))).toMatchObject({ drill_id: "power" });
+  });
+  it("ignores experience drills for the weekly helper limit and returns the Sarvam check-in variables", async () => {
+    const { deps, rows } = fixture();
+    rows.push({ family_id: ctx.familyId, parent_id: ctx.parentId, drill_id: "exp.generic_kyc.x", type: "experience",
+      asked_at: new Date(now.getTime() - 1000).toISOString(), answer_masked: null, score: null, teach_line_played: false });
+    const picked = await ask(deps);
+    expect(picked).toEqual({ drill_id: "power", story_hi: stories[0]!.story_hi,
+      checkin_variables: { drill_id: "power", drill_story: stories[0]!.story_hi } });
+  });
+  it("ships ten shared stories, one per scam type, and uses them by default", () => {
+    expect(HELPER_DRILLS).toHaveLength(10);
+    expect(new Set(HELPER_DRILLS.map(drill => drill.scam_type)).size).toBe(10);
+    expect(HELPER_DRILL_STORIES.map(story => story.id)).toEqual(HELPER_DRILLS.map(drill => drill.id));
+    for (const story of HELPER_DRILL_STORIES) {
+      expect(ScamType.safeParse(story.scam_type).success).toBe(true);
+      expect(story.good_answers.length).toBeGreaterThan(0);
+      expect(story.risky_answers.length).toBeGreaterThan(0);
+      expect(story.story_hi).not.toMatch(/\p{Nd}{4,}/u);
+    }
+  });
+  it("teaches only below full marks; full marks get the praise line and no teaching", async () => {
+    const { deps, rows } = fixture(); await ask(deps);
+    expect(await drillAnswer.run(deps, ctx, { drill_id: "power", said: "Riya ko batana" }))
+      .toEqual({ score: 1, teach_line_hi: stories[0]!.teach_line_hi, teach: true });
+    expect(rows[0]).toMatchObject({ score: 1, teach_line_played: true });
+    const second = fixture(); await ask(second.deps);
+    expect(await drillAnswer.run(second.deps, ctx, { drill_id: "power", said: "phone rakh dena aur Riya ko batana" }))
+      .toEqual({ score: 2, teach_line_hi: DRILL_PRAISE_LINE, teach: false });
+    expect(second.rows[0]).toMatchObject({ score: 2, teach_line_played: false });
   });
   it("validates a low-effort rubric and only passes/stores masked speech", async () => {
     const { deps, rows } = fixture(); await ask(deps);
     vi.mocked(deps.router.understand).mockResolvedValue({ ok: true, data: { score: 2, matched_good: ["Riya ko batana"], matched_risky: [], reason_en: "Safe" }, model: "claude" });
-    expect(await drillAnswer.run(deps, ctx, { drill_id: "power", said: "Riya ko batana OTP १२३४५६ number 98765 43210" })).toEqual({ score: 2, teach_line_hi: stories[0]!.teach_line_hi });
+    expect(await drillAnswer.run(deps, ctx, { drill_id: "power", said: "Riya ko batana OTP १२३४५६ number 90000 00001" })).toEqual({ score: 2, teach_line_hi: DRILL_PRAISE_LINE, teach: false });
     const request = vi.mocked(deps.router.understand).mock.calls[0]![0];
     expect(request.effort).toBe("low");
     expect(request.schema.safeParse({ score: 3, matched_good: [], matched_risky: [], reason_en: "bad" }).success).toBe(false);
-    expect(JSON.stringify(request)).not.toMatch(/123456|१२३४५६|98765|43210/);
-    expect(rows[0]).toMatchObject({ score: 2, teach_line_played: true });
+    expect(JSON.stringify(request)).not.toMatch(/123456|१२३४५६|90000|00001/);
+    expect(rows[0]).toMatchObject({ score: 2, teach_line_played: false });
     expect(rows[0]!.answer_masked).not.toMatch(/\p{Nd}{4,}/u);
   });
   it("uses keyword fallback on router failure, thrown errors or invalid rubrics", async () => {
@@ -95,7 +126,7 @@ describe("helper drills", () => {
     expect(await Promise.all([
       drillAnswer.run(deps, ctx, { drill_id: "power", said: "Riya ko batana" }),
       drillAnswer.run(deps, ctx, { drill_id: "power", said: "paise bhejna" }),
-    ])).toEqual([{ score: 1, teach_line_hi: stories[0]!.teach_line_hi }, { score: 1, teach_line_hi: stories[0]!.teach_line_hi }]);
+    ])).toEqual([{ score: 1, teach_line_hi: stories[0]!.teach_line_hi, teach: true }, { score: 1, teach_line_hi: stories[0]!.teach_line_hi, teach: true }]);
     expect(deps.router.understand).toHaveBeenCalledOnce();
     expect(rows[0]!.answer_masked).toBe("Riya ko batana");
     vi.useFakeTimers(); rows[0]!.score = null;
@@ -118,20 +149,28 @@ describe("helper drills", () => {
       { ...base, score: 1, asked_at: "2027-01-14T00:00:00.000Z" },
       { ...base, score: null, asked_at: "2027-01-21T00:00:00.000Z" },
       { ...base, score: 2, asked_at: "2027-02-01T00:00:00.000Z" });
-    expect(await scamSense(deps, { ...ctx, month: "2027-01" })).toEqual({ score_out_of_5: 1.7, trend: "down", drills_this_month: 3 });
-    expect(await scamSense(deps, { ...ctx, month: "2027-03" })).toEqual({ score_out_of_5: 0, trend: "flat", drills_this_month: 0 });
+    expect(await scamSense(deps, { ...ctx, month: "2027-01" })).toMatchObject({ score_out_of_5: 1.7, trend: "down", drills_this_month: 3,
+      by_type: { helper: { drills: 3, score_out_of_5: 1.7 }, experience: { drills: 0, score_out_of_5: 0 } } });
+    expect(await scamSense(deps, { ...ctx, month: "2027-03" })).toMatchObject({ score_out_of_5: 0, trend: "flat", drills_this_month: 0 });
+  });
+  it("counts experience drill results into scamSense as type experience", async () => {
+    const { deps, rows } = fixture(); await ask(deps);
+    rows[0]!.score = 2;
+    rows.push({ ...rows[0]!, drill_id: "exp.generic_kyc.a", type: "experience", score: 0, asked_at: "2026-11-20T10:00:00.000Z" });
+    expect(await scamSense(deps, { ...ctx, month: "2026-11" })).toEqual({ score_out_of_5: 2.5, trend: "flat", drills_this_month: 2,
+      by_type: { helper: { drills: 1, score_out_of_5: 5 }, experience: { drills: 1, score_out_of_5: 0 } } });
   });
   it("scales the answered monthly average to five; compares unrounded previous month averages", async () => {
     const { deps, rows } = fixture(); await ask(deps);
     rows.push({ ...rows[0]!, asked_at: "2026-10-15T00:00:00Z", score: 1 });
     rows[0]!.score = 2;
-    expect(await scamSense(deps, { ...ctx, month: "2026-11" })).toEqual({ score_out_of_5: 5, trend: "up", drills_this_month: 1 });
+    expect(await scamSense(deps, { ...ctx, month: "2026-11" })).toMatchObject({ score_out_of_5: 5, trend: "up", drills_this_month: 1 });
     rows[0]!.score = 1;
     expect(await scamSense(deps, { ...ctx, month: "2026-11" })).toMatchObject({ score_out_of_5: 2.5, trend: "flat" });
     rows[0]!.score = 0;
     expect(await scamSense(deps, { ...ctx, month: "2026-11" })).toMatchObject({ score_out_of_5: 0, trend: "down" });
     rows[0]!.score = null;
-    expect(await scamSense(deps, { ...ctx, month: "2026-11" })).toEqual({ score_out_of_5: 0, trend: "flat", drills_this_month: 0 });
+    expect(await scamSense(deps, { ...ctx, month: "2026-11" })).toMatchObject({ score_out_of_5: 0, trend: "flat", drills_this_month: 0 });
     await expect(scamSense(deps, { ...ctx, month: "2026-13" })).rejects.toThrow();
     await expect(scamSense(deps, { ...ctx, familyId: "other", month: "2026-11" })).rejects.toThrow();
   });

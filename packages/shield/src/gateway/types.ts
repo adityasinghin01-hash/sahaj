@@ -21,6 +21,17 @@ export interface SmsGatewayDb {
   insertGatewayEvent(row: NewGatewayEventRow): Promise<{ id: string } | { duplicate: true }>;
 }
 
+/** Onboarding writes for keypad parents (Step 3.4). Postgres: createGatewayPg. */
+export interface GatewayRegistryDb {
+  /**
+   * Upsert phone_hash → (family, parent). Returns false (and writes nothing) when the parent is
+   * not a person of that family. The raw number never reaches storage.
+   */
+  registerParent(input: { phoneHash: string; familyId: string; parentId: string }): Promise<boolean>;
+  /** Remove every registered number of this parent in this family. Returns how many were removed. */
+  unregisterParent(input: { familyId: string; parentId: string }): Promise<number>;
+}
+
 export interface SmsGatewayDeps {
   db: SmsGatewayDb;
   /** Runs the brain for a stored event. Called through waitUntil, never awaited by the handler. */

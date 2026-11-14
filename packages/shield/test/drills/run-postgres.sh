@@ -7,13 +7,14 @@ set -euo pipefail
 
 PG_BIN="${PG_BIN:-/opt/homebrew/bin}"
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-MIGRATIONS=(
-  "$HERE/../../../../infra/supabase/migrations/20261114000100_shield.sql"
-  "$HERE/../../../../infra/supabase/migrations/20261114000200_shield_pairing.sql"
-  "$HERE/../../../../infra/supabase/migrations/20261114000400_shield_drills_evidence.sql"
-)
+MIGRATIONS_DIR="$(cd "$HERE/../../../../infra/supabase/migrations" && pwd)"
+# All migrations, in file-name order (C collation, so the timestamp prefixes sort numerically).
+MIGRATIONS=()
+while IFS= read -r m; do MIGRATIONS+=("$m"); done < <(find "$MIGRATIONS_DIR" -maxdepth 1 -name '*.sql' -type f | LC_ALL=C sort)
+[[ ${#MIGRATIONS[@]} -gt 0 ]] || { echo "no migrations in $MIGRATIONS_DIR" >&2; exit 2; }
 PKG="$(cd "$HERE/../.." && pwd)"
 VITEST="$PKG/node_modules/.bin/vitest"
+[[ -x "$VITEST" ]] || VITEST="$(cd "$PKG/../.." && pwd)/node_modules/.bin/vitest"   # hoisted installs
 DB=shield_db_test
 
 for bin in initdb pg_ctl psql; do
@@ -86,7 +87,8 @@ create table public.people (
   family_id uuid not null references public.families(id),
   name      text not null,
   aliases   text[] not null default '{}',
-  role      text
+  role      text,
+  phone     text
 );
 create table public.family_members (
   family_id uuid references public.families(id),

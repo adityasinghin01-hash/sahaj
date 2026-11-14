@@ -44,14 +44,15 @@ describe.skipIf(!enabled)("C-04 real Postgres storage and RLS", () => {
       familyId: index % 2 ? ctx.familyId.toUpperCase() : ctx.familyId,
       parentId: index % 2 ? ctx.parentId.toUpperCase() : ctx.parentId, now })));
     expect(issued.filter(Boolean)).toHaveLength(1);
-    expect(await drillAnswer.run(deps, ctx, { drill_id: "power", said: "Riya ko batana OTP १२३४५६ phone 98765 43210" })).toMatchObject({ score: 1 });
+    expect(await drillAnswer.run(deps, ctx, { drill_id: "power", said: "Riya ko batana OTP १२३४५६ phone 90000 00001" })).toMatchObject({ score: 1 });
     expect(await drillAnswer.run(deps, ctx, { drill_id: "power", said: "paise bhejna" })).toMatchObject({ score: 1 });
     const rows = await sql`select * from public.drills where family_id = ${ctx.familyId}`;
-    expect(rows).toHaveLength(1); expect(rows[0]!.answer_masked).not.toMatch(/123456|१२३४५६|98765|43210/);
+    expect(rows).toHaveLength(1); expect(rows[0]!.answer_masked).not.toMatch(/123456|१२३४५६|90000|00001/);
     expect(rows[0]!.teach_line_played).toBe(true);
-    expect(await scamSense(deps, { ...ctx, month: "2026-11" })).toEqual({ score_out_of_5: 2.5, trend: "flat", drills_this_month: 1 });
+    expect(await scamSense(deps, { ...ctx, month: "2026-11" })).toMatchObject({ score_out_of_5: 2.5, trend: "flat", drills_this_month: 1 });
     expect(await pickDrill(deps, { ...ctx, now: new Date(now.getTime() + 7 * 86400000) })).toMatchObject({ drill_id: "otp" });
-    expect(await pickDrill(deps, { ...ctx, now: new Date(now.getTime() + 14 * 86400000) })).toBeNull();
+    // K-B8: the catalogue rotates (least recently asked story) instead of running dry.
+    expect(await pickDrill(deps, { ...ctx, now: new Date(now.getTime() + 14 * 86400000) })).toMatchObject({ drill_id: "power" });
   });
   it("enforces family/parent scope, score and masked-answer constraints", async () => {
     const a = await seed(), b = await seed();

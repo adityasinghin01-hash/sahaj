@@ -6,4 +6,4 @@ export {
   SMS_GATEWAY_MIN_SECRET_LENGTH,
   SMS_GATEWAY_MAX_BODY_BYTES,
 } from "./sms_gateway";
-export type { NewGatewayEventRow, SmsGatewayDb, SmsGatewayDeps } from "./types";
+export type { GatewayRegistryDb, NewGatewayEventRow, SmsGatewayDb, SmsGatewayDeps } from "./types";

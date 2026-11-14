@@ -25,11 +25,15 @@ export interface DrillStore {
   /** Cross-worker transaction lock. All callback operations use its connection. */
   withParentLock<T>(ctx: DrillContext, work: (store: DrillStore) => Promise<T>): Promise<T>;
   getParent(ctx: DrillContext): Promise<boolean>;
+  /** Latest ten HELPER drills (experience drills have their own weekly limit). */
   recent(ctx: DrillContext): Promise<DrillRecord[]>;
   insert(record: DrillRecord): Promise<void>;
   getAsked(input: DrillContext & { drillId: string }): Promise<DrillRecord | null>;
-  /** Conditional first answer only; caller serializes against issuance and other answers. */
-  saveAnswer(input: DrillContext & { drillId: string; answerMasked: string; score: 0 | 1 | 2 }): Promise<void>;
+  /**
+   * Conditional first answer only; caller serializes against issuance and other answers.
+   * teachLinePlayed: the tool handed off the teaching line (score < 2). Omitted = true (C-04 callers).
+   */
+  saveAnswer(input: DrillContext & { drillId: string; answerMasked: string; score: 0 | 1 | 2; teachLinePlayed?: boolean }): Promise<void>;
   between(input: DrillContext & { since: string; until: string }): Promise<DrillRecord[]>;
 }
 export interface DrillDeps {

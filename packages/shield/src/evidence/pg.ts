@@ -37,6 +37,15 @@ export function createEvidencePg(sql: ISql): EvidenceStore {
           and exists (select 1 from public.family_members m where m.family_id = ${familyId} and m.user_id = ${viewerUserId} and m.role = 'child')
         returning id`;
       if (!rows.length) throw new Error("Evidence child access required");
+      return { id: rows[0]!.id as string };
+    },
+    async getPack({ familyId, packId }) {
+      if (!isUuid(familyId) || !isUuid(packId)) return null;
+      const [row] = await sql`select id, family_id, verdict_id, created_for, contents_hash, chain_hash, created_at
+        from public.evidence_packs where id = ${packId} and family_id = ${familyId}`;
+      if (!row) return null;
+      return { id: row.id, familyId: row.family_id, verdictId: row.verdict_id, createdFor: row.created_for,
+        contentsHash: row.contents_hash, chainHash: row.chain_hash, createdAt: new Date(row.created_at).toISOString() };
     },
   };
 }
