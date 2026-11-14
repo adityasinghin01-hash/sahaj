@@ -1,4 +1,4 @@
-// Two-session regression checks for 20261114201500/20261114210000 phase3 migrations.
+// Two-session regression checks. Migration order: 20261114201500 -> 20261114201600 (Phase 2) -> 20261114210000 -> 20261114213000.
 // SOURCE ONLY: not executed by its author (no PostgreSQL available). Run against a SCRATCH database with all
 // migrations applied, using an administrative connection:
 //   SCRATCH_DATABASE_URL=postgres://... SAHAJ_SCRATCH_OK=1 node packages/atlas/scripts/phase3-two-session.mjs
@@ -22,6 +22,8 @@ async function fixture(admin, { permissionExpiresIn = '1 hour', leaseSeconds = 3
   await admin.query('insert into public.families(id,name) values($1,$2)', [f.fam, 'synthetic two-session']);
   await admin.query("insert into public.people(id,family_id,display_name,role) values($1,$2,'Subject','parent')", [f.subject, f.fam]);
   await admin.query("insert into public.atlas_principals(id,family_id,label) values($1,$2,'synthetic')", [f.principal, f.fam]);
+  // The atomic enqueue requires a contact binding for the routed provider (check_in -> sarvam).
+  await admin.query("insert into public.provider_identities(family_id,person_id,source,account_id,external_id_hash,binding_kind,contact_ciphertext) values($1,$2,'sarvam','app-1',$3,'contact','synthetic-ct')", [f.fam, f.subject, randomUUID().replace(/-/g, '').padEnd(64, '0')]);
   await admin.query("insert into public.consents(id,family_id,person_id,purpose,question,answer,version) values($1,$2,$3,'permission_setup','q',true,'v1')", [f.consent, f.fam, f.subject]);
   await admin.query(`insert into public.permissions(family_id,person_id,principal_id,action,decision,expires_at,consent_id,valid_from,period_start,period_end,max_uses,target_ids)
     values($1,$2,$3,'check_in','allow',now()+interval '${permissionExpiresIn}',$4,now()-interval '1 hour',now()-interval '1 hour',now()+interval '1 day',$5,array[$2::text])`, [f.fam, f.subject, f.principal, f.consent, maxUses]);
@@ -32,7 +34,7 @@ async function fixture(admin, { permissionExpiresIn = '1 hour', leaseSeconds = 3
   f.revision = (await admin.query('select sahaj_private.authorization_revision($1,$2) r', [f.fam, f.request])).rows[0].r;
   return f;
 }
-const enqueue = (c, f, key) => c.query('select public.enqueue_authorized_command($1,$2,$3,$4,$5,$6,$7,$8,$9) r',
+const enqueue = (c, f, key) => c.query('select public.enqueue_authorized_command($1,$2,$3,$4,$5,$6,$7,$8,$9,null,null) r',
   [f.fam, f.job, f.lease, f.request, 'check_in', key, 'ct', 'b'.repeat(64), f.revision]).then(r => ({ ok: r.rows[0].r }), e => ({ err: e.code }));
 async function isBlocked(admin, pidFilter) {
   const r = await admin.query("select count(*)::int n from pg_stat_activity where wait_event_type='Lock' and query like $1 and pid<>pg_backend_pid()", [pidFilter]);
