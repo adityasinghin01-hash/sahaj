@@ -59,6 +59,7 @@ export class CheckpointFence {
   lose(): void {
     if (this.lostFlag) return;
     this.lostFlag = true;
+    this.failWaiters();
     for (const l of this.listeners.splice(0)) { try { l(); } catch { /* listener errors never unfence */ } }
   }
 
@@ -87,13 +88,70 @@ export class CheckpointFence {
     catch (error) { if (verb === 'COMMIT') this.lose(); throw error; }
   }
 
-  /** Pool facade for PostgresSaver: every connect() is this session; release() is a no-op until the fence is released. */
-  pool(): FencePool & { query: CheckpointFence['run'] } {
-    const lease = { query: (t: string | { text: string; values?: unknown[] }, v?: unknown[]) => this.run(t, v), release: () => undefined };
-    return { connect: async () => { this.assertHeld(); return lease; }, query: (t: string | { text: string; values?: unknown[] }, v?: unknown[]) => this.run(t, v),
-      end: async () => undefined } as unknown as FencePool & { query: CheckpointFence['run'] };
+  // ---- exclusive checkout: one PostgresSaver operation owns the pinned session from connect() to release().
+  private owner: symbol | null = null;
+  private readonly waiters: Array<{ grant(): void; fail(e: Error): void }> = [];
+
+  private acquireSession(): Promise<symbol> {
+    if (!this.held) return Promise.reject(new FenceLostError());
+    const token = Symbol('checkout');
+    if (this.owner === null) { this.owner = token; return Promise.resolve(token); }
+    return new Promise<symbol>((resolve, reject) => {
+      const waiter = { grant: () => { this.owner = token; resolve(token); }, fail: reject };
+      this.waiters.push(waiter);
+    });
+  }
+  private releaseSession(token: symbol): void {
+    if (this.owner !== token) return;
+    this.owner = null;
+    const next = this.waiters.shift();
+    if (!next) return;
+    if (!this.held) { next.fail(new FenceLostError()); this.failWaiters(); return; }
+    next.grant();
+  }
+  private failWaiters(): void {
+    for (const w of this.waiters.splice(0)) w.fail(new FenceLostError());
   }
 
+  /**
+   * Pool facade for PostgresSaver. `connect()` waits for exclusive ownership of the pinned session and keeps it until the
+   * returned client's `release()`, so concurrent saver operations (for example `put` and `putWrites` from parallel tasks)
+   * run their BEGIN..COMMIT blocks one after another and can never commit or roll back each other's statements. Standalone
+   * `query()` takes the same queue for one statement. Waiters are rejected when the fence is lost. If an owner releases with
+   * its transaction still open (an error path that skipped ROLLBACK), the facade rolls it back before the next owner starts.
+   */
+  pool(): FencePool & { query: CheckpointFence['run'] } {
+    const connect = async () => {
+      const token = await this.acquireSession();
+      let open = false, done = false;
+      const query = async (t: string | { text: string; values?: unknown[] }, v?: unknown[]) => {
+        if (done) throw new Error('checkout_released');
+        const verb = sqlText(t);
+        try {
+          const r = await this.run(t, v);
+          if (verb === 'BEGIN') open = true; else if (verb === 'COMMIT' || verb === 'ROLLBACK') open = false;
+          return r;
+        } catch (error) {
+          if (verb === 'COMMIT' || verb === 'ROLLBACK') open = false; // the fence already rolled back
+          throw error;
+        }
+      };
+      const release = () => {
+        if (done) return;
+        done = true;
+        if (!open) { this.releaseSession(token); return; }
+        open = false;
+        // Close the abandoned transaction on this session before anyone else may use it.
+        this.client.query('ROLLBACK').catch(() => this.lose()).finally(() => this.releaseSession(token));
+      };
+      return { query, release };
+    };
+    const query = async (t: string | { text: string; values?: unknown[] }, v?: unknown[]) => {
+      const c = await connect();
+      try { return await c.query(t, v); } finally { c.release(); }
+    };
+    return { connect, query, end: async () => undefined } as unknown as FencePool & { query: CheckpointFence['run'] };
+  }
   async release(): Promise<void> {
     if (this.released) return;
     const wasLost = this.lostFlag;
