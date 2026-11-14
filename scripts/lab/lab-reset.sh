@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Drops and recreates sahaj_lab, re-applying core_stub, all sorted migrations, and dev seeds.
+# Drops and recreates sahaj_lab, re-applying platform bootstrap, real foundation and Shield migrations, and dev seeds.
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"

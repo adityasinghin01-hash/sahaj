@@ -1,5 +1,6 @@
 import type { Sql } from "postgres";
 import { z } from "zod";
+import { createContactsPort } from "@/ports/contacts";
 import { numberFingerprint } from "@sahaj/shield";
 
 export const GatewayParentBodySchema = z.object({
@@ -16,6 +17,7 @@ export type GatewayParentResult =
   | { ok: false; status: 404; error: "parent_not_found" };
 
 export interface GatewayAdminStore {
+  matchesContact?: (input: GatewayParentInput) => Promise<boolean>;
   hasParentInFamily: (familyId: string, parentId: string) => Promise<boolean>;
   upsertGatewayParent: (input: {
     phoneHash: string;
@@ -24,8 +26,13 @@ export interface GatewayAdminStore {
   }) => Promise<void>;
 }
 
-export function createPgGatewayAdminStore(auxSql: Sql): GatewayAdminStore {
+export function createPgGatewayAdminStore(auxSql: Sql, env: Readonly<Record<string, string | undefined>> = process.env): GatewayAdminStore {
+  const contacts = createContactsPort(auxSql, env);
   return {
+    async matchesContact(input) {
+      const phone = await contacts.resolve({ familyId: input.family_id, personId: input.parent_id, source: "sarvam" });
+      return Boolean(phone && await numberFingerprint(phone) === await numberFingerprint(input.phone));
+    },
     async hasParentInFamily(familyId, parentId) {
       const rows = await auxSql<{ ok: number }[]>`
         select 1 as ok
@@ -64,6 +71,10 @@ export async function registerGatewayParentWithAdapter(opts: {
   const exists = await store.hasParentInFamily(input.family_id, input.parent_id);
   if (!exists) {
     return { ok: false, status: 404, error: "parent_not_found" };
+  }
+
+  if (store.matchesContact && !await store.matchesContact(input)) {
+    return { ok: false, status: 400, error: "invalid_phone" };
   }
 
   // Prefer Kiro B's runtime.registerGatewayParent when present; fallback to direct auxSql adapter until merged.

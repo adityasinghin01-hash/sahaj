@@ -43,14 +43,15 @@ describe.skipIf(!DATABASE_URL)("createShieldPg against Postgres", () => {
   /** A fresh family with one parent and the given extra people. Each test gets its own family. */
   async function seedFamily(opts: { codeWordHash?: string | null; people?: { name: string; aliases?: string[]; role?: string }[] } = {}) {
     const [fam] = await sql<{ id: string }[]>`
-      insert into public.families (code_word_hash) values (${opts.codeWordHash ?? null}) returning id`;
+      insert into public.families (name) values ('Synthetic family') returning id`;
     const familyId = fam!.id;
+    await sql`insert into public.shield_family_security(family_id,code_word_hash) values (${familyId},${opts.codeWordHash ?? null})`;
     const [parent] = await sql<{ id: string }[]>`
-      insert into public.people (family_id, name, role) values (${familyId}, 'Maa', 'parent') returning id`;
+      insert into public.people (family_id, display_name, role) values (${familyId}, 'Maa', 'parent') returning id`;
     const people: Record<string, string> = {};
     for (const p of opts.people ?? []) {
       const [row] = await sql<{ id: string }[]>`
-        insert into public.people (family_id, name, aliases, role)
+        insert into public.people (family_id, display_name, aliases, role)
         values (${familyId}, ${p.name}, ${p.aliases ?? []}::text[], ${p.role ?? "child"})
         returning id`;
       people[p.name] = row!.id;

@@ -7,15 +7,19 @@ set client_min_messages = notice;
 
 begin;
 
-insert into public.families (id) values
-  ('a0000000-0000-0000-0000-00000000b501'),
-  ('b0000000-0000-0000-0000-00000000b501');
-insert into public.people (id, family_id, name) values
-  ('a0000000-0000-0000-0000-00000000b5f1', 'a0000000-0000-0000-0000-00000000b501', 'Maa'),
-  ('b0000000-0000-0000-0000-00000000b5f1', 'b0000000-0000-0000-0000-00000000b501', 'Maa');
-insert into public.family_members (family_id, user_id, role) values
-  ('a0000000-0000-0000-0000-00000000b501', 'a0000000-0000-0000-0000-00000000b5c1', 'child'),
-  ('b0000000-0000-0000-0000-00000000b501', 'b0000000-0000-0000-0000-00000000b5c1', 'child');
+insert into public.families (id,name) values
+  ('a0000000-0000-0000-0000-00000000b501','Synthetic family'),
+  ('b0000000-0000-0000-0000-00000000b501','Synthetic family');
+insert into public.people (id, family_id, display_name,role) values
+  ('a0000000-0000-0000-0000-00000000b5f1', 'a0000000-0000-0000-0000-00000000b501', 'Maa','parent'),
+  ('b0000000-0000-0000-0000-00000000b5f1', 'b0000000-0000-0000-0000-00000000b501', 'Maa','parent');
+insert into auth.users(id) values ('a0000000-0000-0000-0000-00000000b5c1');
+insert into public.people(id,family_id,display_name,role) values ('a0000000-0000-0000-0000-00000000b5e1','a0000000-0000-0000-0000-00000000b501','Riya','child');
+insert into public.family_memberships(family_id,user_id,person_id,role) values ('a0000000-0000-0000-0000-00000000b501','a0000000-0000-0000-0000-00000000b5c1','a0000000-0000-0000-0000-00000000b5e1','child');
+insert into auth.users(id) values ('b0000000-0000-0000-0000-00000000b5c1');
+insert into public.people(id,family_id,display_name,role) values ('b0000000-0000-0000-0000-00000000b5e1','b0000000-0000-0000-0000-00000000b501','Riya','child');
+insert into public.family_memberships(family_id,user_id,person_id,role) values ('b0000000-0000-0000-0000-00000000b501','b0000000-0000-0000-0000-00000000b5c1','b0000000-0000-0000-0000-00000000b5e1','child');
+
 insert into public.busy_streaks (family_id, parent_id, started_at, last_busy_at) values
   ('a0000000-0000-0000-0000-00000000b501', 'a0000000-0000-0000-0000-00000000b5f1', now(), now()),
   ('b0000000-0000-0000-0000-00000000b501', 'b0000000-0000-0000-0000-00000000b5f1', now(), now());

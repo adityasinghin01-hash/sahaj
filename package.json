@@ -1,10 +1,16 @@
 {
   "name": "sahaj",
+  "version": "0.1.0",
   "private": true,
   "packageManager": "pnpm@12.18.0",
   "scripts": {
-    "typecheck": "pnpm -r --if-present typecheck",
+    "dev": "pnpm --filter @sahaj/api dev",
+    "build": "pnpm --filter @sahaj/api build",
     "test": "pnpm -r --if-present test",
+    "typecheck": "pnpm -r --if-present typecheck",
     "harness:shield": "npx tsx harness/shield/run.ts"
+  },
+  "devDependencies": {
+    "tsx": "4.20.6"
   }
 }

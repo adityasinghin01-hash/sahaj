@@ -51,9 +51,9 @@ describe.skipIf(!DATABASE_URL)("createWarningsPg against Postgres", () => {
   }
 
   async function seedFamily() {
-    const [fam] = await sql<{ id: string }[]>`insert into public.families default values returning id`;
+    const [fam] = await sql<{ id: string }[]>`insert into public.families(name) values ('Synthetic family') returning id`;
     const [maa] = await sql<{ id: string }[]>`
-      insert into public.people (family_id, name, role) values (${fam!.id}, 'Maa', 'parent') returning id`;
+      insert into public.people (family_id, display_name, role) values (${fam!.id}, 'Maa', 'parent') returning id`;
     return { familyId: fam!.id, parentId: maa!.id };
   }
 

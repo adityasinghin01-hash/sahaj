@@ -3,10 +3,8 @@
  * Apply Sahaj Shield SQL files to DATABASE_URL in deterministic order.
  *
  * Order matches scripts/lab/_common.sh:
- *   1. infra/supabase/dev/core_stub.sql — ONLY if public.families does not exist yet
- *      and dev/core_stub.sql has not already been tracked.
- *   2. infra/supabase/migrations/*.sql — sorted lexicographically by filename (C/ASCII order).
- *   3. infra/supabase/dev/seed_demo.sql — ONLY when `--seed` is passed.
+ *   1. infra/supabase/migrations/*.sql — sorted lexicographically by filename (C/ASCII order).
+ *   2. infra/supabase/dev/seed_demo.sql — ONLY when `--seed` is passed.
  *
  * Usage:
  *   DATABASE_URL=postgres://... node apps/shield-api/scripts/migrate.mjs [--seed] [--root <dir>]
@@ -122,7 +120,6 @@ async function main() {
   }
 
   const supabaseDir = join(root, "infra", "supabase");
-  const coreStubPath = join(supabaseDir, "dev", "core_stub.sql");
   const migrationsDir = join(supabaseDir, "migrations");
   const seedPath = join(supabaseDir, "dev", "seed_demo.sql");
 
@@ -144,36 +141,6 @@ async function main() {
 
   try {
     await ensureMigrationsTable(sql);
-
-    if (existsSync(coreStubPath)) {
-      const stubKey = "dev/core_stub.sql";
-      const trackedStub = await sql`
-        select sha256
-        from public.schema_migrations
-        where file = ${stubKey}
-        limit 1
-      `;
-
-      if (trackedStub.length > 0) {
-        const wasApplied = await applyTrackedFile(sql, stubKey, coreStubPath);
-        if (wasApplied) applied += 1;
-        else skipped += 1;
-      } else {
-        const [{ reg }] = await sql`
-          select to_regclass('public.families')::text as reg
-        `;
-        if (reg === null) {
-          const wasApplied = await applyTrackedFile(sql, stubKey, coreStubPath);
-          if (wasApplied) applied += 1;
-          else skipped += 1;
-        } else {
-          process.stdout.write(
-            `skip ${stubKey} (public.families already exists)\n`,
-          );
-          skipped += 1;
-        }
-      }
-    }
 
     const migrationFiles = readdirSync(migrationsDir)
       .filter((name) => name.endsWith(".sql"))

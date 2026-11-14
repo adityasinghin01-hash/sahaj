@@ -4,6 +4,9 @@
 # Requires local Postgres binaries (/opt/homebrew/bin or PG_BIN) and pnpm install.
 # Never uses a user/production database; creates an ephemeral /tmp/shield-p2-pg.* cluster and deletes it on exit.
 set -euo pipefail
+# Public synthetic contact fixture configuration; no real-provider dispatch.
+export WEBHOOK_ENCRYPTION_KEY='1919191919191919191919191919191919191919191919191919191919191919' IDENTITY_HASH_SECRET='sahaj-synthetic-contact-hash-secret-only'
+export WHATSAPP_PHONE_NUMBER_ID='synthetic-wa-account' SARVAM_APP_ID='synthetic-sarvam-app'
 
 PG_BIN="${PG_BIN:-/opt/homebrew/bin}"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -72,11 +75,11 @@ PSQL=("$PG_BIN/psql" -X -q -v ON_ERROR_STOP=1 -h 127.0.0.1 -p "$PG_PORT" -U post
 DB=shield_phase2_e2e
 "${PSQL[@]}" -d postgres -c "create database $DB"
 
-echo "== applying core_stub, *shield*.sql migrations, and seed_demo"
-"${PSQL[@]}" -d "$DB" -f "$REPO_ROOT/infra/supabase/dev/core_stub.sql"
-for m in "$REPO_ROOT"/infra/supabase/migrations/*shield*.sql; do
+echo "== applying platform bootstrap, foundation and Shield migrations, and seed_demo"
+"${PSQL[@]}" -d "$DB" -f "$REPO_ROOT/infra/supabase/test/bootstrap.sql"
+for m in "$REPO_ROOT"/infra/supabase/migrations/*.sql; do
   echo "   applying $(basename "$m")"
-  "${PSQL[@]}" -d "$DB" -f "$m"
+  "${PSQL[@]}" -d "$DB" --single-transaction -f "$m"
 done
 "${PSQL[@]}" -d "$DB" -f "$REPO_ROOT/infra/supabase/dev/seed_demo.sql"
 
@@ -95,21 +98,19 @@ VERDICT_F1_SAFE="55555555-5555-4555-8555-555555555553"
 VERDICT_F1_RACE="55555555-5555-4555-8555-555555555554"
 
 "${PSQL[@]}" -d "$DB" <<SQL
-insert into public.families (id, name, code_word_hash)
+insert into public.families (id, name)
 values (
   '$FAMILY_2',
-  'Kavita Verma Family',
-  '33b2dc44201d3b1c10ef3a8f1cd0a3c5c7f0d339ee96d88aecdf2583a116b34a'
+  'Kavita Verma Family'
 );
 
-insert into public.people (id, family_id, name, aliases, role, phone)
+insert into public.people (id, family_id, display_name, aliases, role)
 values (
   '$PARENT_2',
   '$FAMILY_2',
   'Kavita',
   array['Kavita', 'Maa'],
-  'parent',
-  '+91XXXXXXXXXX'
+  'parent'
 );
 
 insert into public.shield_events (
@@ -146,7 +147,8 @@ if [[ ! -f "$APP_DIR/.next/BUILD_ID" ]]; then
   pnpm --dir "$REPO_ROOT" -F @sahaj/shield-api build >/dev/null
 fi
 
-export OPENPHISH_FEED=0 RDAP_LOOKUP=0
+export OPENPHISH_FEED=0 RDAP_LOOKUP=0 SARVAM_OUTBOUND_ENABLED=0 EXPO_PUSH_ENABLED=0
+unset ANTHROPIC_API_KEY MUSE_API_KEY GEMINI_API_KEY SAFE_BROWSING_KEY WHATSAPP_TOKEN SARVAM_API_KEY EXPO_ACCESS_TOKEN
 export DATABASE_URL="postgres://service_role@127.0.0.1:$PG_PORT/$DB"
 export SHIELD_DEVICE_PAIRING_SECRET="e2e-pairing-secret-at-least-32-chars"
 export DEV_ADMIN_TOKEN="e2e-dev-admin-token"

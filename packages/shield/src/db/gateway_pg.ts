@@ -1,5 +1,5 @@
 /**
- * Postgres implementation of SmsGatewayDb (card K-B6). Needs migration 20261114000500_shield_gateway.sql.
+ * Postgres implementation of SmsGatewayDb (card K-B6). Needs migration 20261114160500_shield_gateway.sql.
  * Service-role connection; every value is a bound parameter.
  */
 import type { ISql } from "postgres";

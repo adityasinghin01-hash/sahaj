@@ -1,5 +1,6 @@
 import type { Sql } from "postgres";
 import { buildShieldAlert, safeText, type ShieldRuntimePorts } from "@sahaj/shield";
+import { createContactsPort } from "./contacts";
 import { writeOutbox } from "./outbox";
 
 const DEFAULT_GRAPH_VERSION = "v27.0";
@@ -51,6 +52,7 @@ export function createWhatsappPort(
   env: Readonly<Record<string, string | undefined>>,
   fetchFn: typeof fetch = fetch,
 ): ShieldRuntimePorts["whatsapp"] {
+  const contacts = createContactsPort(sql, env);
   const token = env.WHATSAPP_TOKEN?.trim();
   const phoneNumberId = env.WHATSAPP_PHONE_NUMBER_ID?.trim();
   const graphVersion = env.WHATSAPP_GRAPH_VERSION?.trim() || DEFAULT_GRAPH_VERSION;
@@ -59,26 +61,24 @@ export function createWhatsappPort(
   async function lookupParentName(familyId: string, parentId: string): Promise<string> {
     if (!UUID_RE.test(familyId) || !UUID_RE.test(parentId)) return "Maa";
     const [row] = await sql<{ name: string }[]>`
-      select name from public.people where id = ${parentId} and family_id = ${familyId} limit 1`;
+      select display_name as name from public.people where id = ${parentId} and family_id = ${familyId} limit 1`;
     return row?.name || "Maa";
   }
 
   async function lookupChildPhone(familyId: string): Promise<{ personId: string; name: string; phone: string | null } | null> {
     if (!UUID_RE.test(familyId)) return null;
-    const [row] = await sql<{ id: string; name: string; phone: string | null }[]>`
-      select id, name, phone
-      from public.people
-      where family_id = ${familyId} and role = 'child'
-      order by (phone is not null and phone not like '%X%') desc, created_at asc, id asc
-      limit 1`;
-    return row ? { personId: row.id, name: row.name, phone: row.phone } : null;
+    const rows = await sql<{ id: string; name: string }[]>`
+      select id, display_name as name from public.people
+      where family_id=${familyId} and role='child' order by created_at, id`;
+    for (const row of rows) {
+      const phone = await contacts.resolve({ familyId, personId: row.id, source: "whatsapp" });
+      if (phone) return { personId: row.id, name: row.name, phone };
+    }
+    return null;
   }
 
   async function lookupPersonPhone(familyId: string, personId: string): Promise<string | null> {
-    if (!UUID_RE.test(familyId) || !UUID_RE.test(personId)) return null;
-    const [row] = await sql<{ phone: string | null }[]>`
-      select phone from public.people where id = ${personId} and family_id = ${familyId} limit 1`;
-    return row?.phone ?? null;
+    return contacts.resolve({ familyId, personId, source: "whatsapp" });
   }
 
   return {

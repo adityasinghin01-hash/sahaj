@@ -1,0 +1,10 @@
+# Kiro B: private consent-controlled media access
+
+Work ONLY D:/Projects/SAHAJ/.worktrees/kiro-b on feature/core1-media.
+Exclusive ownership: apps/api/src/app/api/media/**, apps/api/src/lib/media/**, apps/api/tests/media/**. No other files. No manifests/lock/shared/SQL/mobile/Shield edits. No .env access, credentials, real recordings, provider calls, cloud writes, git pushes or merges.
+
+Read serviceDatabase, Cedar contracts and SQL consent/voice_posts/private voice_content/storage schema. Implement authenticated voice media access with dependency-injected auth/repository/storage ports and explicit contracts. Supabase getUser verifies bearer; live family membership and sender/recipient binding authorize access. Consent must be purpose-specific affirmative and current, using append-only history (later refusal revokes earlier yes). A child cannot access parent-private material merely due family membership. Circle users receive no recordings absent explicit recipient-specific authorization. Fail closed if required consent/recipient linkage cannot be proven from current schema; report any migration need, do not fabricate fields.
+
+Provide safe object-path construction/validation, fixed private bucket allowlist (sahaj-voice/sahaj-recordings/sahaj-lines), tenant isolation, bounded permitted audio MIME/size and short signed download URLs (max60seconds). No client-selected remote URLs, arbitrary buckets/paths, or public objects. Read-only signing may use storage client; upload-intent routes may be implemented only with consent and authenticated target. Provider audio retrieval belongs elsewhere.
+
+Tests synthetic/no-network: unauthenticated/revoked users, wrong-family recipient/object, traversal and encoded traversal, private consent refusal, later revocation, expired grant, wrong bucket/MIME/size and signedURL expiry limits. No URLs/tokens/audio contents in logs. Existing dependencies only. Commit only owned files after checks; report SHA, commands/results, unimplemented route paths and precise schema/integration requirements. Do not claim full voice relay or live phone tests.

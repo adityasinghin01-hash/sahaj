@@ -23,13 +23,13 @@ function eventFromRow(row: Record<string, unknown>): ShieldEvent {
 }
 
 /** Uses only existing migrations; no runtime DDL or assumptions about core line columns. */
-export function createShieldRuntimePg(sql: Sql): ShieldRuntimeDb {
+export function createShieldRuntimePg(sql: Sql, contacts?: Pick<NonNullable<ShieldRuntimeDb["callgate"]>, "isFamilyNumber">): ShieldRuntimeDb {
   const build = (query: ISql): ShieldRuntimeDb => {
     const pg = createShieldPg(query);
     const db: ShieldRuntimeDb = {
       drills: createDrillPg(sql),
       experience: createExperiencePg(sql),
-      callgate: createCallGatePg(query),
+      callgate: createCallGatePg(query, contacts),
       evidence: createEvidencePg(query),
       server: pg.server,
       gateway: createGatewayPg(query),

@@ -35,14 +35,14 @@ All routes run on the Node.js runtime (`export const runtime = "nodejs"`).
 1. Apply Shield migrations + dev stub + demo seed to a fresh dev Postgres:
 
    ```bash
-   psql "$DATABASE_URL" -f infra/supabase/dev/core_stub.sql
-   psql "$DATABASE_URL" -f infra/supabase/migrations/20261114000100_shield.sql
-   psql "$DATABASE_URL" -f infra/supabase/migrations/20261114000200_shield_pairing.sql
-   psql "$DATABASE_URL" -f infra/supabase/migrations/20261114000300_shield_busy_warnings.sql
-   psql "$DATABASE_URL" -f infra/supabase/migrations/20261114000400_shield_drills_evidence.sql
-   psql "$DATABASE_URL" -f infra/supabase/migrations/20261114000500_shield_gateway.sql
-   psql "$DATABASE_URL" -f infra/supabase/migrations/20261114000600_shield_dev.sql
-   psql "$DATABASE_URL" -f infra/supabase/migrations/20261114000900_shield_heartbeat.sql
+   psql "$DATABASE_URL" -f infra/supabase/test/bootstrap.sql # disposable local DB only; never hosted
+   psql "$DATABASE_URL" -f infra/supabase/migrations/20261114160100_shield.sql
+   psql "$DATABASE_URL" -f infra/supabase/migrations/20261114160200_shield_pairing.sql
+   psql "$DATABASE_URL" -f infra/supabase/migrations/20261114160300_shield_busy_warnings.sql
+   psql "$DATABASE_URL" -f infra/supabase/migrations/20261114160400_shield_drills_evidence.sql
+   psql "$DATABASE_URL" -f infra/supabase/migrations/20261114160500_shield_gateway.sql
+   psql "$DATABASE_URL" -f infra/supabase/migrations/20261114160600_shield_dev.sql
+   psql "$DATABASE_URL" -f infra/supabase/migrations/20261114160900_shield_heartbeat.sql
    psql "$DATABASE_URL" -f infra/supabase/dev/seed_demo.sql
    ```
 
@@ -309,7 +309,7 @@ curl -sS -X POST "$BASE/api/shield/heartbeat" \
 
 ## Phase 3 Throwaway-Postgres HTTP Runner
 
-Applies `core_stub.sql`, all `infra/supabase/migrations/*.sql` sorted by name, and `infra/supabase/dev/*.sql` onto an ephemeral `/tmp/shield-p3-pg.*` cluster:
+Applies the disposable platform bootstrap, all `infra/supabase/migrations/*.sql` sorted by name, and `infra/supabase/dev/*.sql` onto an ephemeral `/tmp/shield-p3-pg.*` cluster:
 
 ```bash
 pnpm -F @sahaj/shield-api test:e2e-phase3
@@ -351,7 +351,7 @@ including statuses-only and unrecognized payloads, receive 200 promptly.
 Text, button and interactive replies accept `CONFIRMED/haan/ha/yes/1` or
 `DENIED/nahi/na/no/2`, ignoring case and surrounding whitespace. The sender's
 last-ten-digit `numberFingerprint` must resolve to exactly one person with an
-unmasked E.164 `people.phone`. Only their newest `asked` check created within
+foundation account-bound HMAC index from the verified sender. Only their newest `asked` check created within
 30 minutes is answered. Ambiguous people/phone matches and other text are ignored.
 The existing `family_check_result` tool then reads `confirmed`/`denied` as usual.
 No runtime answer writer is exposed, so the inbound adapter uses the same columns

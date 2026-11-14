@@ -56,7 +56,7 @@ export function createPhase2Ports(opts: {
     },
     async parentName(familyId, parentId) {
       const rows = await opts.auxSql<{ name: string }[]>`
-        select name
+        select display_name as name
         from public.people
         where id = ${parentId} and family_id = ${familyId}
         limit 1`;

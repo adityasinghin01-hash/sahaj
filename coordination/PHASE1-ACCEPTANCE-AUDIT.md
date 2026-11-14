@@ -1,0 +1,27 @@
+# Phase 1 acceptance audit
+
+Audited root `465fe55` on 2026-11-14, against `coordination/PHASE1-ANTIGRAVITY.md`. Scope: build, API liveness/readiness, schema, isolation, private storage, synthetic seed and reproducible setup. No environment files were read, live checks run, cloud state changed or application files edited in this audit.
+
+## Existing evidence
+
+- Reviewed configuration: `pnpm-workspace.yaml` approves exactly `esbuild@0.28.2`; no global build-script bypass. `package.json` pins pnpm 12.4.0. `.gitignore` excludes environment files, key files and worker worktrees.
+- Reviewed migrations: all application/private tables enable RLS; client grants are restricted; care buckets are private with a restrictive client-denial policy. Metadata RPCs revoke PUBLIC/anon/authenticated execution and grant service-role execution. Checkpoint migration separates schema ownership and revokes browser roles.
+- Reviewed seed: `infra/supabase/seed.sql` contains a synthetic family and three people; no phones, credentials, invented consent or accepted responders.
+- Existing rollback-only suites: `core1_security.sql`, `signed_timeline.sql`, `checkpoint_media_metadata.sql`. These are meaningful baseline coverage, not proof that the currently deployed database has passed a new closure suite.
+- Root `PROGRESS.md` records 311 passing tests across verified packages, package typechecks and production build; it also records a real PostgresSaver interrupt/resume across two Node processes. These are inherited evidence, not independently rerun by this read-only audit. Postgres durability is already demonstrated and should not be labelled unimplemented.
+
+## Required before Phase 1 reaches 100%
+
+- [ ] **Implement real bounded readiness.** `apps/api/src/app/api/health/route.ts` currently always returns 200 with `database: not-yet-connected`; it never probes dependencies. Antigravity owns the replacement. Preserve liveness 200 independently; readiness must return 503 for missing configuration, unavailable database, missing required schema or timeout. No secrets, tenant identifiers or database error strings in responses; `emergency_ready` remains false.
+- [ ] **Test the readiness failure/recovery contract.** Add injected-port tests under `apps/api/tests/health/` for missing configuration, reachable-but-missing-schema, unreachable database, bounded timeout, recovery, safe responses and disabled care actions. No health test suite exists at this audited commit. Parent verifies real local and deployed readiness separately.
+- [ ] **Close database acceptance coverage.** Antigravity supplies rollback-only `infra/supabase/tests/phase1_*.sql`; parent executes it against the connected project. Assert application-table RLS, synthetic cross-family/revoked/anonymous boundaries, no direct private schema or care object access, all relevant service-only RPC execution grants, and checkpoint role isolation/no database-wide CREATE. Existing checkpoint suite checks only anon voice-RPC and authenticated call-RPC denial; test both browser roles against both RPCs. Seed idempotency and expected synthetic rows should be verified without deleting hosted data.
+- [ ] **Reproduce the final integrated build.** On the final integration commit run frozen-lockfile install, root typecheck, root tests and production build; save exact commands, counts and SHA. A successful earlier checkpoint is baseline evidence, not final closure evidence.
+- [ ] **Save a current deployment/database acceptance record.** Parent records exact deployed commit/deployment, local liveness/readiness, protected deployed liveness/readiness and rollback SQL results. `PROGRESS.md` currently identifies deployed `a48c7c5`, older than audited root `465fe55`; deployment parity is not established. No provider calls are needed to close foundation readiness.
+- [ ] **Publish accurate setup instructions.** Antigravity documents the actual ordered four migrations, explicit synthetic seed, separate administrative/runtime checkpoint setup, TLS configuration, current endpoint semantics and exact build approval in `docs/phase1/`. Root `README.md` still references a nonexistent `20261114_0001_foundation.sql` and obsolete stub routes. `infra/supabase/README.md` begins with only two migrations and says stored hashes always cover original request bytes, while current protected envelopes are hashed. Parent must update or clearly supersede these stale statements; workers must not edit outside ownership.
+- [ ] **Record repository visibility.** Parent verifies GitHub visibility before further sensitive work; the handoff last reported public visibility. This audit has no current remote visibility evidence. Never place secrets or personal data in Git regardless of visibility.
+
+## Excluded from the Phase 1 denominator
+
+Provider credentials and real-phone acceptance; complete webhook dispatch/retry consumers; media Cedar wiring; full Atlas workflow repositories/outbox consumers; integrated check-ins, urgent help, voice, medicine and reports; Core 2. These belong to Phases 2–5. Keep external care actions disabled and avoid claiming emergency readiness, but do not require those features to mark the foundation complete.
+
+Conclusion: retain Phase 1 at the recorded **90% estimate** until the implementation and independent local/deployed/database closure evidence above exist. This audit found an actual static-health implementation gap and documentation defects; it did not establish a new database isolation vulnerability.

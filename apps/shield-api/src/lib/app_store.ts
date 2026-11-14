@@ -78,8 +78,8 @@ export function createAppStore(sql: Sql): AppStore {
     async memberships(userId) {
       return sql<
         AppMember[]
-      >`select m.family_id, m.user_id, m.person_id, m.role from public.family_members m
-        join public.families f on f.id=m.family_id where m.user_id=${userId}`;
+      >`select m.family_id, m.user_id, m.person_id, m.role from public.family_memberships m
+        join public.families f on f.id=m.family_id where m.user_id=${userId} and m.revoked_at is null`;
     },
     async devices(familyId) {
       return sql<
@@ -88,7 +88,7 @@ export function createAppStore(sql: Sql): AppStore {
         last_heartbeat_at::text from public.shield_devices where family_id=${familyId} order by paired_at desc`;
     },
     async parents(familyId) {
-      return sql`select id, name from public.people where family_id=${familyId} and role='parent' order by id`;
+      return sql`select id, display_name as name from public.people where family_id=${familyId} and role='parent' order by id`;
     },
     async counts(familyId) {
       const [row] = await sql`select

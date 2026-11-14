@@ -1,5 +1,6 @@
+import { seedMembership } from "../foundation";
 /**
- * K-B8 Part D against real Postgres: migration 20261114000800 (consents, child switch, check-in lines),
+ * K-B8 Part D against real Postgres: migration 20261114160800 (consents, child switch, check-in lines),
  * createExperiencePg, RLS and the joined runtime. Run with infra/supabase/test/run-shield-db-test.sh.
  */
 import postgres, { type Sql } from "postgres";
@@ -19,7 +20,7 @@ describe.skipIf(!DATABASE_URL)("experience drills against Postgres", () => {
   beforeAll(async () => {
     sql = postgres(DATABASE_URL!, { max: 6, prepare: false, max_pipeline: 1, onnotice: () => undefined });
     const [row] = await sql`select to_regclass('public.shield_drill_consents')::text as t`;
-    if (!row?.t) throw new Error("Apply migration 20261114000800 before these tests");
+    if (!row?.t) throw new Error("Apply migration 20261114160800 before these tests");
   });
   afterAll(async () => {
     if (!sql) return;
@@ -28,7 +29,7 @@ describe.skipIf(!DATABASE_URL)("experience drills against Postgres", () => {
       await sql`delete from public.shield_experience_settings where family_id = ${family}`;
       await sql`delete from public.shield_drill_consents where family_id = ${family}`;
       await sql`delete from public.drills where family_id = ${family}`;
-      await sql`delete from public.family_members where family_id = ${family}`;
+      await sql`delete from public.family_memberships where family_id = ${family}`;
       await sql`delete from public.people where family_id = ${family}`;
       await sql`delete from public.families where id = ${family}`;
     }
@@ -37,9 +38,10 @@ describe.skipIf(!DATABASE_URL)("experience drills against Postgres", () => {
   async function seed() {
     const familyId = crypto.randomUUID(), parentId = crypto.randomUUID(), childUser = crypto.randomUUID(), parentUser = crypto.randomUUID();
     families.push(familyId);
-    await sql`insert into public.families (id) values (${familyId})`;
-    await sql`insert into public.people (id, family_id, name, role) values (${parentId}, ${familyId}, 'Maa', 'parent')`;
-    await sql`insert into public.family_members (family_id, user_id, role) values (${familyId}, ${childUser}, 'child'), (${familyId}, ${parentUser}, 'parent')`;
+    await sql`insert into public.families (id,name) values (${familyId}, 'Synthetic family')`;
+    await sql`insert into public.people (id, family_id, display_name, role) values (${parentId}, ${familyId}, 'Maa', 'parent')`;
+    await seedMembership(sql, familyId, childUser, "child");
+    await seedMembership(sql, familyId, parentUser, "parent");
     return { ctx: { familyId, parentId }, childUser, parentUser };
   }
   async function asUser<T>(userId: string, work: (tx: postgres.TransactionSql) => Promise<T>): Promise<T> {

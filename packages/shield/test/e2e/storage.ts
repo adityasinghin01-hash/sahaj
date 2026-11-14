@@ -13,8 +13,8 @@ export async function storage() {
   const ctx = { familyId, parentId };
   if (process.env.DATABASE_URL) {
     const sql = postgres(process.env.DATABASE_URL, { max: 5, prepare: false, max_pipeline: 1, onnotice: () => undefined });
-    await sql`insert into public.families (id) values (${familyId})`;
-    await sql`insert into public.people (id, family_id, name, role)
+    await sql`insert into public.families (id,name) values (${familyId}, 'Synthetic family')`;
+    await sql`insert into public.people (id, family_id, display_name, role)
       values (${parentId}, ${familyId}, 'Maa', 'parent'), (${personId}, ${familyId}, 'Aman', 'child')`;
     const db = createShieldRuntimePg(sql);
     return { ctx, userId, db, sql,
@@ -24,7 +24,7 @@ export async function storage() {
       async feedback(verdictId: string) {
         await sql`update public.shield_verdicts set feedback_at = now() where id = ${verdictId} and family_id = ${familyId}`;
       },
-      async setCodeWord(hash: string) { await sql`update public.families set code_word_hash = ${hash} where id = ${familyId}`; },
+      async setCodeWord(hash: string) { await sql`insert into public.shield_family_security(family_id,code_word_hash) values (${familyId},${hash}) on conflict(family_id) do update set code_word_hash=excluded.code_word_hash`; },
       async verdicts() {
         const rows = await sql<{ id: string }[]>`select id from public.shield_verdicts where family_id = ${familyId} order by created_at, id`;
         return Promise.all(rows.map(async row => (await db.brain.getVerdict(row.id))!));

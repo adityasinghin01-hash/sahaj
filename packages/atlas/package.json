@@ -1,0 +1,7 @@
+{
+  "name": "@sahaj/atlas", "version": "0.1.0", "private": true, "type": "module",
+  "exports": { ".": "./src/index.ts", "./postgres": "./src/postgres.ts" },
+  "scripts": { "test": "vitest run", "typecheck": "tsc --noEmit", "setup-checkpointer": "node scripts/setup-checkpointer.mjs" },
+  "dependencies": { "@langchain/langgraph": "1.7.4", "@langchain/langgraph-checkpoint-postgres": "1.1.3", "@sahaj/gate": "workspace:*", "pg": "8.23.1" },
+  "devDependencies": { "@types/node": "24.19.2", "typescript": "5.9.3", "vitest": "3.2.7" }
+}

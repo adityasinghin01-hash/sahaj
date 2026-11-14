@@ -38,7 +38,7 @@ export interface BoundShieldTools {
 }
 
 export function createShieldRuntime(ports: ShieldRuntimePorts | ShieldRuntimeTestPorts) {
-  const db = ports.sql ? createShieldRuntimePg(ports.sql) : (ports as ShieldRuntimeTestPorts).db;
+  const db = ports.sql ? createShieldRuntimePg(ports.sql, ports.contacts) : (ports as ShieldRuntimeTestPorts).db;
   // Register the handled copy, while preserving the original rejection for its caller.
   const track = <T>(promise: Promise<T>): Promise<T> => {
     ports.waitUntil(promise.catch(() => { ports.log?.error("shield.runtime.background_failed"); }));

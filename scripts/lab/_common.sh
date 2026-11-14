@@ -213,7 +213,7 @@ apply_tracked_file() {
   existing="$(run_psql_lab "$LAB_DB" -tA -c "select sha256 from public.lab_applied where file = '$key'")"
   if [[ -z "$existing" ]]; then
     echo "   applying $key"
-    run_psql_lab "$LAB_DB" -f "$path"
+    run_psql_lab "$LAB_DB" --single-transaction -f "$path"
     run_psql_lab "$LAB_DB" -c "insert into public.lab_applied (file, sha256) values ('$key', '$sha')"
     return 0
   fi
@@ -228,7 +228,7 @@ apply_lab_sql() {
 
   local applied_count=0
   local m
-  if apply_tracked_file "dev/core_stub.sql" "$REPO_ROOT/infra/supabase/dev/core_stub.sql"; then
+  if apply_tracked_file "test/bootstrap.sql" "$REPO_ROOT/infra/supabase/test/bootstrap.sql"; then
     applied_count=$((applied_count + 1))
   fi
 
@@ -239,7 +239,6 @@ apply_lab_sql() {
   done < <(find "$REPO_ROOT/infra/supabase/migrations" -maxdepth 1 -name '*.sql' | LC_ALL=C sort)
 
   while IFS= read -r m; do
-    [[ "$(basename "$m")" == "core_stub.sql" ]] && continue
     if apply_tracked_file "dev/$(basename "$m")" "$m"; then
       applied_count=$((applied_count + 1))
     fi

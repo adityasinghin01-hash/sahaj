@@ -163,13 +163,13 @@ export function createShieldApp(env: Readonly<Record<string, string | undefined>
     },
   });
 
-  const gatewayStore = createPgGatewayAdminStore(auxSql);
+  const gatewayStore = createPgGatewayAdminStore(auxSql, env);
   const heartbeatStore = createPgHeartbeatStore(auxSql);
 
   return {
     env,
     portsStatus: getPortsStatus(env),
-    whatsappInboundStore: createPgWhatsappInboundStore(auxSql),
+    whatsappInboundStore: createPgWhatsappInboundStore(auxSql, env),
     whatsappInboundWaitUntil: ports.waitUntil,
     runtime,
     recordBusyCallStatus: phase2.submitCallStatus,

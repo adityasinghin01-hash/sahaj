@@ -2,7 +2,7 @@
  * Step 3.6 call gateway (built, OFF by default). Only when env CALL_GATEWAY_ENABLED === "1".
  *
  * Aasha Didi answers an incoming call to Maa first and asks who is calling and why:
- * - a saved family number (fingerprint match on people.phone) → forward at once;
+ * - a saved family number (fingerprint match through the host encrypted-contact port) → forward at once;
  * - an unknown caller → rules on the masked words, then the AI router on the same masked words;
  *   a scam → end the screening leg with a fixed line, alert Riya, and tell Maa a call was screened
  *   (she can always call back: nothing is blocked or deleted); genuine → forward.

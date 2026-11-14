@@ -1,0 +1,10 @@
+# Kiro A: provider webhook gateway
+
+Work ONLY D:/Projects/SAHAJ/.worktrees/kiro-a on feature/core1-webhooks.
+Exclusive files: apps/api/src/app/api/sarvam/post-call/**, apps/api/src/app/api/missed-call/**, apps/api/src/app/api/twilio/**, apps/api/src/lib/provider-ingestion/**, apps/api/tests/provider-ingestion/**. Do not edit adapters, root manifests/lock, shared helpers, Atlas/gate, SQL, mobile or Shield. Do not access .env files or credentials. No network provider actions, cloud mutations, git push or merges.
+
+Read existing adapters including recent security fixes, serviceDatabase/eventStore/webhook-security and SQL provider_identities/calls/raw_events. Implement real fail-closed durable Sarvam outbound/inbound, TeleCMI missed-call and Twilio status/recording webhook gateway routes using their separate documented parsers. Verify official provider documentation rather than inventing fields. Secret URL comparison timing-safe (wrong=>404); Twilio signature uses configured trusted public URL and raw form parameters. Bound payload sizes. Unsigned Sarvam/TeleCMI require configured account/agent/deployment plus server-stored attempt or registered caller crosschecks; IDs alone never prove sender.
+
+Persist encrypted per-event payload through ingest_raw_event before acknowledgment; stable provider/account/event idempotency. Duplicate same event accepted unchanged, different payload same ID conflict. Metadata IDs/status enum only; no transcripts/phone/recordings in metadata/logs. Unknown identities rejected. Recordings callback only queues retrieval after verified identity/consent; never claim delivery/heard/accepted based on enqueue. Test signatures, malformed payload, wrong account, unknown attempt/caller, replay/conflict, persistence failure and body limits. Mock all repositories/transports.
+
+No schema/helper changes outside ownership. If needed, expose proposed contract in owned README and report dependency to Codex. Use existing packages/toolchain. Commit only own files once tests/typecheck pass. Report SHA/tests/remaining issues. Work until your scoped task is verified.

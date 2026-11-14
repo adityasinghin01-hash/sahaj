@@ -7,7 +7,7 @@ export function createEvidencePg(sql: ISql): EvidenceStore {
   return {
     async isChild({ familyId, viewerUserId }) {
       if (!isUuid(familyId) || !isUuid(viewerUserId)) return false;
-      const rows = await sql`select 1 from public.family_members where family_id = ${familyId} and user_id = ${viewerUserId} and role = 'child' limit 1`;
+      const rows = await sql`select 1 from public.family_memberships where revoked_at is null and family_id = ${familyId} and user_id = ${viewerUserId} and role = 'child' limit 1`;
       return rows.length > 0;
     },
     async getIncident({ familyId, verdictId }) {
@@ -34,7 +34,7 @@ export function createEvidencePg(sql: ISql): EvidenceStore {
       const rows = await sql`insert into public.evidence_packs (family_id, verdict_id, created_for, contents_hash, chain_hash, created_at)
         select ${familyId}, v.id, ${viewerUserId}, ${contentsHash}, ${chainHash}, ${createdAt}::timestamptz
         from public.shield_verdicts v where v.id = ${verdictId} and v.family_id = ${familyId} and v.level = 'red'
-          and exists (select 1 from public.family_members m where m.family_id = ${familyId} and m.user_id = ${viewerUserId} and m.role = 'child')
+          and exists (select 1 from public.family_memberships m where m.revoked_at is null and m.family_id = ${familyId} and m.user_id = ${viewerUserId} and m.role = 'child')
         returning id`;
       if (!rows.length) throw new Error("Evidence child access required");
       return { id: rows[0]!.id as string };

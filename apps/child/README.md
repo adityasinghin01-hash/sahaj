@@ -75,7 +75,7 @@ If you enjoy using React Native Reusables, please consider giving it a ⭐ on [G
 ## C-06 lab login and live Shield
 
 On the Shield server, set `SUPABASE_JWT_SECRET` to a secret of at least 32 characters.
-Apply core_stub.sql, all migrations sorted by filename, then seed_demo.sql in a disposable lab database.
+Apply infra/supabase/test/bootstrap.sql (disposable local database only), all foundation and Shield migrations sorted by filename, then seed_demo.sql.
 The existing seed links Riya to auth UUID `33333333-3333-4333-8333-333333333332`; no additional auth seed is necessary.
 From `apps/shield-api`, run `node scripts/mint-lab-token.mjs 33333333-3333-4333-8333-333333333332`
 with that server secret in the shell environment. Paste the printed 12-hour bearer token and the server URL into

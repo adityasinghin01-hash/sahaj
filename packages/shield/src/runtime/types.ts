@@ -23,11 +23,11 @@ export interface ShieldRuntimeDb {
   getVerdictForEvent(eventId: string): Promise<StoredVerdict | null>;
   /** Serialize across workers; work receives storage using the locked connection. */
   withEventLock<T>(eventId: string, work: (db: ShieldRuntimeDb) => Promise<T>): Promise<T>;
-  /** SMS gateway storage (migration 20261114000500). Without it the gateway route answers 500. */
+  /** SMS gateway storage (migration 20261114160500). Without it the gateway route answers 500. */
   gateway?: SmsGatewayDb & Partial<GatewayRegistryDb>;
-  /** Experience drills (migration 20261114000800). Absent = those features fail closed. */
+  /** Experience drills (migration 20261114160800). Absent = those features fail closed. */
   experience?: ExperienceStore;
-  /** Call gateway lookups (people.phone fingerprints). Absent = screenCall forwards everything. */
+  /** Call gateway lookups (encrypted provider contacts). Absent = screenCall forwards everything. */
   callgate?: CallGateDeps["db"];
 }
 
@@ -37,6 +37,7 @@ export type ShieldCircleInput = Parameters<ShieldBrainDeps["atlas"]["startCircle
 
 export interface ShieldRuntimePorts {
   sql: Sql;
+  contacts?: Pick<CallGateDeps["db"], "isFamilyNumber">;
   /** Key-free link checks (OpenPhish feed + RDAP domain age). Absent = those checks are off. */
   linkIntelFetch?: typeof fetch;
   /** Inject the shared catalogue when it is available; no production sample stories. */

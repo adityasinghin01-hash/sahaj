@@ -1,3 +1,4 @@
+import { seedMembership } from "../foundation";
 /** Run with test/drills/run-postgres.sh; legacy C-03 runner applies only its own two migrations. */
 import postgres, { type Sql } from "postgres";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
@@ -14,12 +15,12 @@ describe.skipIf(!enabled)("C-04 real Postgres storage and RLS", () => {
   beforeAll(async () => {
     sql = postgres(process.env.DATABASE_URL!, { max: 8, prepare: false, max_pipeline: 1, onnotice: () => {} });
     const [row] = await sql`select to_regclass('public.drills') as drills, to_regclass('public.evidence_packs') as packs`;
-    if (!row?.drills || !row?.packs) throw new Error("Apply migration 20261114000400 before C-04 tests");
+    if (!row?.drills || !row?.packs) throw new Error("Apply migration 20261114160400 before C-04 tests");
   });
   afterAll(async () => {
     if (sql) {
       for (const family of families) {
-        await sql`delete from public.family_members where family_id = ${family}`;
+        await sql`delete from public.family_memberships where family_id = ${family}`;
         await sql`delete from public.shield_verdicts where family_id = ${family}`;
         await sql`delete from public.shield_events where family_id = ${family}`;
         await sql`delete from public.people where family_id = ${family}`;
@@ -31,9 +32,9 @@ describe.skipIf(!enabled)("C-04 real Postgres storage and RLS", () => {
   async function seed() {
     const familyId = crypto.randomUUID(), parentId = crypto.randomUUID(), viewerUserId = crypto.randomUUID();
     families.push(familyId);
-    await sql`insert into public.families(id) values (${familyId})`;
-    await sql`insert into public.people(id, family_id, role, name) values (${parentId}, ${familyId}, 'parent', 'Maa')`;
-    await sql`insert into public.family_members(family_id, user_id, role) values (${familyId}, ${viewerUserId}, 'child')`;
+    await sql`insert into public.families (id,name) values (${familyId}, 'Synthetic family')`;
+    await sql`insert into public.people(id, family_id, role, display_name) values (${parentId}, ${familyId}, 'parent', 'Maa')`;
+    await seedMembership(sql, familyId, viewerUserId, "child");
     return { familyId, parentId, viewerUserId };
   }
   it("serializes concurrent workers, stores only masked first answers, maps timestamps and scales monthly results", async () => {
@@ -60,7 +61,7 @@ describe.skipIf(!enabled)("C-04 real Postgres storage and RLS", () => {
     await expect(sql`insert into public.drills(family_id,parent_id,drill_id,type,asked_at,score,answer_masked) values (${a.familyId},${a.parentId},'bad','helper',${now},3,'masked')`).rejects.toThrow();
     await expect(sql`insert into public.drills(family_id,parent_id,drill_id,type,asked_at,score,answer_masked) values (${a.familyId},${a.parentId},'bad','helper',${now},1,'OTP 123456')`).rejects.toThrow();
     const child = crypto.randomUUID();
-    await sql`insert into public.people(id,family_id,role,name) values (${child},${a.familyId},'child','Riya')`;
+    await sql`insert into public.people(id,family_id,role,display_name) values (${child},${a.familyId},'child','Riya')`;
     expect(await createDrillPg(sql).getParent({ familyId: a.familyId, parentId: child })).toBe(false);
   });
   it("maps multi-event incidents, stores stable hashes and restricts receipt reads to children", async () => {
@@ -80,7 +81,7 @@ describe.skipIf(!enabled)("C-04 real Postgres storage and RLS", () => {
     expect(receipts).toHaveLength(2); expect(receipts[0]!.contents_hash).toBe(receipts[1]!.contents_hash);
     expect(receipts[0]!.chain_hash).toBe("1234abcd".repeat(8));
     const parentUser = crypto.randomUUID();
-    await sql`insert into public.family_members(family_id,user_id,role) values (${ctx.familyId},${parentUser},'parent')`;
+    await seedMembership(sql, ctx.familyId, parentUser, "parent");
     await pickDrill({ ...fixture(ctx).deps, db: createDrillPg(sql) }, { ...ctx, now });
     async function asUser(user: string) {
       return sql.begin(async tx => {

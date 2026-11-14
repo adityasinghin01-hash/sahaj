@@ -60,52 +60,12 @@ PSQL=("$PG_BIN/psql" -X -q -v ON_ERROR_STOP=1 -h "$TMP" -p "$PORT" -U postgres)
 
 echo "== stub Supabase roles, auth.uid(), core tables"
 "${PSQL[@]}" -d postgres -c "create database $DB"
-"${PSQL[@]}" -d "$DB" <<'SQL'
-create role anon nologin;
-create role authenticated nologin;
--- The app connects as the service role. LOGIN only so the test can connect as it directly;
--- BYPASSRLS as on Supabase. It is not a superuser, so missing grants would fail the tests.
-create role service_role login bypassrls;
--- Test bootstrap only (never a production migration): lets the throwaway service login
--- assume the API roles so the vitest suites can prove RLS without a superuser.
-grant authenticated, anon to service_role;
-
-create schema auth;
-create function auth.uid() returns uuid language sql stable as $f$
-  select nullif(current_setting('request.jwt.claim.sub', true), '')::uuid
-$f$;
-grant usage on schema auth to anon, authenticated, service_role;
-grant execute on function auth.uid() to anon, authenticated, service_role;
-
--- Mirror Supabase: new public tables are granted to all API roles by default.
-grant usage on schema public to anon, authenticated, service_role;
-alter default privileges in schema public grant all on tables to anon, authenticated, service_role;
-
--- Assumed core tables (Singhal's migration). Only the columns src/db reads; see src/db/README.md.
-create table public.families (
-  id             uuid primary key default gen_random_uuid(),
-  code_word_hash text
-);
-create table public.people (
-  id        uuid primary key default gen_random_uuid(),
-  family_id uuid not null references public.families(id),
-  name      text not null,
-  aliases   text[] not null default '{}',
-  role      text,
-  phone     text
-);
-create table public.family_members (
-  family_id uuid references public.families(id),
-  user_id   uuid,
-  person_id uuid references public.people(id),
-  role      text
-);
-SQL
+"${PSQL[@]}" -d "$DB" -f "$MIGRATIONS_DIR/../test/bootstrap.sql"
 
 echo "== apply migrations"
 for m in "${MIGRATIONS[@]}"; do
   echo "   $(basename "$m")"
-  "${PSQL[@]}" -d "$DB" -f "$m"
+  "${PSQL[@]}" -d "$DB" --single-transaction -f "$m"
 done
 
 echo "== RLS checks (busy_streaks, scam_indicators)"

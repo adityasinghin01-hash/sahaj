@@ -44,9 +44,9 @@ export function normalizePersonName(name: string): string {
 
 export function createShieldPg(sql: ISql): ShieldPg {
   /** SQL twin of normalizePersonName for a column or array element. Static text, no values. */
-  const norm = (expr: "p.name" | "a") =>
-    expr === "p.name"
-      ? sql`lower(btrim(regexp_replace(normalize(p.name, NFC), '[[:space:]]+', ' ', 'g')))`
+  const norm = (expr: "p.display_name" | "a") =>
+    expr === "p.display_name"
+      ? sql`lower(btrim(regexp_replace(normalize(p.display_name, NFC), '[[:space:]]+', ' ', 'g')))`
       : sql`lower(btrim(regexp_replace(normalize(a, NFC), '[[:space:]]+', ' ', 'g')))`;
 
   const server: ShieldServerDb = {
@@ -202,12 +202,12 @@ export function createShieldPg(sql: ISql): ShieldPg {
       // Same family only. A match on the name itself wins over an alias match; ties go to the lowest id
       // so the answer is stable.
       const [row] = await sql<{ id: string; name: string }[]>`
-        select p.id, p.name
+        select p.id, p.display_name as name
         from public.people p
         where p.family_id = ${familyId}
-          and (${norm("p.name")} = ${wanted}
+          and (${norm("p.display_name")} = ${wanted}
                or exists (select 1 from unnest(p.aliases) as a where ${norm("a")} = ${wanted}))
-        order by (${norm("p.name")} = ${wanted}) desc, p.id
+        order by (${norm("p.display_name")} = ${wanted}) desc, p.id
         limit 1`;
       return row ?? null;
     },
@@ -215,7 +215,7 @@ export function createShieldPg(sql: ISql): ShieldPg {
     async getCodeWordHash(familyId: string): Promise<string | null> {
       if (!isUuid(familyId)) return null;
       const [row] = await sql<{ code_word_hash: string | null }[]>`
-        select code_word_hash from public.families where id = ${familyId}`;
+        select code_word_hash from public.shield_family_security where family_id = ${familyId}`;
       return row?.code_word_hash ?? null;
     },
   };

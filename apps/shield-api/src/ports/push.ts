@@ -42,7 +42,7 @@ export function createPushPort(
       const tokens = await sql<
         { expo_token: string }[]
       >`select distinct t.expo_token from public.app_push_tokens t
-        join public.family_members m on m.family_id=t.family_id and m.user_id=t.user_id and m.role='child'
+        join public.family_memberships m on m.family_id=t.family_id and m.user_id=t.user_id and m.role='child' and m.revoked_at is null
         where t.family_id=${card.familyId}`;
       for (const { expo_token: token } of tokens) {
         const receipt = await claimProvider(sql, {

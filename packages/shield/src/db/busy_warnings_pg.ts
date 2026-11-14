@@ -4,7 +4,7 @@
  *   const busyDb = createBusyPg(sql);         // BusyDeps["db"]
  *   const warningsDb = createWarningsPg(sql); // WarningsDeps["db"]
  *
- * Tables: infra/supabase/migrations/20261114000300_shield_busy_warnings.sql. Service role connection.
+ * Tables: infra/supabase/migrations/20261114160300_shield_busy_warnings.sql. Service role connection.
  * Every query is a tagged template (bound parameters). Times come from the caller.
  */
 import type { ISql } from "postgres";

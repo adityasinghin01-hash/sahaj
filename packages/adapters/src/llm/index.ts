@@ -9,7 +9,7 @@ import { ProviderError, type Provider, type TraceOptions } from "./types.js";
 
 export * from "./types.js";
 export { createRouter, isMasked } from "./router.js";
-export { createLangfuseTrace, type LangfuseTraceClient, type LangfuseTraceOptions, type LangfuseTracePayload, type LangfuseTracer } from "./trace-langfuse.js";
+export { createLangfuseTrace, type LangfuseTraceClient, type LangfuseTraceOptions, type LangfuseTracePayload, type LangfuseTracer, type SpanExporterOption } from "./trace-langfuse.js";
 export { createClaudeProvider, CLAUDE_MODEL } from "./claude.js";
 export { createMuseProvider, MUSE_BASE_URL, MUSE_MODEL } from "./muse.js";
 export { createGeminiProvider, GEMINI_MODEL } from "./gemini.js";

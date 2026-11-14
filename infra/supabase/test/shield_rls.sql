@@ -7,17 +7,21 @@ set client_min_messages = notice;
 -- ---------------------------------------------------------------------------
 -- Seed: two families, one member user each (superuser, bypasses RLS).
 -- ---------------------------------------------------------------------------
-insert into public.families (id) values
-  ('a0000000-0000-0000-0000-000000000001'),
-  ('b0000000-0000-0000-0000-000000000001');
+insert into public.families (id,name) values
+  ('a0000000-0000-0000-0000-000000000001','Synthetic family'),
+  ('b0000000-0000-0000-0000-000000000001','Synthetic family');
 
-insert into public.people (id, family_id) values
-  ('a0000000-0000-0000-0000-0000000000f1', 'a0000000-0000-0000-0000-000000000001'),  -- parent A
-  ('b0000000-0000-0000-0000-0000000000f1', 'b0000000-0000-0000-0000-000000000001');  -- parent B
+insert into public.people (id, family_id,display_name,role) values
+  ('a0000000-0000-0000-0000-0000000000f1', 'a0000000-0000-0000-0000-000000000001','Maa','parent'),  -- parent A
+  ('b0000000-0000-0000-0000-0000000000f1', 'b0000000-0000-0000-0000-000000000001','Maa','parent');  -- parent B
 
-insert into public.family_members (family_id, user_id, person_id, role) values
-  ('a0000000-0000-0000-0000-000000000001', 'a0000000-0000-0000-0000-0000000000c1', null, 'child'),
-  ('b0000000-0000-0000-0000-000000000001', 'b0000000-0000-0000-0000-0000000000c1', null, 'child');
+insert into auth.users(id) values ('a0000000-0000-0000-0000-0000000000c1');
+insert into public.people(id,family_id,display_name,role) values ('a0000000-0000-0000-0000-0000000000e1','a0000000-0000-0000-0000-000000000001','Riya','child');
+insert into public.family_memberships(family_id,user_id,person_id,role) values ('a0000000-0000-0000-0000-000000000001','a0000000-0000-0000-0000-0000000000c1','a0000000-0000-0000-0000-0000000000e1','child');
+insert into auth.users(id) values ('b0000000-0000-0000-0000-0000000000c1');
+insert into public.people(id,family_id,display_name,role) values ('b0000000-0000-0000-0000-0000000000e1','b0000000-0000-0000-0000-000000000001','Riya','child');
+insert into public.family_memberships(family_id,user_id,person_id,role) values ('b0000000-0000-0000-0000-000000000001','b0000000-0000-0000-0000-0000000000c1','b0000000-0000-0000-0000-0000000000e1','child');
+
 
 insert into public.shield_verdicts (id, family_id, parent_id, level, scam_type, confidence, actions) values
   ('a0000000-0000-0000-0000-0000000000d1', 'a0000000-0000-0000-0000-000000000001',

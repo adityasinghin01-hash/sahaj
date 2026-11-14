@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import type { Sql } from "postgres";
 import { mask, maskDigits, type ShieldRuntimePorts } from "@sahaj/shield";
+import { createContactsPort } from "./contacts";
 import { writeOutbox } from "./outbox";
 import { claimProvider, finishProvider } from "../lib/app_provider";
 
@@ -33,6 +34,7 @@ export function createCallsPort(
   env: Readonly<Record<string, string | undefined>>,
   fetchFn: typeof fetch = fetch,
 ): SarvamCallsPort {
+  const contacts = createContactsPort(sql, env);
   async function outbound(
     purpose: "CHECKIN" | "RESPONDER" | "CALLBACK" | "EXPERIENCE",
     input: {
@@ -65,10 +67,8 @@ export function createCallsPort(
       });
       return false;
     }
-    const [person] = await sql<
-      { phone: string | null }[]
-    >`select phone from public.people where id=${input.personId} and family_id=${input.familyId}`;
-    if (!person?.phone || !/^\+[1-9]\d{7,14}$/.test(person.phone)) {
+    const phone = await contacts.resolve({ familyId: input.familyId, personId: input.personId, source: "sarvam" });
+    if (!phone) {
       await writeOutbox(sql, {
         channel: "calls",
         kind: "sarvam_unavailable",
@@ -123,7 +123,7 @@ export function createCallsPort(
                   "Main Sahaj ki AI sahayak hoon. Main kabhi OTP, PIN, paise ya bank details nahi maangti.",
               },
             },
-            user_config: { user_phone_number: person.phone },
+            user_config: { user_phone_number: phone },
             webhook_config: {
               url: env.SARVAM_WEBHOOK_URL,
               metadata: {

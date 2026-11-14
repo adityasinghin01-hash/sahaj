@@ -1,11 +1,12 @@
 import { createHash, createHmac, timingSafeEqual } from "node:crypto";
 import type { Sql } from "postgres";
-import { numberFingerprint } from "@sahaj/shield";
+import { contactSenderHash } from "@/ports/contacts";
 import { canonicalJson, computeChainHash } from "@/ports/sign";
 
 export type WhatsappAnswer = "confirmed" | "denied";
 export interface WhatsappAnswerInput {
   messageKey: string;
+  /** Foundation HMAC identity index (kept under this DTO field for compatibility). */
   phoneHash: string;
   answer: WhatsappAnswer;
   at: Date;
@@ -49,7 +50,7 @@ function reply(message: Record<string, unknown>): WhatsappAnswer | null {
  * dev_cache's link-only cache port has no atomic claim. This transaction claims a hashed ID,
  * answers the newest pending check, and signs using the existing timeline chain algorithm.
  */
-export function createPgWhatsappInboundStore(sql: Sql): WhatsappInboundStore {
+export function createPgWhatsappInboundStore(sql: Sql, env: Readonly<Record<string, string | undefined>> = process.env): WhatsappInboundStore {
   return {
     async recordAnswer({ messageKey, phoneHash, answer, at }) {
       await sql.begin(async (tx) => {
@@ -61,13 +62,12 @@ export function createPgWhatsappInboundStore(sql: Sql): WhatsappInboundStore {
           where dev_cache.expires_at <= ${at}::timestamptz
           returning key`;
         if (!claimed.length) return;
-        // The existing ports keep people.phone as routing data. Match its last-ten-digit
-        // fingerprint in Postgres; never select, persist or log the raw number here.
+        // The webhook reduces its sender to the foundation HMAC index before background work.
         const people = await tx<{ id: string; family_id: string }[]>`
-          select id, family_id from public.people
-          where phone ~ '^[+][1-9][0-9]{9,14}$'
-            and encode(sha256(convert_to(right(regexp_replace(phone, '[^0-9]', '', 'g'), 10), 'UTF8')), 'hex') = ${phoneHash}
-          limit 2`;
+          select person_id as id, family_id from public.provider_identities
+          where source='whatsapp' and account_id=${env.WHATSAPP_PHONE_NUMBER_ID ?? ""}
+            and binding_kind='contact' and enabled and revoked_at is null
+            and external_id_hash=${phoneHash} limit 2`;
         // Ambiguous routing numbers must not choose a family arbitrarily.
         if (people.length !== 1) return;
         const person = people[0]!;
@@ -152,7 +152,9 @@ export function createWhatsappWebhookHandlers(
             const answer = reply(message);
             if (!answer || typeof message.id !== "string" || !message.id ||
                 typeof message.from !== "string" || !/^[1-9][0-9]{9,14}$/.test(message.from)) continue;
-            const phoneHash = await numberFingerprint(message.from);
+            const account = object(object(change).value).metadata;
+            if (object(account).phone_number_id !== getEnv().WHATSAPP_PHONE_NUMBER_ID) continue;
+            const phoneHash = contactSenderHash(getEnv(), "whatsapp", message.from);
             if (phoneHash) answers.push({ phoneHash, answer, at: new Date(), messageKey: `whatsapp:inbound:${sha256(message.id).toString("hex")}` });
           }
         }

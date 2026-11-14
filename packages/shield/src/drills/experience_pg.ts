@@ -1,6 +1,6 @@
 /**
- * Postgres ExperienceStore (Step 3.5). Needs migrations 20261114000400 (drills) and
- * 20261114000800 (consents, child switch, check-in lines). Service-role connection; bound parameters only.
+ * Postgres ExperienceStore (Step 3.5). Needs migrations 20261114160400 (drills) and
+ * 20261114160800 (consents, child switch, check-in lines). Service-role connection; bound parameters only.
  */
 import type { ISql, Sql } from "postgres";
 import { isUuid } from "../db/pg";
@@ -58,7 +58,7 @@ export function createExperiencePg(sql: Sql): ExperienceStore {
         insert into public.shield_experience_settings (family_id, parent_id, experience_drills_enabled, enabled_by, enabled_at)
         select ${familyId}, p.id, ${enabled}, ${byUserId}, ${at}::timestamptz from public.people p
         where p.id = ${parentId} and p.family_id = ${familyId} and p.role = 'parent'
-          and exists (select 1 from public.family_members m where m.family_id = ${familyId} and m.user_id = ${byUserId} and m.role = 'child')
+          and exists (select 1 from public.family_memberships m where m.revoked_at is null and m.family_id = ${familyId} and m.user_id = ${byUserId} and m.role = 'child')
         on conflict (parent_id) do update set experience_drills_enabled = excluded.experience_drills_enabled,
           enabled_by = excluded.enabled_by, enabled_at = excluded.enabled_at
           where shield_experience_settings.family_id = excluded.family_id

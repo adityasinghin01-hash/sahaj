@@ -1,6 +1,6 @@
 import { createHmac } from "node:crypto";
 import { describe, expect, it, vi } from "vitest";
-import { numberFingerprint } from "@sahaj/shield";
+import { identityHash } from "@sahaj/adapters";
 import {
   createWhatsappWebhookHandlers, normalizeWhatsappReply,
   type WhatsappInboundStore, type WhatsappAnswerInput,
@@ -8,8 +8,11 @@ import {
 
 const SECRET = "lab-only-whatsapp-secret-32-characters";
 const TOKEN = "lab-only-verify-token";
+const IDENTITY_SECRET = "synthetic-identity-hash-secret-32-chars";
+const ACCOUNT = "synthetic-wa-account";
 const PHONE = "919000000003";
 const payload = (body = "CONFIRMED", extra = {}) => ({ entry: [{ changes: [{ value: {
+  metadata: { phone_number_id: ACCOUNT },
   messages: [{ id: "wamid.synthetic", from: PHONE, type: "text", text: { body }, ...extra }],
 } }] }] });
 const request = (body: unknown, signature?: string) => {
@@ -25,14 +28,14 @@ function setup(options: { known?: boolean; pending?: boolean; env?: Record<strin
   const recordAnswer = vi.fn(async (input: WhatsappAnswerInput) => {
     if (seen.has(input.messageKey)) return;
     seen.add(input.messageKey);
-    if (options.known === false || input.phoneHash !== await numberFingerprint(PHONE) || check.state !== "asked") return;
+    if (options.known === false || input.phoneHash !== identityHash("whatsapp", ACCOUNT, PHONE, IDENTITY_SECRET) || check.state !== "asked") return;
     check.state = input.answer;
     check.answeredAt = input.at;
     signed.push("shield.family_check.answered");
   });
   const store: WhatsappInboundStore = { recordAnswer };
   const handlers = createWhatsappWebhookHandlers(() => ({
-    env: options.env ?? { WHATSAPP_APP_SECRET: SECRET, WHATSAPP_VERIFY_TOKEN: TOKEN },
+    env: options.env ?? { WHATSAPP_APP_SECRET: SECRET, WHATSAPP_VERIFY_TOKEN: TOKEN, WHATSAPP_PHONE_NUMBER_ID: ACCOUNT, IDENTITY_HASH_SECRET: IDENTITY_SECRET },
     whatsappInboundStore: store,
   }));
   return { ...handlers, check, seen, signed, recordAnswer };
@@ -68,7 +71,7 @@ describe("WhatsApp inbound", () => {
     expect(h.check.answeredAt).toBeInstanceOf(Date);
     expect(h.signed).toEqual(["shield.family_check.answered"]);
     const input = h.recordAnswer.mock.calls[0]![0];
-    expect(input.phoneHash).toBe(await numberFingerprint(PHONE));
+    expect(input.phoneHash).toBe(identityHash("whatsapp", ACCOUNT, PHONE, IDENTITY_SECRET));
     expect(input.messageKey).not.toContain("wamid.synthetic");
     expect(JSON.stringify(input)).not.toContain(PHONE);
   });
@@ -138,7 +141,7 @@ describe("WhatsApp inbound", () => {
     const waitUntil = vi.fn();
     const store = { recordAnswer: vi.fn(() => pending) };
     const { POST } = createWhatsappWebhookHandlers(() => ({
-      env: { WHATSAPP_APP_SECRET: SECRET }, whatsappInboundStore: store, whatsappInboundWaitUntil: waitUntil,
+      env: { WHATSAPP_APP_SECRET: SECRET, WHATSAPP_PHONE_NUMBER_ID: ACCOUNT, IDENTITY_HASH_SECRET: IDENTITY_SECRET }, whatsappInboundStore: store, whatsappInboundWaitUntil: waitUntil,
     }));
     try {
       expect((await POST(request(payload()))).status).toBe(200);

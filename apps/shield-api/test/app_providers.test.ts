@@ -1,3 +1,5 @@
+import { encryptWebhook, identityHash } from "@sahaj/adapters";
+import { contactContext } from "../src/ports/contacts";
 import { describe, it, expect, vi } from "vitest";
 import type { Sql } from "postgres";
 import { createPushPort } from "../src/ports/push";
@@ -14,7 +16,12 @@ function fakeSql(phone: string | null = "+919000000001") {
       writes.push({ query, values });
       if (query.includes("select distinct t.expo_token"))
         return [{ expo_token: "ExpoPushToken[synthetic]" }];
-      if (query.includes("select phone")) return [{ phone }];
+      if (query.includes("public.provider_identities")) {
+        if (!phone) return [];
+        const row = { family_id: F, person_id: P, source: "sarvam", account_id: "checkin",
+          external_id_hash: identityHash("sarvam", "checkin", phone.slice(1), env.IDENTITY_HASH_SECRET) };
+        return [{ ...row, contact_ciphertext: encryptWebhook(Buffer.from(phone), env.WEBHOOK_ENCRYPTION_KEY, contactContext(row)) }];
+      }
       if (query.includes("returning id")) {
         const key = String(values[4]);
         if (claims.has(key)) return [];
@@ -46,6 +53,8 @@ const card = {
   },
 };
 const env = {
+  WEBHOOK_ENCRYPTION_KEY: "19".repeat(32),
+  IDENTITY_HASH_SECRET: "synthetic-identity-hash-secret-32-chars",
   SARVAM_OUTBOUND_ENABLED: "1",
   SARVAM_API_KEY: "fake-key",
   SARVAM_ORG_ID: "org",

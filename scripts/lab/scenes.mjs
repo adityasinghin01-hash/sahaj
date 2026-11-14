@@ -440,13 +440,10 @@ function makeScenes(device) {
         if (!env.WHATSAPP_APP_SECRET || env.WHATSAPP_APP_SECRET.length < 32) {
           throw new Error("Scene C needs lab-only WHATSAPP_APP_SECRET (at least 32 characters) in the lab and player env");
         }
-        // Upgrade only the masked demo fixture; never replace or impersonate a real number.
+        // Contacts are provisioned encrypted in the synthetic seed; this scene never changes routing.
         const rohitId = "22222222-2222-4222-8222-222222222223";
-        await sql`update public.people set phone='+919000000003'
-          where id=${rohitId} and family_id=${FAMILY_ID} and phone like '%X%'`;
-        const [rohit] = await sql`select id from public.people
-          where id=${rohitId} and family_id=${FAMILY_ID} and phone='+919000000003'`;
-        if (!rohit) throw new Error("Scene C needs the synthetic Rohit phone fixture; real routing data is never impersonated");
+        const [rohit] = await sql`select id from public.people where id=${rohitId} and family_id=${FAMILY_ID}`;
+        if (!rohit) throw new Error("Scene C needs the synthetic Rohit identity fixture");
         const mark = new Date();
         const startRes = await reqJson("/api/sarvam/tool/family_check", {
           method: "POST",

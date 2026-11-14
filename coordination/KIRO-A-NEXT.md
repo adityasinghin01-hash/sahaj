@@ -1,0 +1,5 @@
+# Kiro A: read-only integration contract audit
+
+Resume in D:/Projects/SAHAJ/.worktrees/kiro-a; b90d9f7 is integrated in root. This task is READ ONLY except a report under your existing owned apps/api/src/lib/provider-ingestion/REVIEW-NEXT.md. Do not edit another worker's files or root. No env reads, cloud actions, manifests, push or merge.
+
+Audit root D:/Projects/SAHAJ combined webhook/media/adapter/database contracts against actual SQL, in particular provider_identities binding hash/account conventions, webhook encrypted envelope/hash definitions, dispatch_raw_event metadata propagation, workflow/outbox evidence requirements and recording retrieval call/consent linkage. Identify concrete integration blockers, with precise file/function references and suggested smallest parent implementation; distinguish fail-closed missing features from bugs. Avoid duplicating already documented absent dispatch/consent writers unless a precise contract mismatch is found. Run existing focused provider tests. Commit only your report in owned provider-ingestion folder. Report SHA/tests. No provider calls or secret access.

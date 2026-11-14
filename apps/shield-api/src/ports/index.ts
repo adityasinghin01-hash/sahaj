@@ -4,6 +4,7 @@ import { createDefaultRouter } from "@sahaj/adapters";
 import type { ShieldRuntimePorts } from "@sahaj/shield";
 import { createAtlasPort } from "./atlas";
 import { createCachePort } from "./cache";
+import { createContactsPort } from "./contacts";
 import { createCallsPort } from "./calls";
 import { createGatePort } from "./gate";
 import { createPushPort } from "./push";
@@ -66,6 +67,7 @@ export function createShieldPorts(opts: {
 
   return {
     sql: opts.shieldSql,
+    contacts: createContactsPort(opts.auxSql, opts.env),
     router: {
       understand: router.understand,
       twoLock: router.twoLock,

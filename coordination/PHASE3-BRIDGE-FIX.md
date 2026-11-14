@@ -1,0 +1,15 @@
+# Kiro B — final cross-lane bridge fixes
+
+Resume .worktrees/kiro-phase3 only; same Phase3 ownership. Parent independently confirmed220API+39gate+24Atlas+72baselineadapter tests and alltypechecks atc614a32. Previous DELETE/old-new-family/post-lock-clock issues are resolved; do not regress them.
+
+Read sibling Phase2 final059f9f5 actual migration and CONTRACTS.md. Implement:
+1. enqueue_authorized_command MUST call Phase2 bind_outbox_dispatch in the SAME transaction as authorization/quota/approval/outbox insertion, using authoritative recipient/action/provider/call/account bindings. Currently it never calls it, so every new command is undispatchable. Do not add a post-commit best-effort binding.
+2. Common normalized proof contract: metadata.action is DOMAIN outbox.action; provider_action separate. Require verified account_id; responder metadata.person_id is responder, incident subject separate. Require raw_events.normalized_proof=true AND joins to real same-family dispatch_ledger and dispatch_bindings with matching key/reference/call/outbox/account/action, not merely nonempty dispatch_key or callback-shaped JSON.
+3. routeEventKind must route BOTH twilio.recording.retrieval_requested and sarvam.recording.retrieval_requested to recording worker. Sarvam retrieval currently dead-letters.
+4. Wire Phase2 normalizeDeliveryOutcome into the actual status-job handler; it currently has no runtime caller. Wire real dispatch/recording worker entrypoints at tick boundaries with injected transports/authorization/identity resolution and lease fencing. No providers inside graph nodes. Missing provider configuration remains explicitly unavailable/review, never fake success.
+5. Align recording consent expiry shared policy with Phase2. Add a merged-path acceptance test demonstrating authorize->atomicbinding->claim->scripteddispatch->verifiedcallback->normalizedproof->Atlasobservedoutcome, plus Sarvam recording routing. Test forged generic rawproof, substitutedsame-familytarget/action/account and unknown-delivery non-retry.
+6. Advisory lock loss still only sets held=false and is checked after graph execution; saver writes use a different pool and can continue. Integrate lock-loss cancellation throughout graph/ports AND fence actual checkpoint writes against lock loss (e.g. pinned protected connection or equivalent proven fence). Test an in-flight checkpoint mutation after the lock connection dies; discarding final result alone is insufficient.
+
+You may import Phase2 owned modules but not edit them. Your branch doesn't yet contain Phase2 source; coordinate a tested integration checkpoint with parent rather than copying sibling implementations or duplicating them. Define bridge interfaces and exercise sibling module through a temporary/read-only test setup if necessary; clearly report exact integration needs.
+
+No remote SQL/env reads/realproviders/push/merge. Save tested scoped commits and exact remaining evidence. Parent handles integration, scratch SQL/concurrency, live synthetic restart/cron and deployment. No100%until combined acceptance passes.

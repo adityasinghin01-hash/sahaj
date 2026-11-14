@@ -16,3 +16,31 @@ coverage/
 next-env.d.ts
 credentials.json
 **/credentials.json
+
+# dependencies / build
+node_modules/
+.pnpm-store/
+.next/
+out/
+dist/
+coverage/
+.turbo/
+
+# secrets
+.env
+.env.*
+!.env.example
+!**/.env.example
+*.pem
+*.key
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.vscode/*
+!.vscode/extensions.json
+*.tsbuildinfo
+
+# Parallel development worktrees
+.worktrees/
+infra/supabase/.temp/

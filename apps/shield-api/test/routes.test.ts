@@ -1,3 +1,5 @@
+import { encryptWebhook, identityHash } from "@sahaj/adapters";
+import { contactContext } from "@/ports/contacts";
 import { createHmac } from "node:crypto";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { createRouter, type Provider } from "@sahaj/adapters";
@@ -726,6 +728,11 @@ describe("shield-api route handlers", () => {
 
   it("whatsapp port uses Meta Cloud API when configured with real phone, else falls back to dev_outbox", async () => {
     const queries: string[] = [];
+    const key = "19".repeat(32), identitySecret = "synthetic-identity-hash-secret-32-chars";
+    const childId = "22222222-2222-4222-8222-222222222222";
+    const row = { family_id: FAMILY_ID, person_id: childId, source: "whatsapp", account_id: "1234567890",
+      external_id_hash: identityHash("whatsapp", "1234567890", "919000000002", identitySecret) };
+    const contact = { ...row, contact_ciphertext: encryptWebhook(Buffer.from("+919000000002"), key, contactContext(row)) };
     const fakeSql = Object.assign(
       async (strings: TemplateStringsArray) => {
         const sqlText = strings.join("?");
@@ -733,9 +740,8 @@ describe("shield-api route handlers", () => {
         if (sqlText.includes("from public.people where id =")) {
           return [{ name: "Meena", phone: "+919000000001" }];
         }
-        if (sqlText.includes("role = 'child'")) {
-          return [{ id: "child-1", name: "Riya", phone: "+919000000002" }];
-        }
+        if (sqlText.includes("role='child'")) return [{ id: childId, name: "Riya" }];
+        if (sqlText.includes("public.provider_identities")) return [contact];
         return [];
       },
       { json: (v: unknown) => v },
@@ -744,7 +750,7 @@ describe("shield-api route handlers", () => {
     const fetchMock = vi.fn(async () => new Response(JSON.stringify({ messages: [{ id: "wamid.1" }] }), { status: 200 }));
     const wa = createWhatsappPort(
       fakeSql,
-      { WHATSAPP_TOKEN: "wa-token", WHATSAPP_PHONE_NUMBER_ID: "1234567890", WHATSAPP_GRAPH_VERSION: "v27.0" },
+      { WHATSAPP_TOKEN: "wa-token", WHATSAPP_PHONE_NUMBER_ID: "1234567890", WHATSAPP_GRAPH_VERSION: "v27.0", WEBHOOK_ENCRYPTION_KEY: key, IDENTITY_HASH_SECRET: identitySecret },
       fetchMock as unknown as typeof fetch,
     );
 

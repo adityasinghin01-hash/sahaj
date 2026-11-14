@@ -12,7 +12,7 @@ const MAA_PHONE = "9876543210";
 const cleanups: (() => Promise<void>)[] = [];
 afterEach(async () => { for (const close of cleanups.splice(0)) await close(); });
 
-/** Memory store, or Postgres when DATABASE_URL is set and migration 20261114000500 is applied. */
+/** Memory store, or Postgres when DATABASE_URL is set and migration 20261114160500 is applied. */
 async function fixture() {
   const store = await storage(); cleanups.push(store.close);
   const phoneHash = await sha256Hex(MAA_PHONE);

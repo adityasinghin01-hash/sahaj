@@ -9,7 +9,7 @@ Persistent local Postgres 16 + `@sahaj/shield-api` + background cron loop + no-p
    bash scripts/lab/lab-up.sh
    ```
    - Initializes a persistent PostgreSQL 16 cluster at `~/.sahaj-lab/pg` listening on `127.0.0.1:54329` (database `sahaj_lab`).
-   - Applies `infra/supabase/dev/core_stub.sql`, all sorted `infra/supabase/migrations/*.sql`, and the remaining `infra/supabase/dev/*.sql` files, tracking each applied file in `public.lab_applied(file, sha256)` so re-runs apply only new SQL files.
+   - Applies `infra/supabase/test/bootstrap.sql` (local platform only), all sorted `infra/supabase/migrations/*.sql`, and the remaining `infra/supabase/dev/*.sql` files, tracking each applied file in `public.lab_applied(file, sha256)` so re-runs apply only new SQL files.
    - Loads `${LAB_ENV_FILE:-$HOME/dev/sahaj-secrets/shield.env}` if present (prints only variable **names**, never values), defaults `DATABASE_URL`, `ALLOW_ANY_TOOL_IP=1`, `DEMO_TIMER_SCALE=60`, and writes any missing required lab secrets into `~/.sahaj-lab/lab.env` (`chmod 600`).
    - Builds `apps/shield-api` if `.next/BUILD_ID` is missing, starts `next start -H 127.0.0.1 -p 3100`, waits for `/api/health`, and runs a 30 s background cron loop against `/api/cron/shield-jobs`.
 

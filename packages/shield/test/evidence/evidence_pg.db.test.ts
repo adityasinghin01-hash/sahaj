@@ -1,3 +1,4 @@
+import { seedMembership } from "../foundation";
 /** K-B8 Part F against real Postgres: receipt id, getPack and verifyEvidencePack on evidence_packs. */
 import postgres, { type Sql } from "postgres";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
@@ -17,7 +18,7 @@ describe.skipIf(!DATABASE_URL)("evidence receipts against Postgres", () => {
       await sql`delete from public.evidence_packs where family_id = ${family}`;
       await sql`delete from public.shield_verdicts where family_id = ${family}`;
       await sql`delete from public.shield_events where family_id = ${family}`;
-      await sql`delete from public.family_members where family_id = ${family}`;
+      await sql`delete from public.family_memberships where family_id = ${family}`;
       await sql`delete from public.people where family_id = ${family}`;
       await sql`delete from public.families where id = ${family}`;
     }
@@ -27,9 +28,9 @@ describe.skipIf(!DATABASE_URL)("evidence receipts against Postgres", () => {
   it("buildEvidencePack returns a pack_ref; verifyEvidencePack recomputes it; tampering is detected", async () => {
     const familyId = crypto.randomUUID(), parentId = crypto.randomUUID(), child = crypto.randomUUID();
     families.push(familyId);
-    await sql`insert into public.families (id) values (${familyId})`;
-    await sql`insert into public.people (id, family_id, name, role) values (${parentId}, ${familyId}, 'Maa', 'parent')`;
-    await sql`insert into public.family_members (family_id, user_id, role) values (${familyId}, ${child}, 'child')`;
+    await sql`insert into public.families (id,name) values (${familyId}, 'Synthetic family')`;
+    await sql`insert into public.people (id, family_id, display_name, role) values (${parentId}, ${familyId}, 'Maa', 'parent')`;
+    await seedMembership(sql, familyId, child, "child");
     const [event] = await sql<{ id: string }[]>`insert into public.shield_events (idempotency_key, family_id, parent_id, channel, kind, occurred_at, masked_text, context)
       values (${`k-b8-evidence-${familyId}`}, ${familyId}, ${parentId}, 'gateway_sms', 'sms', '2026-11-14T09:58:00Z', 'KYC band, OTP <NUM> bataiye', ${sql.json({ asks_for: "otp" })})
       returning id`;

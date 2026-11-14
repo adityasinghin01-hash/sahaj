@@ -2,8 +2,11 @@
 # Throwaway local Postgres + live HTTP test runner for @sahaj/shield-api Phase 3 (AGY-09).
 # Usage: bash apps/shield-api/scripts/e2e-phase3.sh
 # Requires local Postgres binaries (/opt/homebrew/bin or PG_BIN) and pnpm install.
-# Applies core_stub.sql, ALL migrations sorted by name, and seed_demo.sql on a /tmp cluster deleted on exit.
+# Applies bootstrap.sql, ALL migrations sorted by name, and seed_demo.sql on a /tmp cluster deleted on exit.
 set -euo pipefail
+# Public synthetic contact fixture configuration; no real-provider dispatch.
+export WEBHOOK_ENCRYPTION_KEY='1919191919191919191919191919191919191919191919191919191919191919' IDENTITY_HASH_SECRET='sahaj-synthetic-contact-hash-secret-only'
+export WHATSAPP_PHONE_NUMBER_ID='synthetic-wa-account' SARVAM_APP_ID='synthetic-sarvam-app'
 
 PG_BIN="${PG_BIN:-/opt/homebrew/bin}"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -79,15 +82,15 @@ PSQL=("$PG_BIN/psql" -X -q -v ON_ERROR_STOP=1 -h 127.0.0.1 -p "$PG_PORT" -U post
 DB=shield_phase3_e2e
 "${PSQL[@]}" -d postgres -c "create database $DB"
 
-echo "== applying core_stub.sql, all migrations sorted by name, and dev seed SQL"
-"${PSQL[@]}" -d "$DB" -f "$REPO_ROOT/infra/supabase/dev/core_stub.sql"
+echo "== applying bootstrap.sql, all migrations sorted by name, and dev seed SQL"
+"${PSQL[@]}" -d "$DB" -f "$REPO_ROOT/infra/supabase/test/bootstrap.sql"
 while IFS= read -r m; do
   echo "   applying $(basename "$m")"
-  "${PSQL[@]}" -d "$DB" -f "$m"
+  "${PSQL[@]}" -d "$DB" --single-transaction -f "$m"
 done < <(find "$REPO_ROOT/infra/supabase/migrations" -maxdepth 1 -name '*.sql' | LC_ALL=C sort)
 
 while IFS= read -r dev_sql; do
-  [[ "$(basename "$dev_sql")" == "core_stub.sql" ]] && continue
+  [[ "$(basename "$dev_sql")" == "bootstrap.sql" ]] && continue
   echo "   applying dev/$(basename "$dev_sql")"
   "${PSQL[@]}" -d "$DB" -f "$dev_sql"
 done < <(find "$REPO_ROOT/infra/supabase/dev" -maxdepth 1 -name '*.sql' | LC_ALL=C sort)
@@ -97,7 +100,8 @@ if [[ ! -f "$APP_DIR/.next/BUILD_ID" ]]; then
   pnpm --dir "$REPO_ROOT" -F @sahaj/shield-api build >/dev/null
 fi
 
-export OPENPHISH_FEED=0 RDAP_LOOKUP=0
+export OPENPHISH_FEED=0 RDAP_LOOKUP=0 SARVAM_OUTBOUND_ENABLED=0 EXPO_PUSH_ENABLED=0
+unset ANTHROPIC_API_KEY MUSE_API_KEY GEMINI_API_KEY SAFE_BROWSING_KEY WHATSAPP_TOKEN SARVAM_API_KEY EXPO_ACCESS_TOKEN
 export DATABASE_URL="postgres://service_role@127.0.0.1:$PG_PORT/$DB"
 export SHIELD_DEVICE_PAIRING_SECRET="e2e-pairing-secret-at-least-32-chars"
 export SMS_GATEWAY_SECRET="e2e-sms-gateway-secret-at-least-32-chars"
