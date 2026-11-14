@@ -30,12 +30,13 @@ insert into public.family_memberships(family_id, user_id, person_id, role) value
 
 -- Rank 1 is the subject herself (must NEVER be offered); Rank 2 is unconsented; Rank 3 is revoked;
 -- Rank 4 is Sharma uncle (eligible #1); Rank 5 is Verma aunty (eligible #2).
-insert into public.circle(family_id, person_id, rank, consent_at, revoked_at) values
-  ('b9100000-0000-4000-8000-000000000001', 'c9100000-0000-4000-8000-000000000001', 1, now(), null),
-  ('b9100000-0000-4000-8000-000000000001', 'c9100000-0000-4000-8000-000000000003', 2, null, null),
-  ('b9100000-0000-4000-8000-000000000001', 'c9100000-0000-4000-8000-000000000004', 3, now() - interval '2 days', now() - interval '1 hour'),
-  ('b9100000-0000-4000-8000-000000000001', 'c9100000-0000-4000-8000-000000000005', 4, now() - interval '1 day', null),
-  ('b9100000-0000-4000-8000-000000000001', 'c9100000-0000-4000-8000-000000000006', 5, now() - interval '1 day', null);
+-- All rows are family-approved (approved_at), so only consent/revocation/subject decide eligibility here.
+insert into public.circle(family_id, person_id, rank, approved_at, consent_at, revoked_at) values
+  ('b9100000-0000-4000-8000-000000000001', 'c9100000-0000-4000-8000-000000000001', 1, now() - interval '3 days', now(), null),
+  ('b9100000-0000-4000-8000-000000000001', 'c9100000-0000-4000-8000-000000000003', 2, now() - interval '3 days', null, null),
+  ('b9100000-0000-4000-8000-000000000001', 'c9100000-0000-4000-8000-000000000004', 3, now() - interval '3 days', now() - interval '2 days', now() - interval '1 hour'),
+  ('b9100000-0000-4000-8000-000000000001', 'c9100000-0000-4000-8000-000000000005', 4, now() - interval '3 days', now() - interval '1 day', null),
+  ('b9100000-0000-4000-8000-000000000001', 'c9100000-0000-4000-8000-000000000006', 5, now() - interval '3 days', now() - interval '1 day', null);
 
 insert into public.atlas_principals(id, family_id, label) values
   ('d9100000-0000-4000-8000-000000000001', 'b9100000-0000-4000-8000-000000000001', 'atlas-core1');

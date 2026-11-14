@@ -325,6 +325,10 @@ async function run() {
   };
 
   console.log(JSON.stringify(results, null, 2));
+  // A FAIL entry must fail the run (it used to print PHASE3_E2E_RESULT: PASS over a FAIL line).
+  const failed = Object.values(results).flatMap((r) => Object.entries(r))
+    .filter(([, v]) => typeof v === "string" && v.startsWith("FAIL")).map(([k]) => k);
+  if (failed.length) throw new Error(`Phase 3 e2e checks failed: ${failed.join(", ")}`);
 }
 
 run()

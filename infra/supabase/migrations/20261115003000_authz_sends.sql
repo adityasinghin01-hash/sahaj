@@ -296,9 +296,9 @@ begin
       raise exception 'send_consent_required' using errcode='42501'; end if;
     if c.kind='core1.voice_notify' and not exists(select 1 from public.voice_posts v
       where v.id=c.source_id and v.family_id=new.family_id and v.sender_id=r.person_id and v.recipient_id::text=r.target_id
-        and v.state<>'failed' and exists(select 1 from public.consents c where c.id=v.consent_id and c.family_id=v.family_id
-          and c.person_id=v.sender_id and c.answer and c.purpose='voice_share:'||r.target_id
-          and c.created_at=sahaj_private.consent_current(new.family_id,r.person_id,'voice_share:'||r.target_id))) then raise exception 'voice_post_unusable' using errcode='42501'; end if;
+        and v.state<>'failed' and exists(select 1 from public.consents vc where vc.id=v.consent_id and vc.family_id=v.family_id
+          and vc.person_id=v.sender_id and vc.answer and vc.purpose='voice_share:'||r.target_id
+          and vc.created_at=sahaj_private.consent_current(new.family_id,r.person_id,'voice_share:'||r.target_id))) then raise exception 'voice_post_unusable' using errcode='42501'; end if;
   end if;
   return new;
 end$$;

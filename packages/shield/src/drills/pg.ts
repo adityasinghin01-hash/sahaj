@@ -16,9 +16,10 @@ export function createDrillPg(sql: Sql): DrillStore {
         return work(build(tx, true));
       }) as Promise<Awaited<ReturnType<typeof work>>>;
     },
+    // FOR KEY SHARE: inside withParentLock the parent row cannot be deleted before the drill insert commits.
     async getParent({ familyId, parentId }) {
       if (!isUuid(familyId) || !isUuid(parentId)) return false;
-      const rows = await query`select id from public.people where id = ${parentId} and family_id = ${familyId} and role = 'parent'`;
+      const rows = await query`select id from public.people where id = ${parentId} and family_id = ${familyId} and role = 'parent' for key share`;
       return rows.length > 0;
     },
     async recent({ familyId, parentId }) {

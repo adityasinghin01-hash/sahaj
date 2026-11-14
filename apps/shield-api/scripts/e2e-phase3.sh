@@ -89,11 +89,10 @@ while IFS= read -r m; do
   "${PSQL[@]}" -d "$DB" --single-transaction -f "$m"
 done < <(find "$REPO_ROOT/infra/supabase/migrations" -maxdepth 1 -name '*.sql' | LC_ALL=C sort)
 
-while IFS= read -r dev_sql; do
-  [[ "$(basename "$dev_sql")" == "bootstrap.sql" ]] && continue
-  echo "   applying dev/$(basename "$dev_sql")"
-  "${PSQL[@]}" -d "$DB" -f "$dev_sql"
-done < <(find "$REPO_ROOT/infra/supabase/dev" -maxdepth 1 -name '*.sql' | LC_ALL=C sort)
+# Only seed_demo.sql: seed_demo_full.sql (AGY-S1) pre-grants Maa's experience-drill consent and Riya's switch,
+# which would hide the "no consent -> refused" and "switch off -> refused" checks in scenario 3.
+echo "   applying dev/seed_demo.sql"
+"${PSQL[@]}" -d "$DB" -f "$REPO_ROOT/infra/supabase/dev/seed_demo.sql"
 
 if [[ ! -f "$APP_DIR/.next/BUILD_ID" ]]; then
   echo "== building @sahaj/shield-api"

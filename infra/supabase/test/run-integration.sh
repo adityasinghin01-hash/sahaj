@@ -65,5 +65,14 @@ done
 echo "== both teams SQL suites"
 for suite in "$MIGRATIONS_DIR"/../tests/*.sql "$MIGRATIONS_DIR"/../test/shield_rls.sql "$MIGRATIONS_DIR"/../test/shield_busy_warnings_rls.sql "$MIGRATIONS_DIR"/../test/shield_foundation_bridge.sql; do
   echo "== suite $(basename "$suite")"
+  if [[ "$(basename "$suite")" == demo_seed_check.sql ]]; then
+    # The demo check needs the seeds; run it on a copy so seeded rows never reach the other suites.
+    "${PSQL[@]}" -d postgres -c "create database ${DB}_demo template $DB"
+    "${PSQL[@]}" -d "${DB}_demo" --single-transaction -f "$MIGRATIONS_DIR/../dev/seed_demo.sql"
+    "${PSQL[@]}" -d "${DB}_demo" --single-transaction -f "$MIGRATIONS_DIR/../dev/seed_demo_full.sql"
+    "${PSQL[@]}" -d "${DB}_demo" -f "$suite"
+    "${PSQL[@]}" -d postgres -c "drop database ${DB}_demo"
+    continue
+  fi
   "${PSQL[@]}" -d "$DB" -f "$suite"
 done

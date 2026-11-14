@@ -74,7 +74,7 @@ begin
     kind, voice_post_id, status_label, delivery_status, delivery_verified, heard_verified
   ) values (
     v_reassure_id, v_fam_a, v_riya, v_maa,
-    'im_safe', v_voice_id, 'Main safe hoon Maa', 'sent', false, false
+    'im_safe', v_voice_id, 'Main safe hoon Maa', 'queued', false, false
   );
 
   insert into public.core2_gentle_news (

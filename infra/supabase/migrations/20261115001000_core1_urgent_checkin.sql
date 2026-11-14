@@ -2,82 +2,9 @@
 -- Preserves 20261114220000_phase4_core1.sql untouched (fixing create_urgent_incident_offer via create or replace
 -- because public.circle has consent_at / revoked_at and does NOT have an "active" column).
 
--- 1. Fix create_urgent_incident_offer (remove invalid c.active reference)
-create or replace function public.create_urgent_incident_offer(
-  p_family_id uuid,
-  p_subject_person_id uuid,
-  p_severity text,
-  p_offer_timeout_minutes integer default 3
-)
-returns jsonb
-language plpgsql
-security definer
-set search_path = ''
-as $$
-declare
-  v_incident_id uuid;
-  v_assignment_id uuid;
-  v_responder_person_id uuid;
-  v_expires_at timestamptz;
-  v_timeout integer;
-begin
-  if not exists (select 1 from public.people where family_id = p_family_id and id = p_subject_person_id) then
-    raise exception 'invalid_subject_person' using errcode = '42501';
-  end if;
-
-  if p_severity not in ('routine', 'urgent', 'critical') then
-    raise exception 'invalid_severity' using errcode = '22023';
-  end if;
-
-  v_timeout := coalesce(p_offer_timeout_minutes, 3);
-  if v_timeout <= 0 then v_timeout := 3; end if;
-
-  insert into public.incidents (family_id, person_id, severity, state)
-  values (p_family_id, p_subject_person_id, p_severity, 'open')
-  returning id into v_incident_id;
-
-  -- Top-ranked eligible circle member (never the subject; requires active unrevoked consent).
-  select c.person_id into v_responder_person_id
-  from public.circle c
-  join public.people p on p.family_id = c.family_id and p.id = c.person_id
-  where c.family_id = p_family_id
-    and c.person_id <> p_subject_person_id
-    and c.consent_at is not null
-    and c.revoked_at is null
-  order by c.rank asc
-  limit 1;
-
-  if v_responder_person_id is null then
-    update public.incidents
-    set state = 'escalated'
-    where id = v_incident_id;
-
-    return jsonb_build_object(
-      'incident_id', v_incident_id,
-      'state', 'escalated',
-      'reason', 'no_available_circle_members'
-    );
-  end if;
-
-  v_expires_at := clock_timestamp() + (v_timeout * interval '1 minute');
-
-  insert into public.assignments (family_id, incident_id, person_id, status, expires_at)
-  values (p_family_id, v_incident_id, v_responder_person_id, 'offered', v_expires_at)
-  returning id into v_assignment_id;
-
-  update public.incidents
-  set state = 'offered'
-  where id = v_incident_id;
-
-  return jsonb_build_object(
-    'incident_id', v_incident_id,
-    'assignment_id', v_assignment_id,
-    'responder_person_id', v_responder_person_id,
-    'state', 'offered',
-    'expires_at', v_expires_at
-  );
-end;
-$$;
+-- 1. create_urgent_incident_offer: no override. 20261114220000_phase4_core1.sql (K-INT2) already has the
+--    runnable version, and it picks responders via sahaj_private.next_circle_responder (approved + consenting +
+--    unrevoked, not the subject, not already offered). K-GATE: the override here dropped the approved_at check.
 
 -- 2. Scaled urgent offer initiator (seconds precision for DEMO_TIMER_SCALE)
 create or replace function public.create_urgent_incident_offer_scaled(
@@ -102,7 +29,7 @@ begin
     raise exception 'invalid_subject_person' using errcode = '42501';
   end if;
 
-  if p_severity not in ('routine', 'urgent', 'critical') then
+  if p_severity is null or p_severity not in ('routine', 'urgent', 'critical') then
     raise exception 'invalid_severity' using errcode = '22023';
   end if;
 
@@ -112,15 +39,8 @@ begin
   values (p_family_id, p_subject_person_id, p_severity, 'open')
   returning id into v_incident_id;
 
-  select c.person_id into v_responder_person_id
-  from public.circle c
-  join public.people p on p.family_id = c.family_id and p.id = c.person_id
-  where c.family_id = p_family_id
-    and c.person_id <> p_subject_person_id
-    and c.consent_at is not null
-    and c.revoked_at is null
-  order by c.rank asc
-  limit 1;
+  -- Same eligibility as the minute-based offer (approved, consenting, unrevoked, not the subject).
+  v_responder_person_id := sahaj_private.next_circle_responder(p_family_id, v_incident_id, p_subject_person_id);
 
   if v_responder_person_id is null then
     update public.incidents set state = 'escalated' where id = v_incident_id;
@@ -213,21 +133,8 @@ begin
   set status = v_new_status
   where id = v_assignment.id;
 
-  select c.person_id into v_next_responder
-  from public.circle c
-  join public.people p on p.family_id = c.family_id and p.id = c.person_id
-  where c.family_id = p_family_id
-    and c.person_id <> v_incident.person_id
-    and c.consent_at is not null
-    and c.revoked_at is null
-    and not exists (
-      select 1 from public.assignments prev
-      where prev.family_id = p_family_id
-        and prev.incident_id = p_incident_id
-        and prev.person_id = c.person_id
-    )
-  order by c.rank asc
-  limit 1;
+  -- Same eligibility as the first offer; members already offered on this incident are skipped.
+  v_next_responder := sahaj_private.next_circle_responder(p_family_id, p_incident_id, v_incident.person_id);
 
   if v_next_responder is null then
     update public.incidents
