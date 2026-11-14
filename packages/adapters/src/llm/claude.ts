@@ -2,7 +2,9 @@ import Anthropic from "@anthropic-ai/sdk";
 import { zodOutputFormat } from "@anthropic-ai/sdk/helpers/zod";
 import { attachUsage, ProviderError, type Provider, type TokenUsage } from "./types.js";
 
-export const CLAUDE_MODEL = "claude-opus-5-5";
+// Sonnet 5.5 (his call, 14 Nov): thinking stays adaptive (never send {type:"disabled"} — 400 on this model),
+// effort set per request, server-side fallbacks "default" (the array form may only name claude-sonnet-5).
+export const CLAUDE_MODEL = "claude-sonnet-5-5";
 
 export function createClaudeProvider(client: Anthropic): Provider {
   return async (req) => {

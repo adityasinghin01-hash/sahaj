@@ -52,7 +52,7 @@ does not change the result.
 
 | Variable | Use |
 | --- | --- |
-| `ANTHROPIC_API_KEY` | Claude (`claude-opus-5-5`) |
+| `ANTHROPIC_API_KEY` | Claude (`claude-sonnet-5-5`) |
 | `MUSE_API_KEY` | Meta Model API bearer token |
 | `MUSE_BASE_URL` | Optional API root; defaults to `https://api.meta.ai/v1` |
 | `MUSE_MODEL` | Optional model; defaults to `muse-spark-1.3` |

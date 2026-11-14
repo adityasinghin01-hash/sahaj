@@ -23,7 +23,7 @@ AI care for parents aged 50–80 (keypad or smartphone) and their adult children
 5. Every webhook verified; every step signed into the timeline; idempotency keys everywhere.
 6. Secrets only from env (`ANTHROPIC_API_KEY`, `MUSE_API_KEY`, `GEMINI_API_KEY`, `SAFE_BROWSING_KEY`, `SHIELD_DEVICE_PAIRING_SECRET`, `DATABASE_URL`). Never commit a key, never put one in an app.
 7. Server-side link fetching only through `packages/shield/src/brain/sandbox.ts` (public IPs only, 2 s, ≤ 5 redirects).
-8. Claude model id is `claude-opus-5-5` (structured output via `messages.parse` + `zodOutputFormat`, effort set explicitly, check `stop_reason`). Don't change model ids.
+8. Claude model id is `claude-sonnet-5-5` (switched from Opus 14 Nov) (structured output via `messages.parse` + `zodOutputFormat`, effort set explicitly, check `stop_reason`). Don't change model ids.
 
 ## How to work
 - One task = one branch `chatgpt/<task-id>` from `main` → small commits → open a PR into `main`. **Never push to `main` directly.**

@@ -34,7 +34,7 @@ describe("Claude SDK adapter (fake HTTP only)", () => {
     expect(String(url)).toContain("/v1/messages");
     const body = JSON.parse(String(init?.body));
     expect(body).toMatchObject({
-      model: "claude-opus-5-5", max_tokens: 2000,
+      model: "claude-sonnet-5-5", max_tokens: 2000,
       system: request.system, messages: [{ role: "user", content: request.input }],
       output_config: { effort: "medium", format: { type: "json_schema", schema: { type: "object" } } },
       fallbacks: "default",
