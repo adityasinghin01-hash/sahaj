@@ -1,0 +1,4 @@
+# Gradle output for this module
+android/build/
+# Copied from packages/shield/rules/rules.json by app.plugin.js at prebuild time.
+android/src/main/assets/shield/rules.json
