@@ -1,3 +1,5 @@
+import { useSession } from '@/lib/session';
+import { LiveAlert, LiveLoading } from '@/components/sahaj/live';
 import { Icon } from '@/components/ui/icon';
 import {
   Btn,
@@ -15,7 +17,7 @@ import { router, useLocalSearchParams } from 'expo-router';
 import { Check, FileText, Phone, ShieldCheck } from 'lucide-react-native';
 import { View } from 'react-native';
 
-export default function AlertDetail() {
+function DemoAlertDetail() {
   const { id } = useLocalSearchParams<{ id?: string }>();
   const demo = useDemo();
   const alert = id ? shield.alerts.find((row) => row.id === id) : shield.alerts[0];
@@ -126,4 +128,11 @@ export default function AlertDetail() {
       </View>
     </Screen>
   );
+}
+
+export default function AlertDetail() {
+  const {ready,session}=useSession();
+  const {id} = useLocalSearchParams<{id?:string}>();
+  if(!ready) return <LiveLoading/>;
+  return session ? <LiveAlert id={id ?? ""}/> : <DemoAlertDetail/>;
 }

@@ -9,7 +9,8 @@
     "start": "next start",
     "typecheck": "next typegen && tsc --noEmit",
     "test": "vitest run",
-    "test:e2e-pg": "bash scripts/e2e-phase2.sh"
+    "test:e2e-pg": "bash scripts/e2e-phase2.sh",
+    "test:e2e-app": "bash scripts/e2e-app.sh"
   },
   "dependencies": {
     "@sahaj/adapters": "workspace:*",
@@ -29,4 +30,3 @@
     "vitest": "^3.2.0"
   }
 }
-

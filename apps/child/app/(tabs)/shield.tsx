@@ -1,3 +1,5 @@
+import { useSession } from '@/lib/session';
+import { LiveShield, LiveLoading } from '@/components/sahaj/live';
 import { Icon } from '@/components/ui/icon';
 import {
   Card,
@@ -18,7 +20,7 @@ import { router } from 'expo-router';
 import { Check, ChevronRight, ShieldCheck, X } from 'lucide-react-native';
 import { View } from 'react-native';
 
-export default function Shield() {
+function DemoShield() {
   const demo = useDemo();
   return (
     <Screen>
@@ -132,4 +134,10 @@ export default function Shield() {
       </Section>
     </Screen>
   );
+}
+
+export default function Shield() {
+  const {ready,session}=useSession();
+  if(!ready) return <LiveLoading/>;
+  return session ? <LiveShield/> : <DemoShield/>;
 }

@@ -1,3 +1,5 @@
+import { useSession } from '@/lib/session';
+import { LiveHome, LiveLoading } from '@/components/sahaj/live';
 import { Icon } from '@/components/ui/icon';
 import {
   Btn,
@@ -53,7 +55,7 @@ function greeting() {
   return h < 12 ? 'Good morning' : h < 17 ? 'Good afternoon' : 'Good evening';
 }
 
-export default function Home() {
+function DemoHome() {
   const demo = useDemo();
   const approved = demo.approval;
   const setApproved = (approval: 'yes' | 'no') => updateDemo({ approval });
@@ -64,6 +66,7 @@ export default function Home() {
 
   return (
     <Screen>
+      <Btn label="Connect live Shield" kind="ghost" onPress={() => router.push('/sign-in')} />
       {/* Header */}
       <View className="mb-5 mt-2 flex-row items-center justify-between">
         <View>
@@ -318,4 +321,10 @@ function Quick({
       </Tap>
     </View>
   );
+}
+
+export default function Home() {
+  const {ready,session}=useSession();
+  if(!ready) return <LiveLoading/>;
+  return session ? <LiveHome/> : <DemoHome/>;
 }

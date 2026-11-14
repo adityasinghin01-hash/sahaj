@@ -1,3 +1,5 @@
+import { useSession } from '@/lib/session';
+import { LiveHarness, LiveLoading } from '@/components/sahaj/live';
 import { Icon } from '@/components/ui/icon';
 import { Card, Pop, Screen, T, Tap, TopBar } from '@/components/sahaj/ui';
 import { demoCall, demoScenes, resetDemo, showToast, shield } from '@/lib/demo';
@@ -20,7 +22,7 @@ const icons: Record<string, LucideIcon> = {
   late: Timer,
   reset: RotateCcw,
 };
-export default function Demo() {
+function DemoDemo() {
   return (
     <Screen>
       <TopBar title="Demo controls" />
@@ -67,4 +69,10 @@ export default function Demo() {
       </T>
     </Screen>
   );
+}
+
+export default function Demo() {
+  const {ready,session}=useSession();
+  if(!ready) return <LiveLoading/>;
+  return session ? <LiveHarness/> : <DemoDemo/>;
 }
