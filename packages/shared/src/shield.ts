@@ -76,3 +76,18 @@ export const ScamJudgement = z.object({
 export type ScamJudgement = z.infer<typeof ScamJudgement>;
 
 export const FamilyCheckState = z.enum(["asked", "confirmed", "denied", "no_answer"]);
+
+/**
+ * Phone → server signing (POST /api/shield/event).
+ * body = JSON.stringify(ShieldEvent) (UTF-8).
+ * sig  = hex(HMAC-SHA256(device_secret, `${ts}.${body}`)), ts = unix milliseconds.
+ * Server rejects if |now - ts| > 5 min, if sig mismatches, or if idempotency_key was seen.
+ * device_secret = hex(HMAC-SHA256(SHIELD_DEVICE_PAIRING_SECRET, device_id)) — derived on the server, never stored;
+ * returned once at pairing and kept on the phone in Android Keystore-backed storage.
+ */
+export const SHIELD_HEADERS = {
+  device: "x-shield-device",
+  ts: "x-shield-ts",
+  sig: "x-shield-sig",
+} as const;
+export const SHIELD_MAX_SKEW_MS = 5 * 60 * 1000;
