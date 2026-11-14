@@ -47,11 +47,11 @@ describe('authorized production send boundaries', () => {
     await expect(enqueueAuthorizedSend(db, undefined, input)).rejects.toThrow('send_encryption_not_configured');
     expect(rpc).not.toHaveBeenCalled();
   });
-  it('refuses the unsupported vendor route before a bare outbox write', async () => {
+  it('refuses the unbound refill notice before a bare outbox write', async () => {
     const db = { from: vi.fn(), rpc: vi.fn() };
     const port = createSupabaseCore1OutboxPort(db as unknown as Parameters<typeof createSupabaseCore1OutboxPort>[0], KEY);
     await expect(port.enqueue({ familyId: input.familyId, kind: 'core1.refill_vendor_order', action: 'medicine_refill',
-      dedupeKey: 'vendor', payload: {} })).rejects.toThrow('authorized_dispatch_route_unavailable');
+      dedupeKey: 'vendor', payload: {} })).rejects.toThrow('authorized_send_binding_missing');
     expect(db.from).not.toHaveBeenCalled(); expect(db.rpc).not.toHaveBeenCalled();
   });
   it('refuses unbound Core 2 sends before inserting an outbox row or fence', async () => {
@@ -64,7 +64,7 @@ describe('authorized production send boundaries', () => {
   it('refuses phone-dying notice completion before its legacy bare-outbox RPC', async () => {
     const db = { from: vi.fn(), rpc: vi.fn() };
     const port = createDeviceStore(db as unknown as Parameters<typeof createDeviceStore>[0], 'unused', 'test');
-    await expect(port.complete({} as never, {} as never, [{} as never])).rejects.toThrow('notice authorization');
+    await expect(port.complete({} as never, {} as never, [{} as never])).rejects.toThrow('notice authorization source missing');
     expect(db.from).not.toHaveBeenCalled(); expect(db.rpc).not.toHaveBeenCalled();
   });
 });

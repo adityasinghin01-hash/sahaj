@@ -1,3 +1,6 @@
+import { createCareDelivery } from '../core2/authorized-delivery';
+import { createSupabaseTimelinePort } from '../core2/supabase';
+import type { SupabaseClient } from '@supabase/supabase-js';
 import { enqueueAuthorizedSend } from './authorized-send';
 import { createHash } from 'node:crypto';
 import type { FamilyMembership, FamilyRole, AuthPort } from './types';
@@ -279,11 +282,24 @@ export function createSupabaseCore1OutboxPort(
 ): Core1OutboxPort {
   return {
     assertRouteAvailable(kind) {
-      if (kind !== 'core1.missed_call_push') throw new Core1CommandError('authorized_dispatch_route_unavailable', 503);
+      if (kind === 'core1.refill_vendor_order' && (!encryptionKeyHex || !/^[a-f0-9]{64}$/i.test(encryptionKeyHex) || !(process.env.TIMELINE_SIGNING_PRIVATE_KEY || process.env.SIGNING_PRIVATE_KEY)))
+        throw new Core1CommandError('authorized_send_not_configured', 503);
+      if (!['core1.missed_call_push', 'core1.refill_vendor_order'].includes(kind)) throw new Core1CommandError('authorized_dispatch_route_unavailable', 503);
     },
     async enqueue(input: Core1OutboxEnqueueInput): Promise<Core1OutboxEnqueueResult> {
-      // A vendor is not a provider contact person. Until a vendor dispatch contract exists,
-      // refuse instead of creating an undeliverable row or reusing an already consumed refill grant.
+      if (input.kind === 'core1.refill_vendor_order' && input.action === 'medicine_refill') {
+        const p = input.payload;
+        if (typeof p.personId !== 'string' || typeof p.recipientPersonId !== 'string' || typeof p.errandId !== 'string'
+          || typeof p.amountMinor !== 'number') throw new Core1CommandError('authorized_send_binding_missing', 503);
+        // Demo acknowledgment to Riya. TODO: real vendor calling needs a registered vendor contact route.
+        const client = db as unknown as SupabaseClient;
+        const send = createCareDelivery(client, createSupabaseTimelinePort(client, process.env.TIMELINE_SIGNING_PRIVATE_KEY || process.env.SIGNING_PRIVATE_KEY,
+          process.env.TIMELINE_SIGNING_KEY_ID || process.env.SIGNING_KEY_ID || 'core1-default'), encryptionKeyHex);
+        const result = await send({ familyId: input.familyId, actorPersonId: p.personId, targetPersonId: p.recipientPersonId,
+          outboxKind: 'core1.refill_notice', dedupeKey: input.dedupeKey, payload: p });
+        if (!result.outboxId) throw new Core1CommandError('refill_notice_not_authorized', 403);
+        return { outboxId: result.outboxId, deduped: result.duplicate === true };
+      }
       if (input.kind !== 'core1.missed_call_push' || input.action !== 'missed_call_nudge') {
         throw new Core1CommandError('authorized_dispatch_route_unavailable', 503);
       }

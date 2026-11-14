@@ -390,6 +390,7 @@ export function createCore2Service(deps: Core2Deps) {
     watchId?: string | null;
     sosId?: string | null;
   }): Promise<{ decision: "allow" | "ask" | "deny"; outboxId: string | null }> {
+    if (deps.dispatch.authorizeAndSend) return deps.dispatch.authorizeAndSend(input);
     const nowIso = getNow().toISOString();
     const gateInput = await deps.repo.loadGateInput({
       familyId: input.familyId,

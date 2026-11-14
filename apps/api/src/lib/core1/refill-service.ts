@@ -610,6 +610,7 @@ async function emitOptionalZapierWebhooks(params: {
     hook: 'ZAPIER_HOOK_Z1',
     env: params.deps.env,
     fetchImpl: params.deps.fetchImpl,
+    audit: async a => { await params.deps.timeline.append({ familyId: params.familyId, eventType: 'zapier.attempt', entityId: params.errandId, humanLine: 'Redacted Zapier webhook attempt recorded.', payload: a, dedupeKey: `zapier:${a.attemptId}` }); },
     payload: {
       schema: 'sahaj.zapier.z1.v1',
       event: params.z1Event,
@@ -633,6 +634,7 @@ async function emitOptionalZapierWebhooks(params: {
       hook: 'ZAPIER_HOOK_Z5',
       env: params.deps.env,
       fetchImpl: params.deps.fetchImpl,
+      audit: async a => { await params.deps.timeline.append({ familyId: params.familyId, eventType: 'zapier.attempt', entityId: params.errandId, humanLine: 'Redacted Zapier webhook attempt recorded.', payload: a, dedupeKey: `zapier:${a.attemptId}` }); },
       payload: {
         schema: 'sahaj.zapier.z5.v1',
         event: 'reminder.refill_due',
@@ -975,6 +977,7 @@ export async function executeRefillProposalCommand(
         personId: medicine.personId,
         medicineId: medicine.id,
         medicineLabel: medicine.label,
+        recipientPersonId: childRecipientId,
         vendorId: vendor.id,
         errandId,
         actionRequestId,
@@ -995,7 +998,7 @@ export async function executeRefillProposalCommand(
       familyId: actor.familyId,
       eventType: 'core1.refill.authorized',
       entityId: errandId,
-      humanLine: `Medicine refill authorized and vendor notice queued for ${medicine.label}`,
+      humanLine: `Medicine refill authorized and Riya app notice queued for ${medicine.label}`,
       payload: {
         actionRequestId,
         errandId,
@@ -1434,6 +1437,7 @@ export async function executeRefillCommand(
       await deps.store.incrementPermissionUsage(actor.familyId, decision.permissionId);
     }
 
+    const childRecipientId = (await deps.store.findDefaultChildRecipient(actor.familyId)) ?? actor.personId;
     const outboxRes = await deps.outbox.enqueue({
       familyId: actor.familyId,
       actionRequestId: ar.id,
@@ -1448,6 +1452,7 @@ export async function executeRefillCommand(
         personId: ar.personId,
         medicineId: medicine.id,
         medicineLabel: medicine.label,
+        recipientPersonId: childRecipientId,
         vendorId: ar.vendorId,
         errandId: ar.errandId,
         actionRequestId: ar.id,
@@ -1457,7 +1462,6 @@ export async function executeRefillCommand(
       },
     });
 
-    const childRecipientId = (await deps.store.findDefaultChildRecipient(actor.familyId)) ?? actor.personId;
     await deps.store.recordRiyaCardAlert({
       id: stableCore1Uuid(['core1-refill-card', actor.familyId, ar.id, 'authorized']),
       familyId: actor.familyId,
@@ -1469,7 +1473,7 @@ export async function executeRefillCommand(
       familyId: actor.familyId,
       eventType: 'core1.refill.authorized',
       entityId: ar.errandId,
-      humanLine: `Medicine refill approved and vendor notice queued for ${medicine.label}`,
+      humanLine: `Medicine refill approved and Riya app notice queued for ${medicine.label}`,
       payload: {
         actionRequestId: ar.id,
         errandId: ar.errandId,

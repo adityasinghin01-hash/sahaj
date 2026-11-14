@@ -294,7 +294,7 @@ describe('Core 1 Refill Approval Gate & Delivery Wiring', () => {
       body: JSON.stringify({ medicineId: h.medicineId, personId: h.maaPersonId, vendorId: h.vendorId }),
     }), h.deps);
     expect(result.status).toBe(503);
-    expect((await result.json()).error).toBe('authorized_dispatch_route_unavailable');
+    expect((await result.json()).error).toBe('authorized_send_not_configured');
     expect(h.actionRequests.size).toBe(0);
     expect(h.outboxRows).toHaveLength(0);
   });
@@ -578,7 +578,7 @@ describe('Core 1 Refill Approval Gate & Delivery Wiring', () => {
     expect(unapprovedVendor.outboxRows).toHaveLength(0);
   });
 
-  it('refuses configured Z1 & Z5 hooks until an authorized outbox route exists', async () => {
+  it('attempts signed redacted Z1 & Z5 hooks without failing the refill when HTTP fails', async () => {
     const calls: Array<{ url: string; body: string }> = [];
     const h = createFakeRefillHarness({
       remainingCount: 2,
@@ -614,9 +614,10 @@ describe('Core 1 Refill Approval Gate & Delivery Wiring', () => {
     const body = await res.json();
     expect(body.status).toBe('authorized');
     expect(body.zapier.z1.sent).toBe(false);
-    expect(body.zapier.z1.error).toBe('authorized_dispatch_route_unavailable');
+    expect(body.zapier.z1.error).toBe('webhook_failed');
     expect(body.zapier.z5.sent).toBe(false);
-    expect(body.zapier.z5.error).toBe('authorized_dispatch_route_unavailable');
-    expect(calls).toHaveLength(0);
+    expect(body.zapier.z5.error).toBe('webhook_failed');
+    expect(calls).toHaveLength(2);
+    expect(h.timelineEvents.filter(e => e.envelope.eventType === 'zapier.attempt')).toHaveLength(2);
   });
 });

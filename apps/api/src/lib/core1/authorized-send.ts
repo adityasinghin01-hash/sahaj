@@ -3,11 +3,15 @@ import { evaluateGate, requestFingerprint, type GateApproval, type GateConsent, 
 import { call, stableUuid, type RpcDb } from '../atlas-runtime/db';
 import { encryptWebhook } from '../webhook-security';
 
+export type CareSendKind = 'core2.sos_alert' | 'core2.watch_escalation' | 'core2.watch_checkin' | 'core2.reassurance' | 'core2.device_handover' | 'gentle_news.circle_offer' | 'core1.refill_notice';
+export const careSendAction = (kind: string): GateRequest['action'] => kind === 'core2.reassurance' ? 'share_data' : 'send_alert';
+
 export interface AuthorizedSendInput {
   familyId: string;
   subjectId: string;
   recipientId: string;
-  kind: 'core1.voice_notify' | 'core1.missed_call_push' | 'core1.sarvam_message_push';
+  kind: 'core1.voice_notify' | 'core1.missed_call_push' | 'core1.sarvam_message_push' | CareSendKind;
+  details?: Record<string, unknown>;
   sourceId: string;
   dedupeKey: string;
 }
@@ -28,20 +32,23 @@ export async function enqueueAuthorizedSend(db: RpcDb, encryptionKeyHex: string 
   const jobId = stableUuid(['authorized-send-job', ...ids]);
   const requestId = stableUuid(['authorized-send-request', ...ids]);
   const eventId = stableUuid(['authorized-send-event', ...ids]);
+  const care = input.details !== undefined;
+  const action = care ? careSendAction(input.kind) : input.kind === 'core1.missed_call_push' ? 'missed_call_nudge' : 'voice_message';
   const request: GateRequest = { id: requestId, familyId: input.familyId,
-    action: input.kind === 'core1.missed_call_push' ? 'missed_call_nudge' : 'voice_message', targetId: input.recipientId,
-    ...(input.kind !== 'core1.missed_call_push' ? { consentSubjectId: input.subjectId } : {}) };
-  const prepared = await call<{ lease: string; channel: 'expo' | 'twilio' }>(db, 'prepare_authorized_send', {
+    action, targetId: input.recipientId,
+    ...(['voice_message', 'share_data'].includes(action) ? { consentSubjectId: input.subjectId } : {}) };
+  const prepared = await call<{ lease: string; channel: 'expo' | 'twilio' }>(db, care ? 'prepare_care_send' : 'prepare_authorized_send', {
     p_family_id: input.familyId, p_job_id: jobId, p_request_id: requestId, p_event_id: eventId,
     p_subject_id: input.subjectId, p_recipient_id: input.recipientId, p_kind: input.kind, p_source_id: input.sourceId,
-    p_fingerprint: requestFingerprint(request),
+    p_fingerprint: requestFingerprint(request), ...(care ? { p_details: input.details } : {}),
   }, 'send_prepare_failed');
   const snapshot = await call<Snapshot>(db, 'load_gate_snapshot', {
     p_family_id: input.familyId, p_job_id: jobId, p_request_id: requestId,
   }, 'send_snapshot_failed');
   if (!snapshot.found || snapshot.request.fingerprint !== requestFingerprint(request)) throw new Error('send_request_mismatch');
   if (!snapshot.request.consumed) {
-    if (snapshot.block || snapshot.request.expired || snapshot.request.hasDenial || !['pending', 'approved'].includes(snapshot.request.status)) throw new Error('send_not_authorized');
+    if (snapshot.block === 'deny' || snapshot.request.hasDenial) throw new Error('send_permission_denied');
+    if (snapshot.block || snapshot.request.expired || !['pending', 'approved'].includes(snapshot.request.status)) throw new Error('send_not_authorized');
     const allowed = snapshot.permissions.some(permission => evaluateGate({
       actor: { id: snapshot.request.actorId, familyId: input.familyId, active: snapshot.actorActive }, request,
       permissions: [permission], approvals: snapshot.approvals.map(a => ({ ...a, requestId, requestFingerprint: snapshot.request.fingerprint,

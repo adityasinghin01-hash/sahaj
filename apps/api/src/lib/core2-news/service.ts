@@ -110,6 +110,7 @@ async function authorizeAndEnqueueOutbox(
     payload: Record<string, unknown>;
   },
 ): Promise<{ decision: "allow" | "ask" | "deny"; outboxId: string | null }> {
+  if (deps.core2.dispatch.authorizeAndSend && input.outboxKind === 'gentle_news.circle_offer') return deps.core2.dispatch.authorizeAndSend(input);
   const nowIso = nowOf(deps).toISOString();
   const gateInput = await deps.core2.repo.loadGateInput({
     familyId: input.familyId,
@@ -1164,20 +1165,27 @@ export async function closeIncidentWithAfterReport(
       family_id: actor.familyId,
       incident_id: incidentId,
       closed_at: nowIso,
-      summary_line:
-        initialReport.what_happened.calm_summary ??
-        `Incident closed (${initialReport.what_happened.severity})`,
-      accepted_by_name: initialReport.who_accepted.owner_name,
+      summary_line: 'Incident closed; family report available in Sahaj.',
+      accepted_by_name: null,
       accepted_at: initialReport.timings.accepted_at,
       deliveries_count: initialReport.deliveries.length,
       heard_count: initialReport.deliveries.filter((d) => d.heard).length,
       resolution_duration_s: initialReport.timings.resolution_duration_s,
-      report: initialReport,
+      report: null,
     });
-    const dispatcher = deps.zapier ?? createDefaultZapierDispatcher();
-    const result = await dispatcher.postZ3(hookUrl, z3Payload, ZAPIER_TIMEOUT_MS);
-    zapStatus = result.ok ? "sent" : "failed";
-    zapHttpStatus = result.status;
+    try {
+      const attemptId = uuidOf(deps);
+      await deps.core2.timeline.append({ familyId: actor.familyId, eventId: attemptId,
+        entityId: incidentId, eventType: 'zapier.attempt', dedupeKey: `zapier:z3:${attemptId}`,
+        occurredAt: nowIso, humanLine: 'Redacted Zapier Z3 webhook attempt recorded.',
+        payload: { hook: 'Z3', incident_id: incidentId } });
+      const dispatcher = deps.zapier ?? createDefaultZapierDispatcher();
+      const result = await dispatcher.postZ3(hookUrl, z3Payload, ZAPIER_TIMEOUT_MS);
+      zapStatus = result.ok ? 'sent' : 'failed';
+      zapHttpStatus = result.status;
+    } catch {
+      zapStatus = 'failed';
+    }
   }
 
   const finalReport: AfterReportDto = sanitizeReportValue({

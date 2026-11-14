@@ -1,3 +1,4 @@
+import { postRedactedWebhook } from '../redacted-webhook';
 import { Core2Error } from "@/lib/core2/contracts";
 import type { ZapierDispatcher, ZapierZ3Payload } from "./contracts";
 
@@ -7,7 +8,7 @@ const ISO_TS_RE =
   /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})$/;
 
 const FORBIDDEN_LOCATION_AND_CONTACT_KEYS = new Set([
-  "phone",
+  "phone", "phone_number", "phonenumber", "otp", "otp_code", "pin", "passcode", "password", "bank_account", "account_number", "gps",
   "phone_e164",
   "mobile",
   "msisdn",
@@ -100,30 +101,10 @@ export function createDefaultZapierDispatcher(): ZapierDispatcher {
       payload: ZapierZ3Payload,
       timeoutMs: number,
     ): Promise<{ ok: boolean; status: number | null }> {
-      let parsed: URL;
-      try {
-        parsed = new URL(hookUrl);
-      } catch {
-        return { ok: false, status: null };
-      }
-      if (parsed.protocol !== "https:" && parsed.protocol !== "http:") {
-        return { ok: false, status: null };
-      }
-      const controller = new AbortController();
-      const timer = setTimeout(() => controller.abort(), Math.max(250, timeoutMs));
-      try {
-        const res = await fetch(parsed.toString(), {
-          method: "POST",
-          headers: { "content-type": "application/json" },
-          body: JSON.stringify(sanitizeReportValue(payload)),
-          signal: controller.signal,
-        });
-        return { ok: res.ok, status: res.status };
-      } catch {
-        return { ok: false, status: null };
-      } finally {
-        clearTimeout(timer);
-      }
+      // closeIncident writes the signed attempt before invoking this transport.
+      const result = await postRedactedWebhook({ url: hookUrl, payload: sanitizeReportValue(payload),
+        timeoutMs, audit: async () => {} });
+      return { ok: result.ok, status: result.status };
     },
   };
 }

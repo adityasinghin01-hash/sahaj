@@ -127,40 +127,49 @@ export async function openAndOfferLocalCircleIncident(
       },
     });
 
-    const gateInput = await deps.core2Repo.loadGateInput({
-      familyId: input.familyId,
-      actorPersonId: input.subjectPersonId,
-      requestId,
-      action: "urgent_responder",
-      targetId: offer.contactPersonId,
-      now: nowIso,
-    });
-    const gateDecision = await deps.gate.evaluate(gateInput);
-
-    if (gateDecision.decision === "allow") {
-      const payloadCiphertext = deps.crypto.encryptSecretNote(
-        `core2:outbox:${input.familyId}:${requestId}`,
-        {
-          kind: "core2.watch_escalation",
-          channel: "call",
-          fallback_channel: "push",
-          incident_id: incidentId,
-          assignment_id: offer.assignmentId,
-          contact_person_id: offer.contactPersonId,
-          rank: offer.rank,
-          offer_expires_at: offer.expiresAt,
-          ...input.metadata,
-        },
-      );
-      await deps.dispatch.enqueueAuthorized({
+    if (deps.dispatch.authorizeAndSend) {
+      const result = await deps.dispatch.authorizeAndSend({ familyId: input.familyId,
+        actorPersonId: input.subjectPersonId, targetPersonId: offer.contactPersonId,
+        outboxKind: 'core2.watch_escalation', dedupeKey: `${input.dedupePrefix}:offer:${offer.assignmentId}`,
+        trustedContactId: offer.trustedContactId, payload: { incident_id: incidentId, assignment_id: offer.assignmentId } });
+      dispatched = result.decision === 'allow';
+    } else {
+      const gateInput = await deps.core2Repo.loadGateInput({
         familyId: input.familyId,
-        actionRequestId: requestId,
-        kind: "core2.watch_escalation",
-        dedupeKey: `${input.dedupePrefix}:offer:${offer.assignmentId}`,
-        payloadCiphertext,
-        trustedContactId: offer.trustedContactId,
+        actorPersonId: input.subjectPersonId,
+        requestId,
+        action: "urgent_responder",
+        targetId: offer.contactPersonId,
+        now: nowIso,
       });
-      dispatched = true;
+      const gateDecision = await deps.gate.evaluate(gateInput);
+
+      if (gateDecision.decision === "allow") {
+        const payloadCiphertext = deps.crypto.encryptSecretNote(
+          `core2:outbox:${input.familyId}:${requestId}`,
+          {
+            kind: "core2.watch_escalation",
+            channel: "call",
+            fallback_channel: "push",
+            incident_id: incidentId,
+            assignment_id: offer.assignmentId,
+            contact_person_id: offer.contactPersonId,
+            rank: offer.rank,
+            offer_expires_at: offer.expiresAt,
+            ...input.metadata,
+          },
+        );
+        await deps.dispatch.enqueueAuthorized({
+          familyId: input.familyId,
+          actionRequestId: requestId,
+          kind: "core2.watch_escalation",
+          dedupeKey: `${input.dedupePrefix}:offer:${offer.assignmentId}`,
+          payloadCiphertext,
+          trustedContactId: offer.trustedContactId,
+        });
+        dispatched = true;
+      }
+
     }
   } else {
     await deps.timeline.append({

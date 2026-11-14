@@ -1,6 +1,6 @@
-# Core 1 Zapier Integrations (Z1, Z2, Z5)
+# Zapier Integrations (Z1, Z2, Z3, Z5)
 
-Sahaj Core 1 uses three minimal Zapier integration seams. Every webhook/report passes through `redactSensitiveText` so **no phone numbers, OTPs, bank account numbers, or raw provider tokens** ever leave Sahaj. Outbound Zapier catch-hook delivery is strictly optional (env-gated) and **non-blocking** so a failed or slow webhook never blocks or rolls back Core 1 workflows.
+Sahaj Core 1 uses three minimal Zapier integration seams. Every webhook/report passes through its redaction boundary so **no phone numbers, OTPs, bank account numbers, or raw provider tokens** ever leave Sahaj. Outbound Zapier catch-hook delivery is strictly optional (env-gated) and **non-blocking** so a failed or slow webhook never blocks or rolls back Core 1 workflows.
 
 ---
 
@@ -24,7 +24,7 @@ Sahaj Core 1 uses three minimal Zapier integration seams. Every webhook/report p
   "vendorId": "44444444-4444-4444-8444-444444444444",
   "actionRequestId": "55555555-5555-4555-8555-555555555555",
   "errandId": "66666666-6666-4666-8666-666666666666",
-  "medicineLabel": "Metformin 500mg",
+  "medicineLabel": "Medicine refill",
   "reorderPacks": 1,
   "amountMinor": 25000,
   "status": "authorized",
@@ -93,10 +93,38 @@ Sahaj Core 1 uses three minimal Zapier integration seams. Every webhook/report p
   "familyId": "11111111-1111-4111-8111-111111111111",
   "personId": "22222222-2222-4222-8222-222222222222",
   "entityId": "33333333-3333-4333-8333-333333333333",
-  "label": "Metformin 500mg",
+  "label": "Care reminder",
   "dueAt": "2026-11-16T09:00:00.000Z",
-  "summary": "Low stock threshold reached (2 remaining); refill due for Metformin 500mg.",
+  "summary": "Care reminder due; details stay in Sahaj.",
   "occurredAt": "2026-11-15T00:00:00.000Z"
 }
 ```
 
+
+## C-15 delivery decision (15 Nov 2026)
+
+Z1, Z5 and Z3 use an **env-configured redacted webhook; not a security boundary**.
+The optional integration POSTs directly to the corresponding `ZAPIER_HOOK_*` URL;
+it does not use the Phase 3 dispatch ledger or grant permission to send a care
+notification, place an order, share location, or accept an incident.
+
+Every configured HTTP attempt first writes a signed `zapier.attempt` timeline row.
+If signing fails, no POST is made. Missing configuration skips the hook. Invalid
+URLs, signing failure, HTTP errors, network exceptions and a three-second deadline
+produce optional failure telemetry; they do not fail or roll back the core flow.
+The HTTP transport refuses redirects and is bounded even if a transport ignores
+AbortSignal. URLs and secrets are never included in attempt rows. Z1/Z5 attempt
+rows include a payload hash and unique attempt ID; the HTTP idempotency header
+contains the payload hash. Zapier consumers should deduplicate this header when
+performing effects. There is no automatic retry of an uncertain attempt.
+
+Z1/Z5 payloads use explicit field allowlists, generic labels and summaries, and
+recursive redaction of contact, OTP/PIN and location fields. Free-form medicine
+labels and summaries stay in Sahaj so a pasted address cannot leak through them. Z3 deliberately sends only IDs,
+timestamps and aggregate delivery/heard counts, with a fixed neutral summary:
+`accepted_by_name` and `report` are null. The full signed family report stays in
+Sahaj. No location, contact number, OTP, raw provider token or free-form incident
+narrative is included in Z3.
+
+The existing Z2 inbound shared-secret check is unchanged. These hook URLs are
+server environment configuration and never supplied by an app or request body.

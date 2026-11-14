@@ -1,3 +1,5 @@
+import { postRedactedWebhook, type WebhookAttempt } from '../redacted-webhook';
+import { sanitizeReportValue } from '../core2-news/redaction';
 import { createHash, timingSafeEqual } from 'node:crypto';
 
 export type ZapierHookEnvKey = 'ZAPIER_HOOK_Z1' | 'ZAPIER_HOOK_Z5';
@@ -65,8 +67,7 @@ export function verifyZapierReportSecret(
 }
 
 /**
- * Zapier has no authorized Phase 2 dispatch route yet. Keep the optional hook outcome
- * explicit and never perform a direct HTTP send outside the authorized outbox.
+ * Env-configured redacted webhook; not a security boundary. Signed attempts precede optional HTTP.
  */
 export async function postZapierHook(params: {
   hook: ZapierHookEnvKey;
@@ -74,6 +75,7 @@ export async function postZapierHook(params: {
   env?: Record<string, string | undefined>;
   fetchImpl?: ZapierFetch;
   timeoutMs?: number;
+  audit?: (attempt: WebhookAttempt) => Promise<void>;
 }): Promise<ZapierDispatchOutcome> {
   const env = params.env ?? process.env;
   const rawUrl = env[params.hook]?.trim();
@@ -81,5 +83,20 @@ export async function postZapierHook(params: {
     return { sent: false, hook: params.hook, skippedReason: 'not_configured' };
   }
 
-  return { sent: false, hook: params.hook, error: 'authorized_dispatch_route_unavailable' };
+  // No free-form labels or summaries cross this seam: they may contain an address or location.
+  const p = params.payload;
+  const safePayload = p.schema === 'sahaj.zapier.z1.v1' ? {
+    schema: p.schema, event: p.event, familyId: p.familyId, personId: p.personId,
+    medicineId: p.medicineId, vendorId: p.vendorId, actionRequestId: p.actionRequestId, errandId: p.errandId,
+    medicineLabel: 'Medicine refill', reorderPacks: p.reorderPacks, amountMinor: p.amountMinor,
+    status: ['authorized','dispatched','delivered','approval_requested'].includes(p.status) ? p.status : 'update', occurredAt: p.occurredAt,
+  } : {
+    schema: p.schema, event: p.event, familyId: p.familyId, personId: p.personId, entityId: p.entityId,
+    label: 'Care reminder', dueAt: p.dueAt, summary: 'Care reminder due; details stay in Sahaj.', occurredAt: p.occurredAt,
+  };
+  const result = await postRedactedWebhook({ url: rawUrl, payload: sanitizeReportValue(safePayload),
+    timeoutMs: params.timeoutMs, fetchImpl: params.fetchImpl,
+    audit: params.audit ?? (async () => { throw new Error('audit_not_configured'); }) });
+  return { sent: result.ok, hook: params.hook, ...(result.status !== null ? { status: result.status } : {}),
+    ...(result.error ? { error: result.error } : {}) };
 }

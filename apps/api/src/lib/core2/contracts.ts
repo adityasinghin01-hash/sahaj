@@ -253,7 +253,13 @@ export interface EnqueueOutboxResult {
  * Typed dispatch seam for Kiro Phase 2/3 authorized outbox & dispatch fencing.
  * Zero direct SMS/WhatsApp/Sarvam provider HTTP calls happen in Core 2 routes.
  */
+export interface CareDeliveryInput {
+  familyId: string; actorPersonId: string; targetPersonId: string; outboxKind: string;
+  dedupeKey: string; payload: Record<string, unknown>; trustedContactId?: string | null;
+  watchId?: string | null; sosId?: string | null;
+}
 export interface Core2DispatchPort {
+  authorizeAndSend?(input: CareDeliveryInput): Promise<{ decision: 'allow' | 'ask' | 'deny'; outboxId: string | null }>;
   enqueueAuthorized(request: EnqueueOutboxRequest): Promise<EnqueueOutboxResult>;
 }
 

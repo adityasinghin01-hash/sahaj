@@ -276,7 +276,7 @@ export interface ZapierZ3Payload {
   deliveries_count: number;
   heard_count: number;
   resolution_duration_s: number | null;
-  report: AfterReportDto;
+  report: AfterReportDto | null;
 }
 
 export interface PublicGentleNewsDto {

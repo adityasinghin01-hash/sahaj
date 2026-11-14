@@ -1,3 +1,6 @@
+import { prepareCareDelivery, dispatchCareDelivery, isCareAuthorizationRefusal } from '../core2/authorized-delivery';
+import { createSupabaseTimelinePort } from '../core2/supabase';
+import { createSupabaseVoiceNotifyDeps } from '../core1/voice-notify';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { serviceDatabase } from '../database';
 import { Core2Error } from '../core2/contracts';
@@ -36,20 +39,38 @@ export function createDeviceStore(db: SupabaseClient, signingKey: string, keyId:
       return data as Handover[];
     },
     async complete(job, timeline, notices) {
-      // The legacy RPC inserts bare outbox rows. Do not complete signed handover work
-      // claiming notices were queued until they carry real Phase 3 authorization.
-      if (notices.length) throw new Core2Error('unavailable', 503, 'Device notice authorization is not integrated.');
+      if (!job.id || !job.family_id || !job.person_id) throw new Core2Error('unavailable', 503, 'Device notice authorization source missing.');
+      const prepared: Awaited<ReturnType<typeof prepareCareDelivery>>[] = [];
+      const acceptedNotices: typeof notices = [];
+      for (const notice of notices) {
+        try {
+          const result = await prepareCareDelivery(db, createSupabaseTimelinePort(db, signingKey, keyId), {
+            familyId: job.family_id, actorPersonId: job.person_id, targetPersonId: notice.recipient,
+            outboxKind: notice.parent ? 'core2.reassurance' : 'core2.device_handover',
+            dedupeKey: notice.command.dedupeKey, trustedContactId: notice.command.trustedContactId,
+            watchId: job.watch_id, sosId: job.sos_id,
+            payload: { status_label: notice.statusLabel, handover_id: job.id },
+          });
+          prepared.push(result);
+          acceptedNotices.push(notice);
+        } catch (error) { if (!isCareAuthorizationRefusal(error)) throw error; }
+      }
+      const authorizedNotices = acceptedNotices.map((notice, i) => ({ ...notice, authorizedOutboxId: prepared[i].id }));
       for (let attempt = 0; attempt < 3; attempt++) {
         const { data: head, error: headError } = await db.from('timeline_stream_heads')
           .select('last_sequence,last_chain_hash').eq('family_id', job.family_id).maybeSingle();
         if (headError) storageError(headError);
-        const signed = signTimelineEvent({ ...timeline, sequence: (head?.last_sequence ?? 0) + 1,
+        const effectiveTimeline = { ...timeline, payload: { ...timeline.payload, notices_queued: acceptedNotices.length } };
+        const signed = signTimelineEvent({ ...effectiveTimeline, sequence: (head?.last_sequence ?? 0) + 1,
           previousHash: head?.last_chain_hash ?? null, keyId }, signingKey);
         const { error } = await db.rpc('core2_complete_device_handover', {
-          p_job_id: job.id, p_event: signed.envelope, p_payload_canonical: canonicalJson(timeline.payload),
-          p_chain_hash: signed.chainHash, p_signature: signed.signature, p_notices: notices,
+          p_job_id: job.id, p_event: signed.envelope, p_payload_canonical: canonicalJson(effectiveTimeline.payload),
+          p_chain_hash: signed.chainHash, p_signature: signed.signature, p_notices: authorizedNotices,
         });
-        if (!error) return;
+        if (!error) {
+          for (const result of prepared) await dispatchCareDelivery(createSupabaseVoiceNotifyDeps(db), result.send, result.id, result.channel);
+          return;
+        }
         if (error.code !== '40001') storageError(error);
       }
       storageError(null);

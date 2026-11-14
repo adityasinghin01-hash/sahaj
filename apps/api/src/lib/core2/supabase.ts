@@ -1,3 +1,4 @@
+import { createCareDelivery } from './authorized-delivery';
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type {
   GateApproval,
@@ -1167,6 +1168,7 @@ export function createSupabaseCore2Repository(db: SupabaseClient): Core2Reposito
 
 export function createSupabaseDispatchPort(db: SupabaseClient): Core2DispatchPort {
   return {
+    authorizeAndSend: createCareDelivery(db, createSupabaseTimelinePort(db, process.env.TIMELINE_SIGNING_PRIVATE_KEY, process.env.TIMELINE_SIGNING_KEY_ID || "core2-default")),
     async enqueueAuthorized(request) {
       // Core 2 passes no durable request or Phase 3 workflow/incident/assignment binding.
       // Its in-memory Cedar decision cannot authorize a dispatch ledger claim. Fail closed

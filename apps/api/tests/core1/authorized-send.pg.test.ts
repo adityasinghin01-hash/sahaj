@@ -53,7 +53,7 @@ describe.skipIf(!url)('C-14 authorized sends on all-migrations disposable Postgr
     await sql`insert into public.atlas_principals(id,family_id,label) values(${principal},${family},'Synthetic AI')`;
     await sql`insert into public.consents(id,family_id,person_id,purpose,question,answer,version,created_at)
       values(${consent},${family},${subject},${'voice_share:' + recipient},'Share with Maa?',true,'v1',now()-interval '1 second')`;
-    for (const action of ['voice_message', 'missed_call_nudge']) {
+    for (const action of ['voice_message', 'missed_call_nudge', 'send_alert', 'share_data']) {
       await sql`insert into public.permissions(family_id,person_id,action,decision,expires_at,consent_id,principal_id,
         valid_from,period_start,period_end,max_uses,target_ids) values(${family},${subject},${action},'allow',
         now()+interval '1 hour',${consent},${principal},now()-interval '1 hour',now()-interval '1 hour',now()+interval '1 hour',5,${[recipient]})`;
@@ -189,4 +189,136 @@ describe.skipIf(!url)('C-14 authorized sends on all-migrations disposable Postgr
     expect(sent).toBe(1);
     expect((await sql`select status from public.outbox where family_id=${family}`)[0].status).toBe('completed');
   });
+  // C-15 runs in this same all-migrations disposable runner, under service_role.
+  const careKinds = ['core2.sos_alert','core2.watch_escalation','core2.reassurance',
+    'core2.device_handover','gentle_news.circle_offer','core1.refill_notice'] as const;
+  async function careInput(kind: typeof careKinds[number], callOnly = false, completed = true): Promise<AuthorizedSendInput> {
+    const [raw, req, incident, watch, sos, tc, cc, errand, refillRequest, parent] = Array.from({ length: 10 }, () => randomUUID());
+    if (callOnly) await sql`delete from public.app_push_tokens where family_id=${family}`;
+    await sql`insert into public.raw_events(id,family_id,source,provider_event_id,event_type,status)
+      values(${raw},${family},'core2',${raw},'synthetic.care','processed')`;
+    await sql`insert into public.requests(id,family_id,person_id,kind) values(${req},${family},${subject},'synthetic_care')`;
+    await sql`insert into public.incidents(id,family_id,person_id,request_id,state,severity)
+      values(${incident},${family},${subject},${req},'offered','urgent')`;
+    await sql`insert into public.core2_watches(id,family_id,subject_person_id,incident_id,request_id,raw_event_id,timezone,deadline_at,grace_until)
+      values(${watch},${family},${subject},${incident},${req},${raw},'Asia/Kolkata',now()+interval '10 minutes',now()+interval '20 minutes')`;
+    await sql`insert into public.core2_sos_events(id,family_id,subject_person_id,incident_id,request_id,raw_event_id)
+      values(${sos},${family},${subject},${incident},${req},${raw})`;
+    await sql`insert into public.consents(id,family_id,person_id,purpose,question,answer,version,created_at)
+      values(${cc},${family},${recipient},'trusted_contact','Serve as contact?',true,'v1',now()-interval '1 second')`;
+    await sql`insert into public.core2_trusted_contacts(id,family_id,subject_person_id,contact_person_id,rank,scopes,state,approved_at,consent_id,consent_at)
+      values(${tc},${family},${subject},${recipient},1,ARRAY['sos','watch_escalation','reassurance'],'active',now(),${cc},now())`;
+    if (kind === 'gentle_news.circle_offer') {
+      await sql`insert into public.people(id,family_id,display_name,role,device) values(${parent},${family},'Synthetic parent','parent','keypad')`;
+      await sql`insert into public.circle(family_id,person_id,rank,approved_at,consent_at) values(${family},${recipient},1,now(),now())`;
+      await sql`insert into public.core2_gentle_news(family_id,incident_id,subject_person_id,parent_person_id,marked_by_person_id,
+        calm_summary,circle_person_id,maa_call_due_at,raw_event_id)
+        values(${family},${incident},${subject},${parent},${subject},'Calm synthetic update',${recipient},now()+interval '5 minutes',${raw})`;
+    }
+    if (kind === 'core1.refill_notice') {
+      await sql`update public.family_memberships set role='child' where family_id=${family} and person_id=${recipient}`;
+      await sql`insert into public.action_requests(id,family_id,person_id,action,status,expires_at,consumed_at,amount_minor)
+        values(${refillRequest},${family},${subject},'medicine_refill','approved',now()+interval '1 hour',now(),54000)`;
+      await sql`insert into public.errands(id,family_id,request_id,action_request_id,status)
+        values(${errand},${family},${req},${refillRequest},'authorized')`;
+    }
+    const handover = kind === 'core2.device_handover' ? randomUUID() : null;
+    if (handover) {
+      await sql`insert into public.core2_device_status(family_id,person_id,battery_level,is_charging,sampled_at,raw_event_id)
+        values(${family},${subject},3,false,now(),${raw})`;
+      await sql`insert into public.core2_device_handovers(id,family_id,person_id,watch_id,request_id,reason,last_seen_at,completed_at)
+        values(${handover},${family},${subject},${watch},${req},'low_battery',now(),${completed ? new Date() : null})`;
+    }
+    const details = { handoverId: handover, trustedContactId: tc, watchId: kind==='core2.sos_alert' ? null : watch,
+      sosId: kind==='core2.sos_alert' ? sos : null, incidentId: incident, assignmentId: null,
+      errandId: kind==='core1.refill_notice' ? errand : null, statusLabel: 'Main safe hoon', amountMinor: kind==='core1.refill_notice' ? 54000 : null };
+    const { generateKeyPairSync } = await import('node:crypto');
+    const { signTimelineEvent, canonicalJson } = await import('@/lib/timeline');
+    const key = generateKeyPairSync('ed25519').privateKey.export({ type: 'pkcs8', format: 'pem' }).toString();
+    const payload = { kind, subjectId: subject, recipientId: recipient, details };
+    const event = signTimelineEvent({ familyId: family, eventId: randomUUID(), sequence: 1, previousHash: null,
+      dedupeKey: `care-source:${source}`, eventType: 'care.send.requested', entityId: source,
+      humanLine: 'Synthetic care source', occurredAt: new Date().toISOString(), keyId: 'synthetic-c15', payload }, key);
+    const appended = await db.rpc('append_timeline_event', { p_event: event.envelope, p_payload_canonical: canonicalJson(payload),
+      p_chain_hash: event.chainHash, p_signature: event.signature });
+    expect(appended.error).toBeNull();
+    return { familyId: family, subjectId: subject, recipientId: recipient, sourceId: source, kind, details, dedupeKey: `c15:${kind}:${source}` };
+  }
+  for (const kind of careKinds) {
+    it(`C-15 ${kind}: authorizes server principal and reaches the guarded app claim`, async () => {
+      const i = await careInput(kind), result = await enqueueAuthorizedSend(db, KEY, i);
+      expect(result.channel).toBe('expo');
+      const [row] = await sql`select r.principal_id,r.person_id,r.target_id from public.outbox o join public.action_requests r on r.id=o.action_request_id where o.id=${result.id}`;
+      expect(row.principal_id).toBe(principal); expect(row.person_id).toBe(subject); expect(row.target_id).toBe(recipient);
+      const lease = await claimAuthorizedSend(db, family, result.id);
+      expect(await claimAuthorizedPush(db, family, result.id, lease!.lease)).toEqual(['ExponentPushToken[synthetic-c14]']);
+    });
+    it(`C-15 ${kind}: revocation between enqueue and ledger claim refuses delivery`, async () => {
+      const i = await careInput(kind), result = await enqueueAuthorizedSend(db, KEY, i);
+      const lease = await claimAuthorizedSend(db, family, result.id);
+      await sql`update public.permissions set revoked_at=now() where family_id=${family}`;
+      await expect(claimAuthorizedPush(db, family, result.id, lease!.lease)).rejects.toThrow('push_claim_failed');
+      expect((await sql`select count(*)::int as n from public.authorized_push_ledger where outbox_id=${result.id}`)[0].n).toBe(0);
+    });
+  }
+  it('C-15 call recipient without an app reaches the original Phase 2 contact fence', async () => {
+    const i = await careInput('core2.sos_alert',true), result = await enqueueAuthorizedSend(db,KEY,i);
+    expect(result.channel).toBe('twilio');
+    const lease = await claimAuthorizedSend(db,family,result.id);
+    expect(await dispatchStore(db).claim({ familyId: family, personId: recipient, outboxId: result.id, outboxLease: lease!.lease,
+      key: `dispatch:${result.id}:a1`, provider: 'twilio', action: 'twilio.create_call', callId: lease!.callId!,
+      contact: { identityId: identity, accountId: ACCOUNT, identityHash: HASH } })).toBe('claimed');
+  });
+  it('C-15 trusted-contact revocation refuses an already queued send', async () => {
+    const i = await careInput('core2.sos_alert'), result = await enqueueAuthorizedSend(db,KEY,i);
+    const lease = await claimAuthorizedSend(db,family,result.id);
+    await sql`update public.core2_trusted_contacts set state='revoked',revoked_at=now() where id=${i.details!.trustedContactId as string}`;
+    await expect(claimAuthorizedPush(db,family,result.id,lease!.lease)).rejects.toThrow('push_claim_failed');
+  });
+  it('C-15 safe resolution fences a queued watch offer', async () => {
+    const i = await careInput('core2.watch_escalation'), result = await enqueueAuthorizedSend(db,KEY,i);
+    const lease = await claimAuthorizedSend(db,family,result.id);
+    await sql`update public.core2_watches set state='safe',safe_at=now(),next_tick_at=null where id=${i.details!.watchId as string}`;
+    await expect(claimAuthorizedPush(db,family,result.id,lease!.lease)).rejects.toThrow('push_claim_failed');
+  });
+  it('C-15 altered recipient/source details cannot reuse a signed intent', async () => {
+    const i = await careInput('core2.sos_alert'); i.details = { ...i.details, statusLabel: 'tampered' };
+    await expect(enqueueAuthorizedSend(db,KEY,i)).rejects.toThrow('send_prepare_failed');
+    expect((await sql`select count(*)::int as n from public.outbox where family_id=${family}`)[0].n).toBe(0);
+  });
+
+  it('C-15 phone-dying notices cannot claim before signed handover completion', async () => {
+    const i = await careInput('core2.device_handover',false,false), result = await enqueueAuthorizedSend(db,KEY,i);
+    const lease = await claimAuthorizedSend(db,family,result.id);
+    await expect(claimAuthorizedPush(db,family,result.id,lease!.lease)).rejects.toThrow('push_claim_failed');
+    expect((await sql`select count(*)::int as n from public.authorized_push_ledger where outbox_id=${result.id}`)[0].n).toBe(0);
+    await sql`update public.core2_device_handovers set completed_at=now() where id=${i.details!.handoverId as string}`;
+    expect(await claimAuthorizedPush(db,family,result.id,lease!.lease)).toEqual(['ExponentPushToken[synthetic-c14]']);
+  });
+  it('C-15 the replacement handover RPC refuses a bare notice and accepts only its authorized outbox', async () => {
+    const i = await careInput('core2.device_handover',false,false);
+    const { generateKeyPairSync } = await import('node:crypto');
+    const { signTimelineEvent, canonicalJson } = await import('@/lib/timeline');
+    const key = generateKeyPairSync('ed25519').privateKey.export({ type: 'pkcs8', format: 'pem' }).toString();
+    const [head] = await sql`select * from public.timeline_stream_heads where family_id=${family}`;
+    const handoverId = i.details!.handoverId as string;
+    const payload = { notices_queued: 1 };
+    const event = signTimelineEvent({ familyId: family, eventId: handoverId, sequence: Number(head.last_sequence)+1,
+      previousHash: head.last_chain_hash, dedupeKey: `core2:device:${handoverId}`, eventType: 'core2.device.handover',
+      entityId: i.details!.watchId as string, humanLine: 'Synthetic phone handover', occurredAt: new Date().toISOString(), keyId: 'synthetic-c15', payload }, key);
+    const notice = { recipient, statusLabel: 'Phone update pending', parent: false,
+      command: { familyId: family, kind: i.kind, dedupeKey: i.dedupeKey, trustedContactId: i.details!.trustedContactId } };
+    const args = { p_job_id: handoverId, p_event: event.envelope, p_payload_canonical: canonicalJson(payload),
+      p_chain_hash: event.chainHash, p_signature: event.signature };
+    const bare = await db.rpc('core2_complete_device_handover', { ...args, p_notices: JSON.stringify([notice]) });
+    expect(bare.error?.code).toBe('42501');
+    const result = await enqueueAuthorizedSend(db,KEY,i);
+    const completed = await db.rpc('core2_complete_device_handover', { ...args,
+      p_notices: JSON.stringify([{ ...notice, authorizedOutboxId: result.id }]) });
+    expect(completed.error).toBeNull();
+    expect((await sql`select completed_at from public.core2_device_handovers where id=${handoverId}`)[0].completed_at).toBeTruthy();
+    const lease = await claimAuthorizedSend(db,family,result.id);
+    expect(await claimAuthorizedPush(db,family,result.id,lease!.lease)).toEqual(['ExponentPushToken[synthetic-c14]']);
+  });
+
 });

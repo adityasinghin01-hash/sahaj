@@ -34,13 +34,15 @@ export function createDeviceService(deps: DeviceDeps) {
     } };
     const subject = await deps.repo.getPerson(job.family_id, job.person_id);
     const name = subject?.displayName ?? 'Riya';
-    const age = Math.max(0, Math.floor((now().getTime() - Date.parse(job.last_seen_at)) / 60000));
+    const age = Math.max(0, Math.floor((Date.parse(job.created_at) - Date.parse(job.last_seen_at)) / 60000));
     async function prepare(recipient: string, line: string, parent: boolean, contact?: TrustedContactRow) {
+      if (!deps.dispatch.authorizeAndSend) {
       const gate = await deps.repo.loadGateInput({ familyId: job.family_id, actorPersonId: job.person_id,
         requestId: job.request_id ?? job.id, action: parent ? 'share_data' : 'urgent_responder',
         targetId: recipient, ...(parent ? { consentSubjectId: job.person_id } : {}), now: at });
       const decision = await deps.gate.evaluate(gate);
       if (decision.decision !== 'allow') return;
+      }
       const dedupeKey = `core2:device:${job.id}:${recipient}`;
       const payload = { kind: parent ? 'core2.reassurance' : 'core2.device_handover',
         recipient_person_id: recipient, subject_person_id: job.person_id, status_label: line,
