@@ -63,29 +63,35 @@ describe("send", () => {
 describe("fetchWhatsAppMedia", () => {
   const bytes = new Uint8Array([1, 2, 3, 4]);
   const sha = createHash("sha256").update(bytes).digest("hex");
+  const HOSTS = { allowedHosts: ["lookaside.fbsbx.com"] }; // explicit deployment configuration; the adapter has no default host
   const meta = (over: object = {}) => json({ url: "https://lookaside.fbsbx.com/whatsapp_business/attachments/?mid=1", mime_type: "audio/ogg; codecs=opus", sha256: sha, file_size: 4, id: "m1", ...over });
   const fileRes = (b = bytes) => new Response(b, { status: 200 });
   const r = (id = "m1") => req("whatsapp.media.read", { mediaId: id });
+  it("has no default media host: missing or empty configuration sends nothing", async () => {
+    const t = scripted(meta());
+    for (const hosts of [undefined, [] as string[]]) expect(await code(fetchWhatsAppMedia(cfg(t.transport), r(), { allowedHosts: hosts as never }))).toBe("invalid_payload");
+    expect(t.calls).toHaveLength(0);
+  });
   it("downloads in two steps with auth on both and verifies sha256", async () => {
     const t = scripted(meta(), fileRes());
-    const out = await fetchWhatsAppMedia(cfg(t.transport), r());
+    const out = await fetchWhatsAppMedia(cfg(t.transport), r(), HOSTS);
     expect(out.data.mimeType).toBe("audio/ogg");
     expect([...out.data.data]).toEqual([1, 2, 3, 4]);
     expect(t.calls.map((c) => c.url)[0]).toBe("https://graph.facebook.com/v23.0/m1");
     expect((t.calls[1]!.init as RequestInit).redirect).toBe("manual");
   });
   it("rejects unsafe media URLs, non-audio, hash mismatch and oversize", async () => {
-    expect(await code(fetchWhatsAppMedia(cfg(scripted(meta({ url: "https://evil.test/x" })).transport), r()))).toBe("unsafe_url");
-    expect(await code(fetchWhatsAppMedia(cfg(scripted(meta({ url: "http://lookaside.fbsbx.com/x" })).transport), r()))).toBe("unsafe_url");
-    expect(await code(fetchWhatsAppMedia(cfg(scripted(meta({ mime_type: "application/pdf" })).transport), r()))).toBe("provider_rejected");
-    expect(await code(fetchWhatsAppMedia(cfg(scripted(meta(), fileRes(new Uint8Array([9, 9, 9, 9]))).transport), r()))).toBe("provider_rejected");
-    expect(await code(fetchWhatsAppMedia(cfg(scripted(meta({ file_size: 99999999 })).transport), r()))).toBe("payload_too_large");
-    expect(await code(fetchWhatsAppMedia(cfg(scripted(meta({ sha256: undefined, file_size: undefined }), fileRes(new Uint8Array(50))).transport), r(), { maxBytes: 10 }))).toBe("payload_too_large");
+    expect(await code(fetchWhatsAppMedia(cfg(scripted(meta({ url: "https://evil.test/x" })).transport), r(), HOSTS))).toBe("unsafe_url");
+    expect(await code(fetchWhatsAppMedia(cfg(scripted(meta({ url: "http://lookaside.fbsbx.com/x" })).transport), r(), HOSTS))).toBe("unsafe_url");
+    expect(await code(fetchWhatsAppMedia(cfg(scripted(meta({ mime_type: "application/pdf" })).transport), r(), HOSTS))).toBe("provider_rejected");
+    expect(await code(fetchWhatsAppMedia(cfg(scripted(meta(), fileRes(new Uint8Array([9, 9, 9, 9]))).transport), r(), HOSTS))).toBe("provider_rejected");
+    expect(await code(fetchWhatsAppMedia(cfg(scripted(meta({ file_size: 99999999 })).transport), r(), HOSTS))).toBe("payload_too_large");
+    expect(await code(fetchWhatsAppMedia(cfg(scripted(meta({ sha256: undefined, file_size: undefined }), fileRes(new Uint8Array(50))).transport), r(), { ...HOSTS, maxBytes: 10 }))).toBe("payload_too_large");
   });
   it("rejects redirects and bad ids; timeouts are provider_unavailable", async () => {
-    expect(await code(fetchWhatsAppMedia(cfg(scripted(meta(), new Response("", { status: 302, headers: { location: "http://169.254.169.254/" } })).transport), r()))).toBe("provider_rejected");
-    expect(await code(fetchWhatsAppMedia(cfg(scripted().transport), r("../x")))).toBe("invalid_payload");
-    expect(await code(fetchWhatsAppMedia(cfg(scripted(hang()).transport), r()))).toBe("provider_unavailable");
+    expect(await code(fetchWhatsAppMedia(cfg(scripted(meta(), new Response("", { status: 302, headers: { location: "http://169.254.169.254/" } })).transport), r(), HOSTS))).toBe("provider_rejected");
+    expect(await code(fetchWhatsAppMedia(cfg(scripted().transport), r("../x"), HOSTS))).toBe("invalid_payload");
+    expect(await code(fetchWhatsAppMedia(cfg(scripted(hang()).transport), r(), HOSTS))).toBe("provider_unavailable");
   });
 });
 

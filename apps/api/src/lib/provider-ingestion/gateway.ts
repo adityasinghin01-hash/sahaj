@@ -1,7 +1,8 @@
 import { createHmac, timingSafeEqual } from "node:crypto";
 import { WebhookError } from "../webhook-security";
+import { consentWithinPolicy } from "./consent-policy";
 import {
-  isRecord, parseSarvamInbound, parseSarvamOutbound, parseTeleCmiMissed, parseTwilioRecording, parseTwilioStatus, phoneDigits,
+  isRecord, parseSarvamInbound, parseSarvamOutbound, parseTeleCmiMissed, parseTwilioGather, parseTwilioRecording, parseTwilioStatus, phoneDigits,
 } from "./parsers";
 
 export interface Identity { familyId: string; personId: string }
@@ -18,6 +19,8 @@ export interface ProviderEvent {
   payload: Record<string, unknown>;
   /** ID-only, non-content metadata. Never put transcripts, numbers or free text here. */
   callId?: string; consentId?: string; review?: "consent_missing";
+  /** Verified Twilio Gather key press. Only "1" is ever ingested. */
+  digit?: "1";
 }
 /** Every method must throw WebhookError (503 on infrastructure failure) or return null/[] for "unknown". */
 export interface ProviderStore {
@@ -41,7 +44,11 @@ export interface ProviderStore {
  * - the newest call-independent REFUSAL at or after that answer overrides it (ties go to refusal). Call-independent\n *   affirmations are ignored: they never restore consent a refusal ended.
  * Returns the consent row id, or null when collection is not proven.
  */
-export function effectiveConsent(rows: ConsentRow[], want: { familyId: string; personId: string; callId: string; purpose: ConsentPurpose; version: string }): string | null {
+export function effectiveConsent(rows: ConsentRow[], want: { familyId: string; personId: string; callId: string; purpose: ConsentPurpose; version: string }, nowMs = Date.now()): string | null {
+  return effectiveConsentRow(rows, want, nowMs)?.id ?? null;
+}
+/** Same decision as effectiveConsent, returning the row so callers can derive the grant's own expiry. */
+export function effectiveConsentRow(rows: ConsentRow[], want: { familyId: string; personId: string; callId: string; purpose: ConsentPurpose; version: string }, nowMs = Date.now()): ConsentRow | null {
   if (!want.version) return null;
   const at = (r: ConsentRow) => Date.parse(r.createdAt);
   const mine = rows.filter((r) => r.familyId === want.familyId && r.personId === want.personId && r.purpose === want.purpose);
@@ -49,12 +56,13 @@ export function effectiveConsent(rows: ConsentRow[], want: { familyId: string; p
   const newest = (list: ConsentRow[]) => [...list].sort((a, b) => at(a) - at(b) || Number(b.answer) - Number(a.answer)).at(-1);
   const call = newest(mine.filter((r) => r.callId === want.callId));
   if (!call || !call.answer || call.version !== want.version) return null;
+  // Shared policy: not in the future and strictly younger than the maximum age (see consent-policy.ts).
+  if (!consentWithinPolicy(call.createdAt, nowMs)) return null;
   // Only refusals matter here: a later global yes must never restore a consent that a refusal ended.
   const refusal = newest(mine.filter((r) => r.callId === null && !r.answer));
   if (refusal && at(refusal) >= at(call)) return null;
-  return call.id;
+  return call;
 }
-
 async function consentFor(store: ProviderStore, call: CallRow | null, who: Identity, purpose: ConsentPurpose, version: string | undefined) {
   if (!version || !call || call.familyId !== who.familyId || call.personId !== who.personId) return null;
   const rows = await store.findConsents(call.familyId, call.personId, call.callId, purpose);
@@ -62,9 +70,14 @@ async function consentFor(store: ProviderStore, call: CallRow | null, who: Ident
   return consentId ? { callId: call.callId, consentId } : null;
 }
 
-export interface SarvamConfig { appId: string; agentDigits: string; deploymentId?: string; consentVersion?: string }
+export interface SarvamConfig {
+  appId: string; agentDigits: string; deploymentId?: string; consentVersion?: string;
+  /** Off by default. When true, an effective exact-call recording consent queues one retrieval request per interaction. */
+  recordingRetrieval?: boolean;
+}
+export const SARVAM_RETRIEVAL_EVENT = "sarvam.recording.retrieval_requested";
 export interface TeleCmiConfig { appId: number; virtualDigits: string }
-export interface TwilioConfig { accountSid: string; authToken: string; statusUrl?: string; recordingUrl?: string; consentVersion?: string }
+export interface TwilioConfig { accountSid: string; authToken: string; statusUrl?: string; recordingUrl?: string; gatherUrl?: string; consentVersion?: string }
 export interface GatewayResult { status: number; body: Record<string, unknown> }
 
 const reject = (code: string, status: number): never => { throw new WebhookError(code, status); };
@@ -130,10 +143,13 @@ export async function handleSarvam(raw: Buffer, cfg: SarvamConfig, getStore: () 
   const review = !consent && Object.keys(content).length ? ({ review_required: "consent_missing" } as const) : {};
   const flag = !consent && Object.keys(content).length ? ("consent_missing" as const) : undefined;
   if ("attemptId" in e) {
+    // Attach OUR call id when the stored call belongs to the same family and person. Delivery proof is derived from it later.
+    const known = await store.findCall("sarvam", e.attemptId);
+    const bound = known && known.familyId === identity.familyId && known.personId === identity.personId ? known.callId : undefined;
     await store.ingest({
       source: "sarvam", id: `${e.appId}:outbound:${e.attemptId}:${e.status}`, type: "sarvam.outbound", status: e.status, ...identity,
       payload: { app_id: e.appId, app_version: e.appVersion, attempt_id: e.attemptId, status: e.status, duration_seconds: e.durationSeconds, interaction_id: e.interactionId, ...retained, ...review },
-      ...(consent ?? {}), review: flag,
+      callId: bound, ...(consent ?? {}), review: flag,
     });
   } else {
     await store.ingest({
@@ -141,6 +157,20 @@ export async function handleSarvam(raw: Buffer, cfg: SarvamConfig, getStore: () 
       payload: { app_id: e.appId, deployment_id: e.deploymentId, interaction_id: e.interactionId, duration_seconds: e.durationSeconds, started_at: e.startedAt, ended_at: e.endedAt, ...retained, ...review },
       ...(consent ?? {}), review: flag,
     });
+  }
+  // Optional: queue a recording retrieval. Only for a connected outbound attempt or an inbound call, with AI disclosed and an
+  // effective call_recording consent for this exact call. The request names ids already stored or sent by Sarvam; nothing is invented.
+  const interactionId = e.interactionId;
+  if (cfg.recordingRetrieval === true && interactionId && (!("attemptId" in e) || e.status === "connected")) {
+    const call = await store.findCall("sarvam", callRef);
+    const recording = call && call.aiDisclosed ? await consentFor(store, call, identity, "call_recording", cfg.consentVersion) : null;
+    if (recording) {
+      await store.ingest({
+        source: "sarvam", id: `${e.appId}:recording:${interactionId}:requested`, type: SARVAM_RETRIEVAL_EVENT, status: "completed", ...identity,
+        payload: { app_id: e.appId, call_ref: callRef, interaction_id: interactionId, status: "completed", call_id: recording.callId, consent_id: recording.consentId },
+        ...recording,
+      });
+    }
   }
   return accepted();
 }
@@ -192,7 +222,7 @@ export async function handleTwilioStatus(raw: Buffer, contentType: string | null
   if (!call) reject("unknown_call", 403);
   await store.ingest({
     source: "twilio", id: `${e.accountSid}:call:${e.callSid}:${e.status}:${e.sequence}`, type: "twilio.call_status", status: e.status,
-    familyId: call!.familyId, personId: call!.personId,
+    familyId: call!.familyId, personId: call!.personId, callId: call!.callId,
     payload: { account_sid: e.accountSid, call_sid: e.callSid, status: e.status, sequence: Number(e.sequence) },
   });
   return accepted();
@@ -226,4 +256,42 @@ export async function handleTwilioRecording(raw: Buffer, contentType: string | n
 export function configuredDigits(value: string | undefined): string | undefined {
   if (!value) return undefined;
   try { return phoneDigits(value); } catch { return undefined; }
+}
+
+/** Stored-record resolution of a verified Gather key press. Implemented by one SQL transaction pair (see store.ts). */
+export interface GatherStore {
+  /** Returns the normalized proof and assignment ids, or null when the call, assignment and responder cannot be proven. */
+  acceptFromGather(familyId: string, gatherProviderEventId: string): Promise<{ proofEventId: string; assignmentId: string } | null>;
+}
+export interface GatherResult extends GatewayResult { twiml?: string }
+const ACCEPTED_TWIML = `<?xml version="1.0" encoding="UTF-8"?><Response><Say language="hi-IN">???????? ???? ???????? ???? ?? ???</Say><Hangup/></Response>`;
+const NOT_ACCEPTED_TWIML = `<?xml version="1.0" encoding="UTF-8"?><Response><Hangup/></Response>`;
+
+/**
+ * Signed Twilio Gather callback for an urgent responder call. Acceptance requires, in order:
+ *  - a valid X-Twilio-Signature over the configured exact URL (never the Host header) and the configured account;
+ *  - a stored Twilio call (`calls.external_id` = CallSid) that this system placed;
+ *  - the explicit digit "1". Any other digit, nothing pressed, or a connected/completed status is NOT acceptance and writes no evidence;
+ *  - durable raw evidence persisted first, then SQL derives incident, assignment, responder, outbox and request from stored
+ *    records and writes the common `responder.accepted` proof. Failure to prove any link returns 403 and changes nothing.
+ * The assignment is never read from the request: the callback can only name its own call.
+ * Replays and concurrent duplicates are idempotent: same raw event id, same proof.
+ */
+export async function handleTwilioGather(
+  raw: Buffer, contentType: string | null, signature: string | null, cfg: TwilioConfig, getStore: () => ProviderStore, getGather: () => GatherStore,
+): Promise<GatherResult> {
+  const e = parseTwilioGather(twilioParams(raw, contentType, signature, cfg.gatherUrl, cfg));
+  if (e.accountSid !== cfg.accountSid) reject("wrong_provider_account", 403);
+  const store = getStore();
+  const call = await store.findCall("twilio", e.callSid);
+  if (!call) reject("unknown_call", 403);
+  if (e.digits !== "1") return { status: 200, body: { accepted: false }, twiml: NOT_ACCEPTED_TWIML };
+  const id = `${e.accountSid}:gather:${e.callSid}`;
+  await store.ingest({
+    source: "twilio", id, type: "twilio.gather.response", status: "received", familyId: call!.familyId, personId: call!.personId, callId: call!.callId, digit: "1",
+    payload: { account_sid: e.accountSid, call_sid: e.callSid, digit: "1" },
+  });
+  const proof = await getGather().acceptFromGather(call!.familyId, id);
+  if (!proof) reject("acceptance_not_provable", 403);
+  return { status: 200, body: { accepted: true }, twiml: ACCEPTED_TWIML };
 }
