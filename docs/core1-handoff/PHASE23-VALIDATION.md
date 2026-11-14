@@ -6,8 +6,9 @@ Both PRs target the leader's joined `main` (`18ccffe`, Core 1 foundation plus Co
 
 - Phase 2 branch: API typecheck and Next production build passed; API tests **436 passed / 5 skipped** (scratch PostgreSQL tests); adapter typecheck and tests **144 passed**.
 - Phase 3 branch: API typecheck passed; API tests **301 passed / 9 skipped** (integrated Phase 2 cases are skipped on the standalone Phase 3 PR); Atlas **35 passed / 2 native PostgreSQL fence tests separately passed**; Cedar gate **39 passed**. Atlas and gate typechecks passed.
+- Combined Phase 2 + Phase 3 worktree: API typecheck passed; **509 tests passed / 5 scratch-PostgreSQL cases skipped**, including all 22 merged-path tests against the actual Phase 2 modules. Atlas typecheck/tests: **35 passed / 2 database cases skipped** (both run separately against native PostgreSQL); Cedar gate: **39 passed**; adapters: **144 passed**. All four package typechecks passed.
 - Joined native PostgreSQL 17.12 database: all **22 ordered Core 1 + Shield migrations** applied and **15 distinct rollback SQL acceptance suites** passed. The joined Core security fixture now rejects generic caller supplied delivery evidence and demonstrates positive reconciliation only through the verified provider proof functions. Both Phase 3's dispatch acceptance test and Phase 2's contact fence remain enabled together.
-- The first joined Next build exposed a missing Cedar WASM artifact. `apps/api/next.config.ts` now externalizes the Cedar WASM package; rebuild is being rerun before this PR is ready.
+- The first joined Next build exposed a missing Cedar WASM artifact. `apps/api/next.config.ts` now externalizes the Cedar WASM package; the corrected combined production build passed.
 
 Local PostgreSQL was fresh and disposable, with minimal Auth/Storage interface stubs and synthetic rows. This does not test hosted Supabase PostgREST, real provider networks, real phones, or the hosted migration runner. No hosted migration was applied.
 
