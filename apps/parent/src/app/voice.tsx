@@ -37,6 +37,7 @@ import {
 } from '@/lib/maa-api';
 import { reportMaaPlaybackFinished } from '@/lib/maa-heard';
 import { useT } from '@/lib/prefs';
+import { useMaaPoll } from '@/lib/use-maa-poll';
 import { cn } from '@/lib/utils';
 
 const MAX_REPLY_SECONDS = 30;
@@ -62,7 +63,7 @@ export default function Voice() {
   const [loadError, setLoadError] = React.useState(false);
   const [activeItem, setActiveItem] = React.useState<MaaVoiceItem | null>(null);
 
-  const retryLoad = React.useCallback(async () => {
+  const loadVoice = React.useCallback(async (isCurrent: () => boolean) => {
     if (!isLivePaired()) {
       setLoading(false);
       setLoadError(false);
@@ -70,28 +71,9 @@ export default function Voice() {
       return;
     }
 
-    setLoading(true);
-    setLoadError(false);
-    const res = await fetchMaaVoiceList();
-    setLoading(false);
-
-    if (!res.ok) {
-      if (res.kind !== 'not_paired') setLoadError(true);
-      return;
-    }
-
-    const items = res.data.items;
-    const match =
-      (requestedId ? items.find((item) => item.id === requestedId) : undefined) ?? items[0] ?? null;
-    setActiveItem(match);
-  }, [requestedId]);
-
-  React.useEffect(() => {
-    if (!livePaired) return;
-    let active = true;
-    const tId = setTimeout(async () => {
+    try {
       const res = await fetchMaaVoiceList();
-      if (!active) return;
+      if (!isCurrent()) return;
       setLoading(false);
       if (!res.ok) {
         if (res.kind !== 'not_paired') setLoadError(true);
@@ -101,13 +83,15 @@ export default function Voice() {
       const items = res.data.items;
       const match =
         (requestedId ? items.find((item) => item.id === requestedId) : undefined) ?? items[0] ?? null;
-      setActiveItem(match);
-    }, 0);
-    return () => {
-      active = false;
-      clearTimeout(tId);
-    };
-  }, [livePaired, requestedId]);
+      // Retain the current clip so fresh signed URLs/objects don't restart playback every tick.
+      setActiveItem((current) => current?.id === match?.id ? current : match);
+    } catch {
+      if (!isCurrent()) return;
+      setLoading(false);
+      setLoadError(true);
+    }
+  }, [requestedId]);
+  const retryLoad = useMaaPoll(loadVoice);
 
   const senderLabel = activeItem?.from_display_name ?? 'Riya';
   const subTime = activeItem ? formatMessageTime(activeItem.created_at) : !livePaired ? pick(latestVoice.sentAt) : '';

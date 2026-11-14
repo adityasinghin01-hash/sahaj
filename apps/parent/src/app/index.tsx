@@ -12,12 +12,16 @@ import { useCall } from '@/lib/call';
 import { aashaReply, family } from '@/lib/demo';
 import {
   fetchMaaVoiceList,
+  fetchMaaUrgentStatus,
   isLivePaired,
   makeIdempotencyKey,
   triggerMaaUrgent,
   type MaaVoiceItem,
+  type MaaUrgentStatus,
 } from '@/lib/maa-api';
+import { fetchMaaProofDashboard } from '@/lib/maa-proof';
 import { useT } from '@/lib/prefs';
+import { useMaaPoll } from '@/lib/use-maa-poll';
 import { shield, shieldAvailable } from '@/lib/shield';
 import { cn } from '@/lib/utils';
 
@@ -36,6 +40,9 @@ export default function Home() {
   const [shieldOn, setShieldOn] = React.useState(true);
   const [newVoice, setNewVoice] = React.useState<MaaVoiceItem | null>(null);
   const [voiceReachError, setVoiceReachError] = React.useState(false);
+  const [proofPending, setProofPending] = React.useState(false);
+  const [urgent, setUrgent] = React.useState<MaaUrgentStatus | null>(null);
+  const urgentRef = React.useRef<MaaUrgentStatus | null>(null);
   const [confirmSos, setConfirmSos] = React.useState(false);
   const [sosBusy, setSosBusy] = React.useState(false);
   const [sosError, setSosError] = React.useState(false);
@@ -44,21 +51,41 @@ export default function Home() {
 
   const livePaired = isLivePaired();
 
-  const loadVoiceBadge = React.useCallback(async () => {
+  const loadHome = React.useCallback(async (isCurrent: () => boolean) => {
     if (!isLivePaired()) {
       setVoiceReachError(false);
       setNewVoice(null);
+      setProofPending(false);
+      setUrgent(null);
+      urgentRef.current = null;
       return;
     }
-    const res = await fetchMaaVoiceList();
-    if (!res.ok) {
-      if (res.kind !== 'not_paired') setVoiceReachError(true);
-      return;
+    try {
+      const openUrgent = urgentRef.current;
+      const [voice, proof, status] = await Promise.all([
+        fetchMaaVoiceList(),
+        fetchMaaProofDashboard(),
+        openUrgent && !['resolved', 'cancelled'].includes(openUrgent.state)
+          ? fetchMaaUrgentStatus(openUrgent.id)
+          : null,
+      ]);
+      if (!isCurrent()) return;
+      setVoiceReachError([voice, proof, status].some((res) => res && !res.ok && res.kind !== 'not_paired'));
+      if (voice.ok) {
+        setNewVoice(voice.data.items.find((item) => item.state !== 'heard' && !item.played_at) ?? null);
+      }
+      if (proof.ok) {
+        setProofPending(proof.data.proof?.status === 'pending' || proof.data.proof?.status === 'word_mismatch');
+      }
+      if (status?.ok) {
+        urgentRef.current = status.data;
+        setUrgent(status.data);
+      }
+    } catch {
+      if (isCurrent()) setVoiceReachError(true);
     }
-    setVoiceReachError(false);
-    const unheard = res.data.items.find((item) => item.state !== 'heard' && !item.played_at) ?? null;
-    setNewVoice(unheard);
   }, []);
+  const refreshHome = useMaaPoll(loadHome);
 
   useFocusEffect(
     React.useCallback(() => {
@@ -76,8 +103,7 @@ export default function Home() {
             s.rulesEngine === 'json',
         );
       }
-      void loadVoiceBadge();
-    }, [loadVoiceBadge]),
+    }, []),
   );
 
   React.useEffect(
@@ -134,6 +160,8 @@ export default function Home() {
     }
 
     setConfirmSos(false);
+    urgentRef.current = res.data;
+    setUrgent(res.data);
     router.push(`/madad?id=${encodeURIComponent(res.data.id)}` as '/madad');
   };
 
@@ -184,6 +212,33 @@ export default function Home() {
         </Tap>
       </View>
 
+      {proofPending ? (
+        <Tap
+          onPress={() => router.push('/proof')}
+          accessibilityRole="button"
+          accessibilityLabel={pick({ hi: 'Riya aapki awaaz sunna chahti hai — ▶ Jawab dein', en: 'Riya wants to hear your voice — ▶ Reply' })}
+          className="mt-5 min-h-[112px] rounded-[28px] bg-brand px-6 py-5"
+          style={TILE_SHADOW}>
+          <M v="h" weight="bold" className="text-white">
+            {pick({ hi: 'Riya aapki awaaz sunna chahti hai', en: 'Riya wants to hear your voice' })}
+          </M>
+          <M v="h" weight="bold" className="mt-2 text-white">
+            {pick({ hi: '▶ Jawab dein', en: '▶ Reply' })}
+          </M>
+        </Tap>
+      ) : null}
+
+      {urgent && !['resolved', 'cancelled'].includes(urgent.state) ? (
+        <Tap
+          onPress={() => router.push(`/madad?id=${encodeURIComponent(urgent.id)}` as '/madad')}
+          accessibilityRole="button"
+          className="mt-4 min-h-[72px] rounded-[28px] bg-ok-soft px-6 py-4">
+          <M v="strong" weight="bold" className="text-ok-ink">
+            {pick({ hi: urgent.status_line_hi, en: urgent.status_line_en })}
+          </M>
+        </Tap>
+      ) : null}
+
       <View className="mt-4 items-center">
         <Tap
           onPress={talk}
@@ -218,7 +273,7 @@ export default function Home() {
               {t('server_unreachable')}
             </M>
             <Tap
-              onPress={() => void loadVoiceBadge()}
+              onPress={() => void refreshHome()}
               accessibilityRole="button"
               className="mt-2 self-start rounded-full bg-white px-4 py-2">
               <M v="strong" weight="bold" className="text-watch-ink">
