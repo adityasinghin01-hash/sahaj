@@ -17,7 +17,10 @@
         "monochromeImage": "./assets/android-icon-monochrome.png"
       },
       "predictiveBackGestureEnabled": false,
-      "package": "app.sahaj.parent"
+      "package": "app.sahaj.parent",
+      "permissions": [
+        "android.permission.MODIFY_AUDIO_SETTINGS"
+      ]
     },
     "web": {
       "bundler": "metro",
@@ -46,6 +49,17 @@
           "enableBackgroundPlayback": false
         }
       ]
-    ]
+    ],
+    "extra": {
+      "router": {
+        "asyncRoutes": {
+          "web": true
+        }
+      },
+      "eas": {
+        "projectId": "f5a4a593-086a-47c0-a4b4-139f7d5906d9"
+      }
+    },
+    "owner": "aditya_fdavld"
   }
 }
