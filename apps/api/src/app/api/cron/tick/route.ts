@@ -6,8 +6,8 @@ import { WebhookError } from "@/lib/webhook-security";
 import { dispatchEvents, runWorkflowJobs, type ClaimedEvent } from "@/lib/atlas-runtime/runner";
 import { createAtlasRuntime } from "@/lib/atlas-runtime/factory";
 import { loadAtlasConfig } from "@/lib/atlas-runtime/config";
-import { runDispatchTick } from "@/lib/atlas-runtime/bridge";
-import { buildProviderBridge } from "@/lib/atlas-runtime/providers";
+import { buildProviderBridge } from "@/lib/atlas-runtime/bridge";
+import { phase2Entrypoints, providerConfigFromEnv } from "@/lib/atlas-runtime/providers";
 import type { RpcDb } from "@/lib/atlas-runtime/db";
 
 export const runtime = "nodejs";
@@ -25,7 +25,7 @@ export async function POST(request: Request) {
     // Routing only turns accepted input into durable work or an explicit dead letter. No care action runs here.
     const routed = await dispatchEvents(db as unknown as RpcDb, (events ?? []) as ClaimedEvent[]);
 
-    const bridge = buildProviderBridge();
+    const bridge = buildProviderBridge(phase2Entrypoints, db as unknown as RpcDb, providerConfigFromEnv(process.env));
     // Names of missing or invalid variables are reported; values never are. Events are still routed when this is incomplete.
     const loaded = loadAtlasConfig(process.env);
     let workflow: Record<string, unknown> = loaded.ok ? { status: "ok" } : { status: "not_configured", problems: loaded.problems };
@@ -36,8 +36,9 @@ export async function POST(request: Request) {
       try { workflow = { status: "ok", ...(await runWorkflowJobs(atlas.deps)) }; } finally { await atlas.close().catch(() => undefined); }
     }
     // Provider side effects happen only here, at the tick boundary, never inside Atlas graph nodes. Absent entrypoints report unavailable.
-    const dispatch = await runDispatchTick(db as unknown as RpcDb, bridge, randomUUID());
-    const providers = { dispatch, normalize: bridge.normalize ? "configured" : "unavailable", recording: bridge.recording ? "configured" : "unavailable" };
+    const dispatch = bridge.dispatchTick ? await bridge.dispatchTick(randomUUID()) : { status: "unavailable" };
+    const providers = { dispatch, status: bridge.statusJob ? "configured" : "unavailable", recording: bridge.recordingJob ? "configured" : "unavailable",
+      unavailable: bridge.unavailable };
     return NextResponse.json({ ...routed, workflow, providers, care_actions_run: 0, processing: "durable_workflow_queue" },
       { status: routed.failed > 0 ? 503 : 200 });
   } catch (error) {

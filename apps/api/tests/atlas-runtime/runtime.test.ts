@@ -235,6 +235,7 @@ describe("workflow runner", () => {
   function harness(jobs: ClaimedJob[], atlas: AtlasLike, finishOk = true) {
     const calls: Array<[string, Record<string, unknown>]> = [];
     const db: RpcDb = { async rpc(n, a = {}) { calls.push([n, a]);
+      if (n === "load_job_event") return { data: { eventId: EVENT, source: "whatsapp", providerEventId: "p", eventType: "whatsapp.text", metadata: {} }, error: null };
       if (n === "claim_workflow_jobs_for_kinds") return { data: jobs, error: null };
       if (n === "wake_ready_interrupted_jobs") return { data: 0, error: null };
       return { data: finishOk, error: null }; } };
@@ -387,7 +388,8 @@ describe("lease heartbeat, thread lock and cancellation", () => {
     for (const which of ["lease", "lock"] as const) {
       const calls: Array<[string, Record<string, unknown>]> = [];
       const db: RpcDb = { async rpc(n, a = {}) { calls.push([n, a]);
-        if (n === "claim_workflow_jobs_for_kinds") return { data: [{ id: JOB, family_id: FAMILY, workflow_kind: "core1.atlas", lease_token: TOKEN, checkpoint_ref: null }], error: null };
+        if (n === "load_job_event") return { data: { eventId: EVENT, source: "whatsapp", providerEventId: "p", eventType: "whatsapp.text", metadata: {} }, error: null };
+      if (n === "claim_workflow_jobs_for_kinds") return { data: [{ id: JOB, family_id: FAMILY, workflow_kind: "core1.atlas", lease_token: TOKEN, checkpoint_ref: null }], error: null };
         return { data: n === "wake_ready_interrupted_jobs" ? 0 : true, error: null }; } };
       const leaseListeners: Array<() => void> = [], lockListeners: Array<() => void> = [];
       let leaseLost = false, lockHeld = true, lockLoseCalled = false, sawAbort = false;
@@ -410,6 +412,7 @@ describe("lease heartbeat, thread lock and cancellation", () => {
   });  it("runner does not run Atlas when the thread is busy, and discards a run whose lock or lease was lost", async () => {
     const calls: Array<[string, Record<string, unknown>]> = []; let started = false;
     const mk = (extra: Partial<Parameters<typeof runWorkflowJobs>[0]>) => ({ db: { async rpc(n: string, a: Record<string, unknown> = {}) { calls.push([n, a]);
+      if (n === "load_job_event") return { data: { eventId: EVENT, source: "whatsapp", providerEventId: "p", eventType: "whatsapp.text", metadata: {} }, error: null };
       if (n === "claim_workflow_jobs_for_kinds") return { data: [{ id: JOB, family_id: FAMILY, workflow_kind: "core1.atlas", lease_token: TOKEN, checkpoint_ref: null }], error: null };
       return { data: n === "wake_ready_interrupted_jobs" ? 0 : true, error: null }; } } as RpcDb, workerId: "w",
       atlasFor: () => ({ start: async () => { started = true; return { next: [], tasks: [] } as never; }, resume: async () => ({ next: [], tasks: [] }) as never }), ...extra });

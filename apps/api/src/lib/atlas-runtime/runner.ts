@@ -12,7 +12,7 @@ export const KIND_RECORDING = "core1.recording";
 export const RUNTIME_KINDS = [KIND_ATLAS, KIND_PROOF, KIND_STATUS, KIND_RECORDING] as const;
 /** Kinds claimed this tick. Status and recording jobs are claimed only when their provider entrypoint is injected, so they stay queued (unavailable) rather than being completed without work. */
 export function claimableKinds(bridge?: ProviderBridge): string[] {
-  return [KIND_ATLAS, KIND_PROOF, ...(bridge?.normalize ? [KIND_STATUS] : []), ...(bridge?.recording ? [KIND_RECORDING] : [])];
+  return [KIND_ATLAS, KIND_PROOF, ...(bridge?.statusJob ? [KIND_STATUS] : []), ...(bridge?.recordingJob ? [KIND_RECORDING] : [])];
 }
 
 /**
@@ -89,24 +89,27 @@ async function finish(db: RpcDb, job: ClaimedJob, state: "completed" | "interrup
     p_checkpoint_ref: checkpoint, p_interrupt_ref: interrupt, p_error_code: code }, "finish_failed");
 }
 
-interface JobEvent { eventId: string; source: string; providerEventId: string; eventType: string; status: string | null }
+interface JobEvent { eventId: string; source: string; providerEventId: string; eventType: string; metadata: Record<string, unknown> }
 async function loadJobEvent(db: RpcDb, job: ClaimedJob): Promise<JobEvent> {
   const row = await call<Record<string, unknown> | null>(db, "load_job_event",
     { p_family_id: job.family_id, p_job_id: job.id, p_lease_token: job.lease_token }, "event_load_failed");
   if (!row || typeof row.eventId !== "string" || typeof row.source !== "string" || typeof row.providerEventId !== "string" || typeof row.eventType !== "string") {
     throw new RuntimeError("event_unusable");
   }
-  return { eventId: row.eventId, source: row.source, providerEventId: row.providerEventId, eventType: row.eventType, status: typeof row.status === "string" ? row.status : null };
+  const metadata = typeof row.metadata === "object" && row.metadata !== null && !Array.isArray(row.metadata) ? row.metadata as Record<string, unknown> : {};
+  return { eventId: row.eventId, source: row.source, providerEventId: row.providerEventId, eventType: row.eventType, metadata };
 }
 
-/** Phase 2 normalizeDeliveryOutcome over a durably processed raw callback. Only called for supported provider events. */
-async function normalizeStatus(bridge: ProviderBridge | undefined, ev: JobEvent, familyId: string): Promise<void> {
-  const provider = ev.eventType === "twilio.call_status" ? "twilio" : ev.eventType === "sarvam.outbound" ? "sarvam" : ev.eventType === "whatsapp.status" ? "whatsapp" : null;
-  if (!provider || !ev.status) return; // not delivery evidence
-  if (!bridge?.normalize) throw new RuntimeError("normalize_unavailable");
-  await bridge.normalize({ familyId, sourceEventId: ev.eventId, provider, status: ev.status });
-}
+/** Disposition codes go to last_error_code, which allows only [a-z0-9_]. */
+const safeCode = (code: string) => code.toLowerCase().replace(/[^a-z0-9_]/g, "_").slice(0, 80) || "unknown";
 
+/** Phase 2 runStatusNormalizationJob over this job's durable raw callback. Throws on retry so the job backs off. */
+async function normalizeStatus(bridge: ProviderBridge | undefined, ev: JobEvent, familyId: string): Promise<string> {
+  if (!bridge?.statusJob) throw new RuntimeError("status_normalization_unavailable");
+  const out = await bridge.statusJob({ id: ev.eventId, familyId, source: ev.source, eventType: ev.eventType, metadata: ev.metadata });
+  if (out.action === "retry") throw new RuntimeError(`status_${safeCode(out.code)}`.slice(0, 80));
+  return safeCode(out.code);
+}
 export async function runWorkflowJobs(deps: RunnerDeps) {
   const { db } = deps;
   const woken = await call<number>(db, "wake_ready_interrupted_jobs", { p_limit: 20 }, "wake_failed");
@@ -124,21 +127,23 @@ export async function runWorkflowJobs(deps: RunnerDeps) {
       }
       if (job.workflow_kind === KIND_STATUS || job.workflow_kind === KIND_RECORDING) {
         const ev = await loadJobEvent(db, job);
-        let code: string | null = null;
+        let code: string;
         if (job.workflow_kind === KIND_STATUS) {
-          // Unsupported or unprovable statuses (a connected call, for example) stay pending: the job is done, nothing was proved.
-          await normalizeStatus(deps.bridge, ev, job.family_id);
+          // Completing never means delivered: unsupported or unprovable statuses stay pending. Only proof is written.
+          code = await normalizeStatus(deps.bridge, ev, job.family_id);
         } else {
-          const out = await deps.bridge!.recording!({ familyId: job.family_id, eventId: ev.eventId, source: ev.source, providerEventId: ev.providerEventId, eventType: ev.eventType });
-          if (out.status === "retry") throw new RuntimeError("recording_retry");
-          code = out.status === "rejected" && typeof out.code === "string" && /^[a-z0-9_]{1,80}$/.test(out.code) ? out.code : null;
+          if (!deps.bridge?.recordingJob) throw new RuntimeError("recording_unavailable");
+          const out = await deps.bridge.recordingJob(ev.eventId);
+          if (out.action === "retry") throw new RuntimeError(`recording_${safeCode(out.code)}`.slice(0, 80));
+          code = safeCode(out.code);
         }
         (await finish(db, job, "completed", null, null, code)) ? summary.completed++ : summary.leaseLost++;
         continue;
       }
       if (job.workflow_kind !== KIND_ATLAS) throw new RuntimeError("unknown_kind");
-      // A Sarvam outbound status may be delivery evidence AND carry consented content: record evidence first, then understand.
-      if (deps.bridge?.normalize) {
+      // A Sarvam outbound status may be delivery evidence AND carry consented content: write proof first, then understand.
+      // Without the Phase 2 entrypoint the job fails with backoff (explicitly unavailable) instead of skipping the evidence.
+      {
         const ev = await loadJobEvent(db, job);
         if (ev.eventType === "sarvam.outbound") await normalizeStatus(deps.bridge, ev, job.family_id);
       }

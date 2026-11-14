@@ -1,102 +1,112 @@
-import type { ActionAuthorization } from "@sahaj/adapters";
-import { call, UUID, type RpcDb } from "./db";
+import type { ActionAuthorization, FetchTransport } from "@sahaj/adapters";
+import { call, type RpcDb } from "./db";
 
 /**
- * Tick-boundary bridges to the provider lanes (Phase 2). Nothing here runs inside an Atlas graph node, and nothing here
- * imports Phase 2 code: the parent injects the real entrypoints (`dispatchOutbound`, `normalizeDeliveryOutcome`,
- * `processRecordingEvent`, stores, transports, identity resolution). Absent entrypoints are reported as unavailable and
- * their work stays queued; they are never replaced with a success.
+ * Tick-boundary composition of the Phase 2 provider lane. Nothing here runs inside an Atlas graph node.
+ *
+ * `Phase2Entrypoints` is the exact public surface of `apps/api/src/lib/provider-dispatch` and `recording-worker`
+ * (Phase 2 CONTRACTS.md section 4). It is passed in, never imported, so this branch builds without Phase 2 source.
+ * At integration `phase2-modules.ts` exports the real module objects; until then it exports null and every provider
+ * capability reports `unavailable` while its work stays queued. No path fabricates a provider result.
  */
 
-/** Structural subset of Phase 2's DispatchCommand. */
-export interface DispatchCommandLike {
+// ---- structural slices of the Phase 2 public API (shapes copied from its exported types, not its implementation)
+export interface Phase2DispatchCommand {
   familyId: string; personId: string; outboxId: string; outboxLease: string; attempt: number; callId?: string;
-  aiDisclosureAttested?: boolean;
-  payload: { action: "sarvam.outbound_call"; language?: "Hindi" | "English"; openingMessage?: string }
-    | { action: "twilio.create_call"; twimlUrl: string } | { action: "whatsapp.send_text"; body: string };
+  aiDisclosureAttested?: boolean; payload: Phase2Payload;
 }
-export type DispatchOutcomeLike = { status: "dispatched" | "delivery_unknown" | "failed" | "denied" | "duplicate" };
+export type Phase2Payload = { action: "sarvam.outbound_call"; language?: "Hindi" | "English"; openingMessage?: string }
+  | { action: "twilio.create_call"; twimlUrl: string } | { action: "whatsapp.send_text"; body: string };
+export interface Phase2ClaimedOutbox { id: string; familyId: string; attempt: number; lease: string }
+export interface Phase2Binding { familyId: string; outboxId: string; personId: string; provider: string; action: string; callId?: string;
+  incidentId?: string; assignmentId?: string; actionRequestId: string | null; outboxAction: string | null }
+export type Phase2Disposition = { action: "complete" | "retry"; code: string };
+export interface Phase2RawStatusEvent { familyId: string; source: string; eventType: string; metadata: Record<string, unknown> }
+export interface Phase2Entrypoints {
+  dispatchStore(db: unknown): unknown;
+  runOutboxDispatchTick(deps: Record<string, unknown>): Promise<{ enabled: boolean; claimed: number; outcomes: Record<string, number> }>;
+  runStatusNormalizationJob(deps: { store: unknown; readRaw(id: string): Promise<Phase2RawStatusEvent | null> }, rawEventId: string): Promise<Phase2Disposition>;
+  recordingStore(db: unknown): unknown;
+  recordingStorage(db: unknown): unknown;
+  runRecordingJob(deps: Record<string, unknown>, db: unknown, rawEventId: string): Promise<Phase2Disposition>;
+}
 
-export interface NormalizeInput { familyId: string; sourceEventId: string; provider: "sarvam" | "twilio" | "whatsapp"; status: string }
-export type NormalizeFn = (input: NormalizeInput) => Promise<{ status: "pending" | "proved" }>;
-
-export interface RecordingEventInput { familyId: string; eventId: string; source: string; providerEventId: string; eventType: string }
-export type RecordingFn = (input: RecordingEventInput) => Promise<{ status: "stored" | "already_stored" | "ignored_additional" | "rejected" | "retry"; code?: string }>;
+/** Everything that must be injected for each capability. Absent pieces leave that capability unavailable. */
+export interface ProviderRuntimeConfig {
+  /** Explicit switch. Outbound provider side effects never start implicitly. */
+  dispatchEnabled: boolean;
+  transport?: FetchTransport;
+  identitySecret?: string;
+  /** Server-side contact lookup (family AND person). No scheme exists in the repository yet, so production has none. */
+  resolveDestination?: (familyId: string, personId: string, provider: "sarvam" | "twilio" | "whatsapp") => Promise<string | null>;
+  providers?: { sarvam?: Record<string, unknown>; twilio?: Record<string, unknown>; whatsapp?: Record<string, unknown> };
+  /** Twilio only: TwiML URL whose content speaks the AI disclosure and uses the signed Gather action. */
+  twilioTwimlUrl?: string;
+  /** Recording worker settings (Phase 2 RecordingWorkerDeps minus store/storage/transport). */
+  recording?: { encryptionKey: string; accountSid: string; authToken: string; consentVersion: string; sarvam?: Record<string, unknown> };
+}
 
 export interface ProviderBridge {
-  /** Phase 2 normalizeDeliveryOutcome bound to a real DispatchStore. */
-  normalize?: NormalizeFn;
-  /** Phase 2 processRecordingEvent bound to real store, storage, transports and consent readers. */
-  recording?: RecordingFn;
-  /** Phase 2 dispatchOutbound bound to real store, transport, identity resolution and provider config. */
-  dispatch?: (command: DispatchCommandLike) => Promise<DispatchOutcomeLike>;
-  /** Phase 2 sweepStaleClaims. */
-  sweepStale?: () => Promise<number>;
-  /** Builds the provider payload for a bound action. Return null when content or configuration is unavailable. */
-  payloadFor?: (providerAction: string, domainAction: string) => DispatchCommandLike["payload"] | null;
+  /** Status normalization for one durable raw callback (twilio.call_status, sarvam.outbound, whatsapp.status). */
+  statusJob?(event: Phase2RawStatusEvent & { id: string }): Promise<Phase2Disposition>;
+  /** Recording retrieval for one raw event id (Twilio or Sarvam). */
+  recordingJob?(rawEventId: string): Promise<Phase2Disposition>;
+  /** One outbound dispatch pass. */
+  dispatchTick?(workerId: string): Promise<{ enabled: boolean; claimed: number; outcomes: Record<string, number> }>;
+  /** Names of missing pieces, for the tick report. Never values. */
+  unavailable: string[];
 }
 
-/** Only exact, parameter-free payloads are built here. Anything needing content or URLs must be injected. */
-export const defaultPayloadFor: NonNullable<ProviderBridge["payloadFor"]> = (providerAction) =>
-  providerAction === "sarvam.outbound_call" ? { action: "sarvam.outbound_call", language: "Hindi" } : null;
-
-interface Recheck { ok: boolean; reason?: string; personId?: string; provider?: string; providerAction?: string; callId?: string | null;
-  domainAction?: string; incidentId?: string | null; assignmentId?: string | null }
-
-async function recheck(db: RpcDb, outboxId: string, lease: string): Promise<Recheck> {
-  const out = await call<Recheck | null>(db, "recheck_dispatch_authorization", { p_outbox_id: outboxId, p_lease_token: lease }, "recheck_failed");
-  return out && typeof out === "object" ? out : { ok: false, reason: "no_result" };
-}
+interface Recheck { ok: boolean; reason?: string; personId?: string; providerAction?: string; callId?: string | null }
 
 /**
- * The authorizer the dispatch worker runs on EVERY dispatch (after the outbox claim, before the ledger claim). It
- * re-reads current facts in SQL: live lease, executed request, active principal and recipient, unrevoked permission,
- * no deny/ask overlap, current consent. The grant names the exact person, provider action and key and lives 60 seconds.
- * The adapters check the same fields again.
+ * `authorize` for Phase 2's dispatchOutbound: re-reads current authorization in SQL on every dispatch. The ledger insert
+ * trigger repeats the same check atomically with the claim, so this is a fast refusal, not the only fence.
  */
 export function createDispatchAuthorizer(db: RpcDb, now: () => number = Date.now) {
-  return async (cmd: DispatchCommandLike, key: string): Promise<ActionAuthorization | null> => {
-    const r = await recheck(db, cmd.outboxId, cmd.outboxLease);
-    if (!r.ok || r.personId !== cmd.personId || r.providerAction !== cmd.payload.action || (r.callId ?? undefined) !== cmd.callId) return null;
+  return async (cmd: Phase2DispatchCommand, key: string): Promise<ActionAuthorization | null> => {
+    const r = await call<Recheck | null>(db, "recheck_dispatch_authorization", { p_outbox_id: cmd.outboxId, p_lease_token: cmd.outboxLease }, "recheck_failed");
+    if (!r?.ok || r.personId !== cmd.personId || r.providerAction !== cmd.payload.action || (r.callId ?? undefined) !== cmd.callId) return null;
     return { decision: "allow", consent: true, personId: cmd.personId, action: cmd.payload.action, idempotencyKey: key, expiresAt: now() + 60_000 };
   };
 }
 
-interface ClaimedOutbox { id: string; family_id: string; lease_token: string; attempt_count: number }
-
-export interface DispatchTickSummary { status: "ok" | "unavailable"; claimed: number; dispatched: number; unknown: number; failed: number; denied: number; duplicate: number; swept: number }
-
 /**
- * One dispatch pass. Claims outbox rows, derives the command ONLY from the immutable binding that the atomic enqueue
- * wrote (never from the payload or caller), and hands it to the injected Phase 2 dispatcher, which re-authorizes,
- * claims the ledger and calls the provider through its injected transport. Nothing is retried here: delivery_unknown
- * rows are never reclaimed and a failed row only returns through claim_outbox with a higher attempt number.
+ * Trusted payload composer for Phase 2's runOutboxDispatchTick. Only bound operations with server-defined content are
+ * composed: Sarvam check-in calls (fixed language) and Twilio responder calls with the configured TwiML URL. WhatsApp text
+ * needs report content that does not exist yet, so it is refused (the row fails `payload_mismatch`, nothing is sent).
  */
-export async function runDispatchTick(db: RpcDb, bridge: ProviderBridge, workerId: string, limit = 5): Promise<DispatchTickSummary> {
-  const summary: DispatchTickSummary = { status: "ok", claimed: 0, dispatched: 0, unknown: 0, failed: 0, denied: 0, duplicate: 0, swept: 0 };
-  if (!bridge.dispatch) return { ...summary, status: "unavailable" };
-  if (bridge.sweepStale) summary.swept = await bridge.sweepStale();
-  const rows = await call<ClaimedOutbox[] | null>(db, "claim_outbox", { p_worker_id: workerId, p_limit: limit, p_lease_seconds: 120 }, "outbox_claim_failed");
-  const payloadFor = bridge.payloadFor ?? defaultPayloadFor;
-  const finishOutbox = (row: ClaimedOutbox, code: string) =>
-    call(db, "finish_outbox", { p_outbox_id: row.id, p_lease_token: row.lease_token, p_success: false, p_error_code: code }, "finish_failed").catch(() => undefined);
-  for (const row of rows ?? []) {
-    summary.claimed++;
-    if (!UUID.test(row.id) || !UUID.test(row.family_id)) { summary.failed++; continue; }
-    let r: Recheck;
-    try { r = await recheck(db, row.id, row.lease_token); } catch { summary.failed++; continue; }
-    if (!r.ok || !r.personId || !r.providerAction || !r.domainAction) { summary.denied++; await finishOutbox(row, "authorization_denied"); continue; }
-    const payload = payloadFor(r.providerAction, r.domainAction);
-    if (!payload || payload.action !== r.providerAction) { summary.failed++; await finishOutbox(row, "payload_unavailable"); continue; }
-    try {
-      const outcome = await bridge.dispatch({ familyId: row.family_id, personId: r.personId, outboxId: row.id, outboxLease: row.lease_token,
-        attempt: row.attempt_count, ...(r.callId ? { callId: r.callId } : {}), payload });
-      if (outcome.status === "dispatched") summary.dispatched++;
-      else if (outcome.status === "delivery_unknown") summary.unknown++;
-      else if (outcome.status === "duplicate") summary.duplicate++;
-      else if (outcome.status === "denied") summary.denied++;
-      else summary.failed++;
-    } catch { summary.failed++; } // the dispatcher finishes the outbox itself; an unfinished lease expires into delivery_unknown
-  }
-  return summary;
+export function createPayloadComposer(cfg: Pick<ProviderRuntimeConfig, "twilioTwimlUrl">) {
+  return async (_row: Phase2ClaimedOutbox, b: Phase2Binding): Promise<{ payload: Phase2Payload; aiDisclosureAttested?: boolean } | null> => {
+    if (b.action === "sarvam.outbound_call" && b.outboxAction === "check_in") return { payload: { action: "sarvam.outbound_call", language: "Hindi" } };
+    if (b.action === "twilio.create_call" && b.outboxAction === "urgent_responder" && cfg.twilioTwimlUrl && b.assignmentId) {
+      return { payload: { action: "twilio.create_call", twimlUrl: cfg.twilioTwimlUrl }, aiDisclosureAttested: true };
+    }
+    return null;
+  };
+}
+
+/** Compose the bridge from injected Phase 2 entrypoints and configuration. Each capability is present only when complete. */
+export function buildProviderBridge(phase2: Phase2Entrypoints | null, db: RpcDb, cfg: ProviderRuntimeConfig): ProviderBridge {
+  const unavailable: string[] = [];
+  if (!phase2) return { unavailable: ["phase2_entrypoints"] };
+  const store = phase2.dispatchStore(db);
+  const bridge: ProviderBridge = { unavailable };
+
+  bridge.statusJob = event => phase2.runStatusNormalizationJob({ store, readRaw: async id => (id === event.id ? event : null) }, event.id);
+
+  const rec = cfg.recording;
+  if (rec && cfg.transport && rec.encryptionKey && rec.accountSid && rec.authToken && rec.consentVersion) {
+    const deps = { store: phase2.recordingStore(db), storage: phase2.recordingStorage(db), transport: cfg.transport, ...rec };
+    bridge.recordingJob = id => phase2.runRecordingJob(deps, db, id);
+  } else unavailable.push("recording_config");
+
+  const missing = [!cfg.dispatchEnabled && "dispatch_disabled", !cfg.transport && "transport", !cfg.identitySecret && "identity_secret",
+    !cfg.resolveDestination && "resolve_destination", !cfg.providers || !Object.values(cfg.providers).some(Boolean) ? "provider_config" : false].filter(Boolean) as string[];
+  if (!missing.length) {
+    const deps = { store, enabled: true, compose: createPayloadComposer(cfg), authorize: createDispatchAuthorizer(db), resolveDestination: cfg.resolveDestination,
+      transport: cfg.transport, identitySecret: cfg.identitySecret, providers: cfg.providers ?? {} };
+    bridge.dispatchTick = workerId => phase2.runOutboxDispatchTick({ ...deps, workerId });
+  } else unavailable.push(...missing);
+  return bridge;
 }
