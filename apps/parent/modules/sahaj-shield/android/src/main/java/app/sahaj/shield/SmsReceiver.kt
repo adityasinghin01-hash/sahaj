@@ -11,7 +11,11 @@ import android.provider.Telephony
 import android.util.Log
 import app.sahaj.shield.core.SmsInput
 
-/** android.provider.Telephony.SMS_RECEIVED → rules engine → (maybe) red screen + masked event. */
+/**
+ * android.provider.Telephony.SMS_RECEIVED → rules engine → (maybe) red screen + masked event.
+ * Gateway mode (Step 3.4, spare phone): every SMS is forwarded to /api/sms/gateway instead; no rules,
+ * no red screen. Neither path logs the number or the text.
+ */
 class SmsReceiver : BroadcastReceiver() {
   override fun onReceive(context: Context, intent: Intent) {
     if (intent.action != Telephony.Sms.Intents.SMS_RECEIVED_ACTION) return
@@ -28,6 +32,22 @@ class SmsReceiver : BroadcastReceiver() {
 
     val pending = goAsync()
     val rt = ShieldRuntime.get(context)
+    if (rt.gateway.isOn()) {
+      rt.worker.execute {
+        try {
+          var n = 0
+          for ((sender, body) in bySender) if (rt.gateway.enqueue(sender, body.toString(), ts)) n++
+          rt.debugEvents.add("gateway · queued=$n")
+          rt.kickSender()
+        } catch (e: Exception) {
+          Log.w(ShieldRuntime.TAG, "gateway forward failed: ${e.javaClass.simpleName}")
+        } finally {
+          pending.finish()
+        }
+      }
+      ShieldForegroundService.startIfAllowed(context)
+      return
+    }
     rt.worker.execute {
       try {
         for ((sender, body) in bySender) {

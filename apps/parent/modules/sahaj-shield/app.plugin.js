@@ -1,6 +1,7 @@
 /* global __dirname */
 // Config plugin for the local sahaj-shield module (Expo SDK 58).
-// 1. Writes the Shield permissions, receivers and services into the generated AndroidManifest.xml.
+// 1. Writes the Shield permissions, receivers and services into the generated AndroidManifest.xml,
+//    plus <queries> for the P4 (remote-control) and P9 (bank/UPI) packages read from rules.json.
 // 2. Copies packages/shield/rules/rules.json into the module's Android assets as shield/rules.json
 //    (placeholder { "version": "0" } if the rules file does not exist yet).
 const fs = require('fs');
@@ -39,8 +40,9 @@ const AUTOSTART_PACKAGES = [
   'com.oneplus.security',
 ];
 
-// Step 3.2 (P4): remote-control apps. Same list as AppLists.REMOTE_CONTROL in core/Phase2.kt
-// (a JVM test checks they match). <queries> makes them visible to getInstalledPackages on Android 11+.
+// Step 3.2 (P4): remote-control apps. FALLBACK only: the live list is rules.json patterns.P4.packages
+// (see rulesQueryPackages). Same list as AppLists.REMOTE_CONTROL in core/Phase2.kt (a JVM test checks
+// they match). <queries> makes them visible to getInstalledPackages on Android 11+.
 const REMOTE_CONTROL_PACKAGES = [
   'com.anydesk.anydeskandroid', // AnyDesk
   'com.teamviewer.quicksupport.market', // TeamViewer QuickSupport
@@ -51,6 +53,50 @@ const REMOTE_CONTROL_PACKAGES = [
   'com.sand.airdroidbiz', // AirDroid Business
   'com.sand.airmirror', // AirMirror
 ];
+
+// P9: banking / UPI apps. FALLBACK only: the live list is rules.json patterns.P9.packages.
+// Same list as AppLists.BANKING_UPI in core/Phase2.kt (a JVM test checks they match).
+const BANKING_UPI_PACKAGES = [
+  'com.google.android.apps.nbu.paisa.user',
+  'com.phonepe.app',
+  'net.one97.paytm',
+  'in.org.npci.upiapp',
+  'com.sbi.lotusintouch',
+  'com.sbi.SBIFreedomPlus',
+  'com.sbi.upi',
+  'com.snapwork.hdfc',
+  'com.csam.icici.bank.imobile',
+  'com.axis.mobile',
+  'com.msf.kbank.mobile',
+  'com.bankofbaroda.mconnect',
+  'com.Version1',
+  'com.canarabank.mobility',
+  'com.mobikwik_new',
+  'com.freecharge.android',
+  'com.dreamplug.androidapp',
+];
+
+const PACKAGE_RE = /^[A-Za-z][A-Za-z0-9_]*(\.[A-Za-z0-9_]+)+$/;
+
+/**
+ * Package names for <queries>: rules.json patterns.P4.packages + patterns.P9.packages (the same lists
+ * the phone reads at run time through ShieldConfig). A list that is missing or invalid falls back to
+ * the constants above, so <queries> always covers what the native code will look for.
+ */
+function rulesQueryPackages(rulesFile) {
+  let patterns = null;
+  try {
+    if (rulesFile && fs.existsSync(rulesFile)) patterns = JSON.parse(fs.readFileSync(rulesFile, 'utf8')).patterns || null;
+  } catch {
+    patterns = null;
+  }
+  const pick = (id, fallback) => {
+    const list = patterns && patterns[id] && patterns[id].packages;
+    const ok = Array.isArray(list) && list.length > 0 && list.every((p) => typeof p === 'string' && PACKAGE_RE.test(p));
+    return ok ? list : fallback;
+  };
+  return { p4: pick('P4', REMOTE_CONTROL_PACKAGES), p9: pick('P9', BANKING_UPI_PACKAGES) };
+}
 
 // Step 3.2 (P3): apps installed outside the Play Store. Instead of QUERY_ALL_PACKAGES (Play-restricted)
 // we ask to see every app with a launcher icon, which covers a sideloaded .apk that she can open.
@@ -66,7 +112,8 @@ function upsertByName(list, item) {
   else list.push(item);
 }
 
-function applyManifest(androidManifest) {
+function applyManifest(androidManifest, opts = {}) {
+  const lists = opts.queryPackages || { p4: REMOTE_CONTROL_PACKAGES, p9: BANKING_UPI_PACKAGES };
   const manifest = androidManifest.manifest;
   manifest.$['xmlns:tools'] = manifest.$['xmlns:tools'] || 'http://schemas.android.com/tools';
   manifest['uses-permission'] = manifest['uses-permission'] || [];
@@ -80,7 +127,9 @@ function applyManifest(androidManifest) {
   const q = manifest.queries[0];
   q.package = q.package || [];
   for (const p of AUTOSTART_PACKAGES) upsertByName(q.package, { $: { 'android:name': p } });
-  for (const p of REMOTE_CONTROL_PACKAGES) upsertByName(q.package, { $: { 'android:name': p } });
+  for (const p of lists.p4) upsertByName(q.package, { $: { 'android:name': p } });
+  // P9: the bank/UPI apps must be visible for the usage-stats foreground check on Android 11+.
+  for (const p of lists.p9) upsertByName(q.package, { $: { 'android:name': p } });
   q.intent = q.intent || [];
   if (!q.intent.some((i) => JSON.stringify(i) === JSON.stringify(LAUNCHER_QUERY))) q.intent.push(LAUNCHER_QUERY);
 
@@ -192,7 +241,8 @@ function copyRules(projectRoot, rulesPath) {
 const withSahajShield = (config, props = {}) => {
   const rulesPath = props.rulesPath || '../../packages/shield/rules/rules.json';
   config = withAndroidManifest(config, (c) => {
-    c.modResults = applyManifest(c.modResults);
+    const rulesFile = path.resolve(c.modRequest.projectRoot, rulesPath);
+    c.modResults = applyManifest(c.modResults, { queryPackages: rulesQueryPackages(rulesFile) });
     return c;
   });
   config = withDangerousMod(config, [
@@ -210,3 +260,5 @@ module.exports.applyManifest = applyManifest;
 module.exports.copyRules = copyRules;
 module.exports.PERMISSIONS = PERMISSIONS;
 module.exports.REMOTE_CONTROL_PACKAGES = REMOTE_CONTROL_PACKAGES;
+module.exports.BANKING_UPI_PACKAGES = BANKING_UPI_PACKAGES;
+module.exports.rulesQueryPackages = rulesQueryPackages;

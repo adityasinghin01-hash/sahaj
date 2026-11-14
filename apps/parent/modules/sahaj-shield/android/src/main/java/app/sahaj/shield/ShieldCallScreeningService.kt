@@ -7,7 +7,7 @@ import android.util.Log
 
 /**
  * Runs for every incoming call once the app holds ROLE_CALL_SCREENING.
- * Notes only "saved contact or not" in memory, then ALWAYS lets the call through.
+ * Notes only "saved contact or not" and the caller type in memory, then ALWAYS lets the call through.
  * It never blocks, rejects, silences or hangs up.
  */
 class ShieldCallScreeningService : CallScreeningService() {
@@ -20,7 +20,8 @@ class ShieldCallScreeningService : CallScreeningService() {
         // Unknown (no READ_CONTACTS) or hidden number counts as unsaved.
         val saved = Contacts.isSaved(this, number) == true
         val rt = ShieldRuntime.get(this)
-        rt.calls.onIncomingScreened(saved)
+        // CallerType (series_1600, mobile_10, …) from the rules.json caller patterns; the number stays in memory.
+        rt.calls.onIncomingScreened(saved, rt.config.callerType(number, saved))
         rt.ensureCallMonitor()
       }
     } catch (e: Exception) {

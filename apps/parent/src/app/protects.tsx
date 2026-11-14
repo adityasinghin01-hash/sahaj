@@ -1,21 +1,37 @@
 // "Sahaj is on ✓" → a simple list of what Shield protects.
 import { router, useFocusEffect } from 'expo-router';
 import * as React from 'react';
-import { AppWindow, House, Link2, MessageSquareWarning, PhoneIncoming, Video, type LucideIcon } from 'lucide-react-native';
+import {
+  AppWindow,
+  BadgeCheck,
+  House,
+  Landmark,
+  Link2,
+  MessageSquareWarning,
+  PhoneIncoming,
+  PhoneOff,
+  Timer,
+  Video,
+  type LucideIcon,
+} from 'lucide-react-native';
 import { View } from 'react-native';
 
 import { BackBar, BigBtn, M, MaaScreen, Tick } from '@/components/sahaj/maa';
 import { Icon } from '@/components/ui/icon';
-import { protections } from '@/lib/demo';
+import { protections, type ProtectionIcon } from '@/lib/demo';
 import { useT } from '@/lib/prefs';
 import { shield, shieldAvailable } from '@/lib/shield';
 
-const ICONS: Record<(typeof protections)[number]['icon'], LucideIcon> = {
+const ICONS: Record<ProtectionIcon, LucideIcon> = {
   sms: MessageSquareWarning,
   call: PhoneIncoming,
   link: Link2,
   app: AppWindow,
   video: Video,
+  bank: Landmark,
+  long: Timer,
+  pause: PhoneOff,
+  verified: BadgeCheck,
 };
 
 export default function Protects() {
@@ -34,6 +50,10 @@ export default function Protects() {
       case 'call': return status.phoneState && status.contacts && status.callScreeningRole;
       case 'app': return !!features?.installed_apps || (!!features?.p3_apk && status.notificationAccess);
       case 'video': return !!features?.p2_video_call && status.notificationAccess && status.contacts;
+      case 'bank_app': return !!features?.p9_bank_app && status.usageAccess && status.phoneState && status.callScreeningRole;
+      case 'long_call': return !!features?.p6_long_call && status.phoneState && status.callScreeningRole;
+      case 'bank_number': return status.phoneState && status.callScreeningRole && status.notifications;
+      case 'pause_call': return !!features?.p8_pause_call && status.callRedirectionRole;
       default: return false;
     }
   };

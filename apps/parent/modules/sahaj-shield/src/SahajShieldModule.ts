@@ -1,7 +1,12 @@
 import { NativeModule, requireNativeModule } from 'expo';
 
 import type {
+  AfterCallAnswer,
+  AfterCallReportResult,
   CallRedirectionResult,
+  GatewayConfigError,
+  GatewayStatus,
+  LastCall,
   SahajShieldModuleEvents,
   ShieldFeature,
   ShieldFeatures,
@@ -44,6 +49,19 @@ declare class SahajShieldModule extends NativeModule<SahajShieldModuleEvents> {
   /** Real installed-app scan now; resolves the number of NEW flags (0 when the switch is off). */
   runInstalledAppScan(): Promise<number>;
   testRedScreen(): boolean;
+  /** Setup wizard: Settings → Usage access. Returns which screen opened. */
+  openUsageAccessSettings(): string;
+  /** Setup wizard: Settings → Notification access. Returns which screen opened. */
+  openNotificationAccessSettings(): string;
+  /** Step 3.3: last finished call (no number). */
+  getLastCall(): LastCall;
+  /** Step 3.3: after-call answer → voice_report event ("no" sends nothing). */
+  reportAfterCall(answer: AfterCallAnswer): AfterCallReportResult;
+  /** Step 3.4 gateway mode. The secret is stored encrypted natively and never returned. */
+  getGatewayStatus(): GatewayStatus;
+  setGatewayConfig(apiUrl: string, secret: string): GatewayConfigError;
+  setGatewayMode(on: boolean): GatewayStatus;
+  clearGateway(): GatewayStatus;
 }
 
 export default requireNativeModule<SahajShieldModule>('SahajShield');

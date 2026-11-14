@@ -62,6 +62,11 @@ const FEATURE_LABELS: Record<ShieldFeature, { title: string; test: string; simul
     test: 'Runs on app start + every 6 h',
     simulate: 'Fake list with AnyDesk + an app sideloaded 1 h ago: red screen + 2 install events.',
   },
+  p6_long_call: {
+    title: 'P6 · Unsaved-number call far longer than her normal',
+    test: 'Needs call screening role + phone state',
+    simulate: 'Sends the call_state event (long_vs_normal) the timer would send. No red screen (yellow).',
+  },
 };
 
 function now(): string {

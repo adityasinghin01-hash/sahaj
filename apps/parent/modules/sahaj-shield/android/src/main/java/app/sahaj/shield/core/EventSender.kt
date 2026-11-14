@@ -42,13 +42,15 @@ class EventSender(
   private val pairing: () -> Pairing?,
   private val clock: () -> Long = System::currentTimeMillis,
   private val backoff: Backoff = Backoff(),
+  /** Server path. Events use [PATH]; the device heartbeat reuses the same signing + queue with [HEARTBEAT_PATH]. */
+  private val path: String = PATH,
 ) {
   private val lock = Any()
 
   /** Sends every due event once. Safe to call from any thread; calls are serialised. */
   fun drainDue(): DrainResult = synchronized(lock) {
     val p = pairing() ?: return DrainResult(0, 0, 0, queue.nextDueAtMs())
-    val url = p.baseUrl.trimEnd('/') + PATH
+    val url = p.baseUrl.trimEnd('/') + path
     var sent = 0; var retried = 0; var dropped = 0
     for (e in queue.due(clock())) {
       val ts = clock()
@@ -86,6 +88,7 @@ class EventSender(
 
   companion object {
     const val PATH = "/api/shield/event"
+    const val HEARTBEAT_PATH = "/api/shield/heartbeat"
     private val JSON_HEADER = mapOf("content-type" to "application/json; charset=utf-8")
   }
 }

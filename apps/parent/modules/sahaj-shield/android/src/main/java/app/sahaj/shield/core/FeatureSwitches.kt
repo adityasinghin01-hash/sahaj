@@ -4,7 +4,7 @@ import java.io.File
 import java.util.Properties
 
 /**
- * Phase 2 features. Every one is OFF until its phone test passes (T4 → P8, T5 → P9, T6 → P2/P3)
+ * Phase 2 features. Every one is OFF until its phone test passes (T4 → P8, T5 → P9, T6 → P2/P3; P6 after its call test)
  * and someone turns it on with setFeature(id, true). [id] is the name used by the JS API.
  */
 enum class Feature(val id: String) {
@@ -17,7 +17,9 @@ enum class Feature(val id: String) {
   /** P3: WhatsApp attachment ending in .apk (notification listener). */
   P3_APK("p3_apk"),
   /** P4/P3: remote-control apps installed, or an app installed outside the Play Store in the last 24 h. */
-  INSTALLED_APPS("installed_apps");
+  INSTALLED_APPS("installed_apps"),
+  /** P6 (Step 3.3): unsaved-number call far longer than her own normal → quiet call_state event. */
+  P6_LONG_CALL("p6_long_call");
 
   companion object {
     fun byId(id: String): Feature? = entries.firstOrNull { it.id == id }

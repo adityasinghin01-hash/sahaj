@@ -16,10 +16,12 @@ internal object Notifications {
   const val ID_RED = 7102
   const val ID_AFTER_CALL = 7103
   const val ID_CALL_PAUSE = 7104
+  const val ID_BANK_NOTE = 7105
 
   private const val CH_ONGOING = "sahaj_shield_ongoing"
   private const val CH_RED = "sahaj_shield_red"
   private const val CH_AFTER_CALL = "sahaj_shield_after_call"
+  private const val CH_NOTE = "sahaj_shield_note"
 
   /** Deep link the frontend's after-call screen will handle (app.json "scheme"). */
   const val AFTER_CALL_URI = "sahajmaa://after-call"
@@ -34,6 +36,11 @@ internal object Notifications {
       lockscreenVisibility = Notification.VISIBILITY_PUBLIC
     })
     nm.createNotificationChannel(NotificationChannel(CH_AFTER_CALL, "Call ke baad sawaal", NotificationManager.IMPORTANCE_HIGH))
+    // Quiet notes (no sound, no vibration, no heads-up).
+    nm.createNotificationChannel(NotificationChannel(CH_NOTE, "Call ke baad jaankari", NotificationManager.IMPORTANCE_LOW).apply {
+      enableVibration(false)
+      setSound(null, null)
+    })
   }
 
   @Suppress("DEPRECATION")
@@ -120,6 +127,25 @@ internal object Notifications {
 
   fun cancel(ctx: Context, id: Int) {
     ctx.getSystemService(NotificationManager::class.java)?.cancel(id)
+  }
+
+  /**
+   * Step 3.3: after an incoming 1600-series call (registered bank / insurer numbers), a small quiet
+   * note. No alarm. Tapping it opens the after-call screen (which shows the same note).
+   */
+  @Suppress("DEPRECATION")
+  fun postRegisteredBankNote(ctx: Context) {
+    if (!canPost(ctx)) return
+    ensureChannels(ctx)
+    val b = builder(ctx, CH_NOTE)
+      .setSmallIcon(android.R.drawable.ic_dialog_info)
+      .setContentTitle("Ye registered bank number tha")
+      .setContentText("ये रजिस्टर्ड बैंक नंबर था")
+      .setPriority(Notification.PRIORITY_LOW)
+      .setOnlyAlertOnce(true)
+      .setAutoCancel(true)
+      .setContentIntent(openApp(ctx, AFTER_CALL_URI))
+    ctx.getSystemService(NotificationManager::class.java)?.notify(ID_BANK_NOTE, b.build())
   }
 
   /** After a P1 call ends: ask the parent what happened. Opens the app's after-call screen. */

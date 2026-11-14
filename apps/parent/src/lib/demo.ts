@@ -45,10 +45,16 @@ export const aashaReply = {
 } as Bi;
 
 /** What Shield protects (Home chip → list). */
-export const protections: { id: string; icon: 'sms' | 'call' | 'link' | 'app' | 'video'; title: Bi; sub: Bi }[] = [
+export type ProtectionIcon = 'sms' | 'call' | 'link' | 'app' | 'video' | 'bank' | 'long' | 'pause' | 'verified';
+
+export const protections: { id: string; icon: ProtectionIcon; title: Bi; sub: Bi }[] = [
   { id: 'sms', icon: 'sms', title: { en: 'Fraud SMS', hi: 'फ्रॉड SMS' }, sub: { en: 'Warns you before you reply', hi: 'जवाब से पहले चेतावनी' } },
   { id: 'call', icon: 'call', title: { en: 'Unknown calls', hi: 'अनजान कॉल' }, sub: { en: 'Checks calls from new numbers', hi: 'नए नंबर की कॉल जाँचता है' } },
   { id: 'link', icon: 'link', title: { en: 'Fake bank links', hi: 'नकली बैंक लिंक' }, sub: { en: 'KYC, refund, prize tricks', hi: 'KYC, रिफ़ंड, इनाम के झाँसे' } },
   { id: 'app', icon: 'app', title: { en: 'Risky apps', hi: 'ख़तरनाक ऐप' }, sub: { en: 'Screen-sharing and .apk files', hi: 'स्क्रीन-शेयर और .apk फ़ाइलें' } },
   { id: 'video', icon: 'video', title: { en: 'Fake police calls', hi: 'नकली पुलिस कॉल' }, sub: { en: 'Long video calls from strangers', hi: 'अनजान लोगों की लंबी वीडियो कॉल' } },
+  { id: 'bank_app', icon: 'bank', title: { en: 'Bank app on a call', hi: 'कॉल पर बैंक ऐप' }, sub: { en: 'Stranger on the call + UPI app', hi: 'अनजान कॉल + UPI ऐप' } },
+  { id: 'long_call', icon: 'long', title: { en: 'Very long calls', hi: 'बहुत लंबी कॉल' }, sub: { en: 'Unknown number, much longer than usual', hi: 'अनजान नंबर, आम से बहुत लंबी' } },
+  { id: 'bank_number', icon: 'verified', title: { en: 'Real bank numbers', hi: 'असली बैंक नंबर' }, sub: { en: 'Tells you when it was a 1600 number', hi: '1600 वाला नंबर हो तो बताता है' } },
+  { id: 'pause_call', icon: 'pause', title: { en: 'Calling back a fraud number', hi: 'फ्रॉड नंबर पर वापस कॉल' }, sub: { en: 'Asks you to stop first', hi: 'पहले रुकने को कहता है' } },
 ];

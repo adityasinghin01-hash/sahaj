@@ -1,8 +1,10 @@
 // Settings: language, text size, Shield switches (module setFeature list), setup, About.
+// Hidden: 7 taps on the version line at the bottom open the SMS gateway screen (spare phone only).
+import Constants from 'expo-constants';
 import { router, useFocusEffect } from 'expo-router';
 import { BellRing, ChevronRight, Info, KeyRound, Smartphone, type LucideIcon } from 'lucide-react-native';
 import * as React from 'react';
-import { View } from 'react-native';
+import { Pressable, View } from 'react-native';
 
 import { BackBar, BigSwitch, Choice, M, MaaScreen } from '@/components/sahaj/maa';
 import { Tap } from '@/components/sahaj/ui';
@@ -17,13 +19,28 @@ const FEATURE_NAMES: Record<ShieldFeature, { title: Bi; sub: Bi }> = {
   p2_video_call: { title: { en: 'Long video calls', hi: 'लंबी वीडियो कॉल' }, sub: { en: 'Strangers on WhatsApp', hi: 'WhatsApp पर अनजान' } },
   p3_apk: { title: { en: '.apk files', hi: '.apk फ़ाइलें' }, sub: { en: 'Fake wedding cards', hi: 'नकली शादी कार्ड' } },
   installed_apps: { title: { en: 'Risky apps check', hi: 'ख़तरनाक ऐप जाँच' }, sub: { en: 'Screen-sharing apps', hi: 'स्क्रीन-शेयर ऐप' } },
+  p6_long_call: { title: { en: 'Very long calls', hi: 'बहुत लंबी कॉल' }, sub: { en: 'Unknown number, longer than usual', hi: 'अनजान नंबर, आम से लंबी' } },
 };
+
+/** 7 taps within 4 s on the version line → hidden gateway screen. */
+function useSecretTaps(onUnlock: () => void, need = 7, windowMs = 4000) {
+  const taps = React.useRef<number[]>([]);
+  return React.useCallback(() => {
+    const now = Date.now();
+    taps.current = [...taps.current.filter((at) => now - at < windowMs), now];
+    if (taps.current.length >= need) {
+      taps.current = [];
+      onUnlock();
+    }
+  }, [onUnlock, need, windowMs]);
+}
 
 export default function SettingsScreen() {
   const { t, pick } = useT();
   const { lang, setLang, size, setSize } = usePrefs();
   const [features, setFeatures] = React.useState<ShieldFeatures | null>(null);
   useFocusEffect(React.useCallback(() => setFeatures(shield.getFeatures()), []));
+  const versionTap = useSecretTaps(React.useCallback(() => router.push('/gateway'), []));
 
   return (
     <MaaScreen>
@@ -65,6 +82,10 @@ export default function SettingsScreen() {
         <LinkRow icon={KeyRound} title={t('try_after_call')} sub={t('try_screens')} onPress={() => router.push('/after-call')} />
         <LinkRow icon={Info} title={t('about_sahaj')} onPress={() => router.push('/about')} />
       </Section>
+
+      <Pressable onPress={versionTap} accessibilityRole="text" className="items-center py-4">
+        <M v="small">{t('version')} {Constants.expoConfig?.version ?? '1.0.0'}</M>
+      </Pressable>
     </MaaScreen>
   );
 }

@@ -12,11 +12,31 @@ data class QueuedEvent(
 )
 
 /**
+ * How a queued body is written to disk. [PLAIN] for already-masked events; the gateway queue
+ * (raw SMS) uses an encrypting codec. [decode] throws if the stored form cannot be read.
+ */
+interface BodyCodec {
+  fun encode(plain: String): String
+  fun decode(stored: String): String
+
+  companion object {
+    val PLAIN: BodyCodec = object : BodyCodec {
+      override fun encode(plain: String) = plain
+      override fun decode(stored: String) = stored
+    }
+  }
+}
+
+/**
  * Small persistent queue: one file per event in [dir] (app's no-backup dir on the phone).
  * Bodies are already masked JSON, so no secrets are written here.
  * Writes go to a temp file and are renamed, so a crash never leaves half an event.
  */
-class FileEventQueue(private val dir: File, private val maxItems: Int = 500) {
+class FileEventQueue(
+  private val dir: File,
+  private val maxItems: Int = 500,
+  private val codec: BodyCodec = BodyCodec.PLAIN,
+) {
   private val lock = Any()
 
   init { dir.mkdirs() }
@@ -55,7 +75,7 @@ class FileEventQueue(private val dir: File, private val maxItems: Int = 500) {
 
   private fun write(e: QueuedEvent) {
     val tmp = File(dir, e.key + ".tmp")
-    tmp.writeText("v1\n${e.attempts}\n${e.nextAttemptAtMs}\n${e.createdAtMs}\n${e.body}", Charsets.UTF_8)
+    tmp.writeText("v1\n${e.attempts}\n${e.nextAttemptAtMs}\n${e.createdAtMs}\n${codec.encode(e.body)}", Charsets.UTF_8)
     val target = fileFor(e.key)
     if (!tmp.renameTo(target)) {
       target.delete()
@@ -67,9 +87,11 @@ class FileEventQueue(private val dir: File, private val maxItems: Int = 500) {
     val text = f.readText(Charsets.UTF_8)
     val parts = text.split('\n', limit = 5)
     if (parts.size == 5 && parts[0] == "v1") {
-      QueuedEvent(f.name.removeSuffix(EXT), parts[4], parts[1].toInt(), parts[2].toLong(), parts[3].toLong())
+      QueuedEvent(f.name.removeSuffix(EXT), codec.decode(parts[4]), parts[1].toInt(), parts[2].toLong(), parts[3].toLong())
     } else null
   } catch (_: Exception) {
+    // Unreadable (e.g. the Keystore key is gone after a restore): it can never be sent, so remove it.
+    if (f.name.endsWith(EXT)) f.delete()
     null
   }
 
