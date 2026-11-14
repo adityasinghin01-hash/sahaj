@@ -34,3 +34,19 @@ describe('check-in call variables', () => {
     expect(vars.medicine_label).toBe('Amlodipine 5 mg');
   });
 });
+
+import { validateToolInput } from '../../src/lib/core1/sarvam-tools/handler';
+
+describe('dashboard text fields', () => {
+  const CALL = '33333333-3333-4333-8333-333333333333';
+  it('accepts text whole numbers and spoken yes/no, refuses unclear', () => {
+    expect(validateToolInput('reschedule', { schedule_id: CALL, hours: '3' }).hours).toBe(3);
+    expect(validateToolInput('medicine_count', { medicine_id: CALL, count: ' 12 ' }).count).toBe(12);
+    expect(validateToolInput('accept_incident', { call_id: CALL, incident_id: CALL, assignment_id: CALL, responder_person_id: CALL, promise_minutes: '10' }).promise_minutes).toBe(10);
+    expect(validateToolInput('record_consent', { purpose: 'Call', answer: 'haan', call_id: CALL, turn_id: 'consent_call_1' }).answer).toBe(true);
+    expect(validateToolInput('record_consent', { purpose: 'record', answer: 'false', call_id: CALL, turn_id: 'consent_record_1' }).answer).toBe(false);
+    expect(() => validateToolInput('record_consent', { purpose: 'share', answer: 'shayad', call_id: CALL, turn_id: 't1' })).toThrow();
+    expect(() => validateToolInput('reschedule', { schedule_id: CALL, hours: '3.5' })).toThrow();
+    expect(() => validateToolInput('reschedule', { schedule_id: CALL, hours: '500' })).toThrow();
+  });
+});

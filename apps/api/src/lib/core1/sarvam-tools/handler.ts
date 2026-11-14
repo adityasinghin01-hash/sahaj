@@ -34,8 +34,18 @@ function text(v: unknown, max = 2000): string {
   return maskDigits(v.trim());
 }
 function integer(v: unknown, min: number, max: number): number {
-  if (typeof v !== 'number' || !Number.isInteger(v) || v < min || v > max) throw new InvalidInput();
-  return v;
+  // Sarvam dashboard tools can only send model-filled fields as text: accept a plain whole-number string too.
+  const n = typeof v === 'string' && /^\s*\d{1,6}\s*$/.test(v) ? Number(v.trim()) : v;
+  if (typeof n !== 'number' || !Number.isInteger(n) || n < min || n > max) throw new InvalidInput();
+  return n;
+}
+/** Spoken yes/no as a boolean. Text fields arrive as strings; anything unclear is refused (silence is never consent). */
+function yesNo(v: unknown): boolean {
+  if (typeof v === 'boolean') return v;
+  const t = typeof v === 'string' ? v.trim().toLowerCase() : '';
+  if (['true', 'yes', 'haan', 'ha', 'han', 'ji haan'].includes(t)) return true;
+  if (['false', 'no', 'nahi', 'nahin', 'na'].includes(t)) return false;
+  throw new InvalidInput();
 }
 
 /** Shield's extractor is module-private. Keep its envelope precedence/aliases here
@@ -72,14 +82,14 @@ export function validateToolInput(tool: ToolName, raw: Record<string, unknown>):
     case 'child_scam_check': out.asked_for = text(raw.asked_for ?? raw.said, 300); break;
     case 'child_status': if (raw.subject_person_id !== undefined) out.subject_person_id = uuid(raw.subject_person_id); break;
     case 'record_consent':
-      if (!['call', 'record', 'share'].includes(String(raw.purpose)) || typeof raw.answer !== 'boolean') throw new InvalidInput();
-      out.purpose = String(raw.purpose); out.answer = raw.answer;
+      if (!['call', 'record', 'share'].includes(String(raw.purpose).trim().toLowerCase())) throw new InvalidInput();
+      out.purpose = String(raw.purpose).trim().toLowerCase(); out.answer = yesNo(raw.answer);
       out.call_id = uuid(raw.call_id); out.turn_id = text(raw.turn_id, 120); break;
     case 'reschedule':
       out.schedule_id = uuid(raw.schedule_id); out.hours = integer(raw.hours, 1, 168); break;
     case 'mark_private': out.call_id = uuid(raw.call_id); break;
     case 'cancel_permission':
-      if (raw.confirmed !== true) throw new InvalidInput();
+      if (raw.confirmed !== true && !(typeof raw.confirmed === 'string' && yesNo(raw.confirmed))) throw new InvalidInput();
       out.permission_id = uuid(raw.permission_id); out.confirmed = true; break;
     case 'medicine_count':
       out.medicine_id = uuid(raw.medicine_id); out.count = integer(raw.count, 0, 999);
