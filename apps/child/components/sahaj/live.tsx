@@ -17,7 +17,8 @@ import {
   TopBar,
 } from './ui';
 import { useApi, useLive, useLiveAlerts } from '@/lib/useLive';
-import { saveSession, useSession } from '@/lib/session';
+import { DEFAULT_SERVER_URL, saveSession, useSession } from '@/lib/session';
+import { usePushStatus } from '@/lib/notifications';
 import type { AppApi } from '@/lib/api';
 
 const loadSummary = (api: AppApi, signal: AbortSignal) => api.summary(signal);
@@ -56,8 +57,10 @@ function Status({
   );
 }
 export function LiveSessionBar() {
+  const pushStatus = usePushStatus();
   return (
     <View className="my-4 gap-2">
+      {pushStatus ? <Notice tone="sand">{pushStatus}</Notice> : null}
       <Btn label="Pair Maa’s phone" kind="teal" onPress={() => router.push('/pair')} />
       <Btn label="Lab sign-in / sign out" kind="ghost" onPress={() => router.push('/sign-in')} />
     </View>
@@ -584,8 +587,9 @@ export function PairScreen() {
   );
 }
 export function SignInScreen() {
-  const { session } = useSession();
-  const [url, setUrl] = React.useState(session?.url ?? ''),
+  const { session, storage } = useSession();
+  const pushStatus = usePushStatus();
+  const [url, setUrl] = React.useState(session?.url ?? DEFAULT_SERVER_URL),
     [token, setToken] = React.useState(''),
     [error, setError] = React.useState<string | null>(null),
     [pending, setPending] = React.useState(false);
@@ -622,12 +626,12 @@ export function SignInScreen() {
             try {
               // Production: replace this paste form with Supabase Auth; the server accepts the same HS256 authenticated token format.
               const { createApi } = await import('@/lib/api');
-              const candidate = { url: new URL(url.trim()).origin, token: token.trim() };
+              const candidate = { url, token: token.trim() };
               // Validate locally before transmitting the bearer token, then verify membership on the server.
               const { validateLabSession } = await import('@/lib/session');
               const valid = validateLabSession(candidate);
               await createApi(valid).summary();
-              saveSession(valid);
+              await saveSession(valid);
               setToken('');
               router.replace('/shield');
             } catch (e) {
@@ -648,9 +652,12 @@ export function SignInScreen() {
         />
       </View>
       {error ? <Notice>{error}</Notice> : null}
+      {pushStatus ? <Notice tone="sand">{pushStatus}</Notice> : null}
       <Notice tone="sand">
-        Use an access token, never a server secret. Native sessions last until the app closes; web
-        sessions use browser storage.
+        Use an access token, never a server secret. {storage === 'secure'
+          ? 'This phone stores your session securely.'
+          : storage === 'browser' ? 'Web sessions use browser storage.'
+          : 'Secure storage is unavailable; this session lasts until the app closes.'}
       </Notice>
     </Screen>
   );

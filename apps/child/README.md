@@ -28,7 +28,7 @@ This will start the Expo Dev Server. Open the app in:
 - **Android**: press `a` to launch in the Android emulator
 - **Web**: press `w` to run in a browser
 
-You can also scan the QR code using the [Expo Go](https://expo.dev/go) app on your device. This project fully supports running in Expo Go for quick testing on physical devices.
+You can also scan the QR code using the [Expo Go](https://expo.dev/go) app on your device. The UI can be previewed in Expo Go. Android remote push requires an installed APK with notifications support.
 
 ## Adding components
 
@@ -85,9 +85,20 @@ The server may set `APP_ALLOWED_ORIGINS` to comma-separated web origins for cros
 
 No URL/token selects the existing labelled Demo screens. A signed-in session selects live Shield screens;
 connection errors remain errors rather than substituting synthetic results. Core 2 remains a labelled demo.
-Native secure storage and push registration are unavailable in this dependency set: neither expo-secure-store
-nor expo-notifications is installed. Web stores the lab session in localStorage with guarded access; native
-sessions remain in memory until those modules are deliberately added in a separate native build task.
+Native sessions use expo-secure-store; web sessions retain guarded localStorage. If secure storage is
+unavailable, the session stays in memory and the sign-in screen labels that fallback. The server URL can
+be entered at sign-in and is optionally prefilled by EXPO_PUBLIC_SAHAJ_API_URL.
+
+Installed apps register their Expo push token after sign-in and restore that registration on launch.
+Permission is requested once; denied notifications can be enabled through phone Settings. The app creates
+the high-importance shield-alerts Android channel, uses it as the configured default, and opens /alert?id=…
+on a notification tap (including cold starts). Missing EAS projectId or registration failures show an
+in-app note. Finish eas init, set GOOGLE_SERVICES_JSON as an EAS file variable pointing to Firebase’s Android
+client configuration (app.config.js reads only its path), and configure EAS FCM v1 credentials before
+expecting real push delivery. Provider credentials remain in EAS/server configuration, never app source.
+Build from this directory with the preview profile in eas.json; it produces an internally distributed APK.
+The C-08 report includes exact cloud commands and required root lockfile handoff. No development-client
+profile is supplied: preview is a standalone APK, so it does not require a running Metro server.
 
 Pair-code creation requires an `Idempotency-Key` header (8–100 URL-safe characters); the typed client supplies it.
 A retry with the same family, user and key replays the same code using an encrypted 12-hour cache entry.
