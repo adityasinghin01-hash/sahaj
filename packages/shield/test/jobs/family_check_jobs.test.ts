@@ -59,6 +59,7 @@ describe("shield.family_check.callback", () => {
       familyId: "fam_1",
       parentId: "maa_1",
       line: "Namaste ji, main Aasha Didi bol rahi hoon. Haan, ye Rahul hi the.",
+      checkId: "c1",
     });
     expect(deps.atlas.alertChild).not.toHaveBeenCalled();
     expect(deps.db.markFamilyCheckNoAnswer).not.toHaveBeenCalled();
@@ -75,7 +76,7 @@ describe("shield.family_check.callback", () => {
     const { deps, checks } = await makeJobDeps({ checks: { c1: { ...rec, state: "asked" } } });
     expect((await handleShieldToolJob(SHIELD_JOBS.callback, payload(), deps)).outcome).toBe("callback_no_answer");
     expect(checks.c1!.state).toBe("no_answer");
-    expect(deps.calls.startCallback).toHaveBeenCalledWith({ familyId: "fam_1", parentId: "maa_1", line: NO_ANSWER_LINE });
+    expect(deps.calls.startCallback).toHaveBeenCalledWith({ familyId: "fam_1", parentId: "maa_1", line: NO_ANSWER_LINE, checkId: "c1" });
     expect(deps.atlas.alertChild).toHaveBeenCalledWith(
       expect.objectContaining({ familyId: "fam_1", parentId: "maa_1", verdict: expect.objectContaining({ scam_type: "family_in_trouble" }) }),
     );

@@ -201,9 +201,10 @@ export async function scheduleCallback(
   deps: ShieldDeps,
   ctx: ToolCtx,
   line: string = LINES.callbackDefault,
+  checkId?: string,
 ): Promise<{ ok: boolean }> {
   try {
-    await deps.calls.startCallback({ familyId: ctx.familyId, parentId: ctx.parentId, line });
+    await deps.calls.startCallback({ familyId: ctx.familyId, parentId: ctx.parentId, line, ...(checkId ? { checkId } : {}) });
   } catch {
     await safeSign(deps, {
       familyId: ctx.familyId,

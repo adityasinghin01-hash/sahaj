@@ -159,11 +159,11 @@ async function runCallback(deps: ShieldJobDeps, p: FamilyCheckJobPayload): Promi
 
   const name = rec.claimedName || GENERIC_FAMILY;
   if (rec.state === "confirmed") {
-    const { ok } = await scheduleCallback(deps, ctx, CALLBACK_LINES.confirmed(name));
+    const { ok } = await scheduleCallback(deps, ctx, CALLBACK_LINES.confirmed(name), p.check_id);
     return ok ? "callback_confirmed" : "callback_failed";
   }
   if (rec.state === "denied") {
-    const { ok } = await scheduleCallback(deps, ctx, CALLBACK_LINES.denied(name));
+    const { ok } = await scheduleCallback(deps, ctx, CALLBACK_LINES.denied(name), p.check_id);
     return ok ? "callback_denied" : "callback_failed";
   }
 
@@ -174,7 +174,7 @@ async function runCallback(deps: ShieldJobDeps, p: FamilyCheckJobPayload): Promi
   } catch {
     child = null;
   }
-  const { ok } = await scheduleCallback(deps, ctx, CALLBACK_LINES.noAnswer(child?.trim() || null));
+  const { ok } = await scheduleCallback(deps, ctx, CALLBACK_LINES.noAnswer(child?.trim() || null), p.check_id);
   await alertChild(
     deps,
     ctx,

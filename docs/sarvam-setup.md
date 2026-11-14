@@ -34,7 +34,7 @@ Every Shield tool is called the same way:
 { "family_id": "@family_id", "parent_id": "@parent_id", "...tool fields...": "..." }
 ```
 
-The server also accepts these two ids inside `variables`, `agent_variables` or `context`, and the tool fields inside `input` or `arguments`. Without both ids the Shield server answers `400 {"error":"missing_context"}`. Outbound calls now send `@family_id` / `@parent_id`; inbound calls still need verified context from the host.
+The server also accepts these two ids inside `variables`, `agent_variables` or `context`, and the tool fields inside `input` or `arguments`. Without both ids the Shield server answers `400 {"error":"missing_context"}`. Outbound calls send `@family_id` / `@parent_id`; inbound Madad calls get them from the authenticated on-start hook in section 3. Map its response to agent variables before calling tools.
 
 Server replies you may see:
 
@@ -136,7 +136,17 @@ Each prompt file's "Tools" table lists the same set with one line on when to cal
 
 - **Prompt file:** `packages/shared/prompts/sarvam/madad.md`.
 - Maa calls this number herself (speed dial 2, "1 Sahaj"). Availability 24×7, `Asia/Kolkata`.
-- **Variables:** the prompt uses `@address_form`, `@greeting`, `@hearing_mode`, `@consent_done`, `@last_summary`, `@open_requests`, `@pending_voice`, `@fraud_tip`, `@bridge_to`. On an inbound call the Shield server sends nothing. These would come from an on-start hook, which is not on the Shield server (section 9). Set safe defaults: `@address_form` = `ji`, `@greeting` = `Namaste`, others empty / `false`.
+- **On-start hook (paste into the dashboard):**
+  - Method: `POST`
+  - URL: `<PUBLIC_URL>/api/sarvam/hook/start`
+  - Headers: `Authorization: Bearer <SARVAM_TOOL_TOKEN>` and `Content-Type: application/json`.
+  - Body: `{ "caller_number": "<built-in telephony caller number>" }`. Bind this field to the provider's caller-number variable, not a value spoken by the caller. The server also accepts flat `caller_phone_number`, `from` or `user_phone_number`; if several are sent they must identify the same number.
+  - Map the returned JSON fields directly to agent variables: `family_id`, `parent_id`, `address_form`, `greeting`, `hearing_mode`, `consent_done`, `last_summary`, `open_requests`, `pending_voice`, `fraud_tip`, `bridge_to`.
+  - The hook uses the same bearer token and Sarvam IP allowlist as tools (`ALLOW_ANY_TOOL_IP=1` only for the lab). It hashes the number using the configured Sarvam contact account (`SARVAM_APP_ID`, else `SARVAM_AGENT_ID_CHECKIN`) and `IDENTITY_HASH_SECRET`, then looks up one active, non-revoked parent contact in `provider_identities`. No phone number is returned, logged or sent as a speech variable.
+  - For lab calls with no caller-number field, send `{}`; the lead must set `DEFAULT_FAMILY_ID` / `DEFAULT_PARENT_ID`. Both ids must identify a saved parent. An invalid or unknown supplied caller never falls back to these defaults. Do not enable the no-number lab fallback for a public line.
+  - `401` = wrong token/IP, `400` = malformed caller or missing lab context, `404` = unknown caller/parent, `503` = context unavailable. On failure, do not reuse context from a previous call.
+- **Safe dashboard defaults:** `@address_form` = `ji`, `@greeting` = `Namaste`, `@hearing_mode` / `@consent_done` = `false`, other text empty. Defaults do not establish identity for tool calls.
+- **Transfer setup without exposing a number to the AI:** in Settings → In Call Actions, enable Call forwarding, choose Phone number → Static value, and privately enter the intended lab family's contact. The optional server env `SARVAM_BRIDGE_TO` supplies only a nonnumeric label (letters and `_.:-`, e.g. `riya-transfer`) for `@bridge_to`; a phone number or invalid label produces an empty value. **Do not bind this label as the forwarding destination.** The built-in `call_transfer` uses the static provider-side destination. Configure a family-specific agent/host route before using this with multiple families. Raw Riya numbers mentioned in the prompt notes are not returned by this hook. [Sarvam call-transfer setup](https://docs.sarvam.ai/voice-agents/build/tools/call-transfer).
 - **Shield tools:** `classify_scam`, `check_message`, `family_check`, `family_check_result`, `check_code_word`, `money_sent`.
   - After `family_check` returns `status: "checking"`, wait about 20 s, then call `family_check_result` with the same `check_id`. This order is already in the prompt.
 - **Core 1 tools:** add `raise_urgent`, `check_status`, `leave_message`, `cancel_permission`, `child_status`, `child_scam_check` using the Core 1 tools URLs above.
@@ -147,8 +157,9 @@ Each prompt file's "Tools" table lists the same set with one line on when to cal
 ## 4. Agent: responder (outbound, calls a circle member)
 
 - **Prompt file:** `packages/shared/prompts/sarvam/responder.md`.
-- **Variables the Shield server sends:** `purpose` = `responder`, `introduction`, and the same first-message override as the check-in.
-- **Variables the prompt also uses:** `@responder_name`, `@subject_name`, `@incident_summary`, `@address_line`, `@incident_id`, `@is_danger`, `@bridge_to`. Give them empty defaults; the Shield server doesn't send them yet (section 9).
+- **Variables the Shield server sends:** `purpose` = `responder`, `introduction`, `family_id`, `parent_id` (Maa, not the responder), `person_id` (responder), `responder_name`, `subject_name`, `incident_summary`, `address_line`, `incident_id`, `check_id`, `is_danger`, `bridge_to`, and the same AI first-message override as the check-in.
+- Names come from the saved family-check/recipient binding. The short summary asks for confirmation of a call made in the responder's name; it contains no numbers or OTPs. The check UUID is `incident_id` / `check_id`; it is not a Core 1 incident or acceptance proof. `address_line` is empty: this workflow has no consent-backed address source. `is_danger` is `"no"` for a family check. `bridge_to` is the configured transfer label from section 3.
+- **Dashboard prompt adjustment:** C-17 sends `is_danger` as `"yes"` / `"no"`. In the pasted responder prompt, change the condition `@is_danger "true"` to `@is_danger "yes"` (and use `"yes"` in danger test cases).
 - **Shield tools:** none. `accept_incident` / `decline_incident` URLs and their required verified-proof fields are listed under Core 1 tools. Keep them disabled until that proof binding is supplied by the host.
 - **Post-call webhook:** set automatically per call by the server (same URL as above).
 - **Send back:** agent id → `SARVAM_AGENT_ID_RESPONDER`.
@@ -158,7 +169,7 @@ Each prompt file's "Tools" table lists the same set with one line on when to cal
 - **Prompt file:** `packages/shared/prompts/sarvam/callback.md`.
 - **Variables the Shield server sends:** `purpose` = `callback`, `introduction`, `family_id`, `parent_id`, and both `line` and `callback_line`: the exact Hindi result line to say (already masked, e.g. "Ye Rohit nahi the. Paise mat bhejiye.").
   - The prompt's `@callback_line` matches the variable now sent; `@line` remains available for older prompts.
-  - `@callback_reason`, `@missed_count`, `@check_id` are not sent yet (section 9). Default `@callback_reason` to `family_check_answer` while testing Shield.
+  - `callback_reason` is `family_check_answer` for Shield result callbacks; `check_id` is sent by the scheduled family-check workflow. If a caller supplies a known missed-call count, the port sends `callback_reason: "missed_call"` and `missed_count` as a string. Unknown counts/ids are omitted rather than invented. Core 1 currently sends missed-call push nudges, not Sarvam callback calls.
 - **Shield tools:** `classify_scam`, `money_sent`. **Core 1 tool:** `raise_urgent` using its URL above.
 - **Post-call webhook:** set automatically per call by the server.
 - **Send back:** agent id → `SARVAM_AGENT_ID_CALLBACK`.
@@ -170,7 +181,7 @@ Each prompt file's "Tools" table lists the same set with one line on when to cal
 - **Variables the prompt uses:** `@drill_id`, `@opening`, `@ask`, `@nudge`. `@opening` always says it is an AI voice.
 - **Shield tool:** `experience_turn` (`drill_id` = `@drill_id`, `said` = Maa's words). When Maa hangs up, the host sends `hung_up: true`.
 - **Consent route** (for whoever records Maa's "haan"): `POST <PUBLIC_URL>/api/sarvam/experience-consent`, header `Authorization: Bearer <SARVAM_TOOL_TOKEN>`, body `{ "family_id": "...", "parent_id": "...", "clip_ref": "<storage reference of the recording>" }`.
-- **Today the server places this call with the responder agent id** and doesn't yet send `@drill_id`/`@opening`/`@ask`/`@nudge` (section 9). Build the agent, send its id back under the name `SARVAM_AGENT_ID_EXPERIENCE`, and the lead will wire it up.
+- **Agent selection is wired:** set `SARVAM_AGENT_ID_EXPERIENCE` to use this agent. Without it, the existing responder-agent fallback remains. Both paths send `drill_id`, `opening`, `ask`, `nudge`, plus family/parent/purpose/introduction context. The opening explicitly says AI; script speech is masked, and the complete drill id is preserved for `experience_turn`.
 
 ## 7. Agent: call gateway screener (inbound, OFF by default)
 
@@ -192,7 +203,8 @@ Send these privately (one message, not a shared doc):
 | `SARVAM_AGENT_ID_CHECKIN` | Check-in agent → its id |
 | `SARVAM_AGENT_ID_RESPONDER` | Responder agent → its id |
 | `SARVAM_AGENT_ID_CALLBACK` | Callback agent → its id |
-| `SARVAM_AGENT_VERSION` | The published version number (a whole number, e.g. `1`). One number is used for all three agents, so publish them at the same version. |
+| `SARVAM_AGENT_ID_EXPERIENCE` | Experience drill agent → its id (optional; responder fallback when unset) |
+| `SARVAM_AGENT_VERSION` | The published version number (a whole number, e.g. `1`). One version is used for all outbound agents, so publish them at the same version. |
 | `SARVAM_CONNECTION_ID` | Telephony / phone connection used for outbound calls |
 | `SARVAM_AGENT_PHONE_NUMBER` | The number outbound calls come from, as `+91` and 10 digits, no spaces |
 
@@ -204,9 +216,21 @@ The lead then:
 2. Runs `node scripts/lab/sarvam-check.mjs`. This is a dry run that prints names, formats and the masked request only, and calls nobody.
 3. Only when everything shows ✓, places one test call to the team's own keypad phone with `node scripts/lab/sarvam-check.mjs --call-keypad`.
 
-## 9. Known gaps (the lead is tracking these; not your job to fix)
+## 9. Variables now sent and remaining host wiring
 
-- The Shield server's outbound calls now send `family_id` / `parent_id`, plus `purpose`, `introduction` and (for callback) both `line` and `callback_line`. Some other prompt variables still depend on the calling workflow (`@address_form`, `@drill_id`, `@drill_story`, `@drill_praise`, responder proof/card fields, `@callback_reason`, …); do not assume defaults provide verified identity.
-- There is no on-start hook route (`/api/sarvam/hook/start`) on the Shield server. The prompt files refer to one from Core 1.
-- Experience drills go out through the responder agent id, without the drill variables.
-- Core 1 tools are on `apps/api` at `/api/core1/sarvam/*`, not on the Shield server. Inbound verified context and responder proof still need host wiring; missing context/proof always transfers.
+| Workflow | What is now supplied |
+|---|---|
+| Shield responder family check | Saved family/Maa/responder ids, masked `responder_name` / `subject_name`, short generic `incident_summary`, empty `address_line`, check UUID in `incident_id` / `check_id`, `is_danger: "no"`, transfer label in `bridge_to`, `purpose` / AI `introduction`. The check must match the family and recipient. No family-check routing was changed. |
+| Shield result callback | Existing `line` and `callback_line`, `callback_reason: "family_check_answer"`, the scheduled `check_id`, family/Maa ids, `purpose` / AI `introduction`. The port also supports known `missed_count` / `callback_reason: "missed_call"`; the current Core 1 nudge flow does not place Sarvam callbacks. |
+| Experience drill | Dedicated `SARVAM_AGENT_ID_EXPERIENCE` when set, otherwise responder fallback; `drill_id`, AI-disclosing `opening`, masked `ask` / `nudge`, family/Maa ids, `purpose` / AI `introduction`. Existing consent, frequency and quiet-hours gates remain. |
+| Inbound Madad | Authenticated `POST /api/sarvam/hook/start` (section 3) returns all eleven fields: `family_id`, `parent_id`, `address_form`, `greeting`, `hearing_mode`, `consent_done`, `last_summary`, `open_requests`, `pending_voice`, `fraud_tip`, `bridge_to`. All free text is masked. |
+
+Hook field sources: saved parent address form (display name fallback), fixed `Namaste` greeting, hearing mode when saved hearing notes are nonempty, latest current affirmative `check_in` consent (nonempty version, under 365 days), latest redacted check-in summary, up to five open request kinds, a generic pending-voice indicator, and the weekly fraud tip. Missing texts are empty, booleans default false. It never returns message recordings, transcripts or a raw phone number.
+
+Remaining dashboard/host work:
+
+- Map the on-start response into the inbound agent variables; keep all tool calls scoped to the returned family/Maa ids. Caller-number lookup requires a previously registered active parent contact in the configured Sarvam account. A borrowed unknown phone is not authenticated by this hook.
+- Configure static family call forwarding and the optional `bridge_to` label (section 3). No address is disclosed without a consent-backed address source; none exists in the family-check workflow today.
+- Change the pasted responder danger condition to `"yes"` as described in section 4. The source prompt still documents `true` / `false`.
+- Core 1 urgent responder calls in `apps/api` use Twilio, not Sarvam. Their verified acceptance path is unchanged. Core 1 tools stay on `/api/core1/sarvam/*`; `accept_incident` / `decline_incident` still require saved call/assignment ids and normalized proof. A Shield check id or a spoken "haan" is not that proof.
+- Other daily-check-in variables (`drill_story`, `drill_praise`, medicines, and workflow-specific context) still depend on the caller or the existing check-in-vars route. Do not infer verified identity or proof from empty dashboard defaults.

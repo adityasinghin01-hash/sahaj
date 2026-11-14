@@ -54,7 +54,10 @@ export interface ShieldDeps {
       purpose?: "experience_drill";
       script?: { id: string; opening_hi: string; ask_hi: string; nudge_hi: string };
     }): Promise<void>;
-    startCallback(input: { familyId: string; parentId: string; line: string }): Promise<void>;
+    startCallback(input: {
+      familyId: string; parentId: string; line: string;
+      checkId?: string; callbackReason?: "family_check_answer" | "missed_call"; missedCount?: number;
+    }): Promise<void>;
   };
   atlas: {
     bridgeChild(input: { familyId: string; parentId: string; reason: string }): Promise<void>;

@@ -16,6 +16,7 @@ function fakeSql(phone: string | null = "+919000000001") {
       writes.push({ query, values });
       if (query.includes("select distinct t.expo_token"))
         return [{ expo_token: "ExpoPushToken[synthetic]" }];
+      if (query.includes("from public.family_checks")) return [{ parent_id: P, responder_name: "Rohit", subject_name: "Meena" }];
       if (query.includes("public.provider_identities")) {
         if (!phone) return [];
         const row = { family_id: F, person_id: P, source: "sarvam", account_id: "checkin",
@@ -302,7 +303,7 @@ describe("app real-provider ports (mock fetch only)", () => {
     const bodies = fetchFn.mock.calls.map(c => JSON.parse((c as unknown as [string, RequestInit])[1].body as string));
     expect(bodies[0].app_config.agent_variables).toMatchObject({ incident_id: V, family_id: F, person_id: P });
     expect(bodies[1].app_config.app_id).toBe("experience");
-    expect(bodies[1].app_config.agent_variables).toMatchObject({ drill_id: "exp.kyc.1", opening: "Namaste ji", ask: "KYC update karna hai", nudge: "Jaldi kijiye" });
+    expect(bodies[1].app_config.agent_variables).toMatchObject({ drill_id: "exp.kyc.1", opening: "Namaste ji, yeh Sahaj ki AI awaaz hai. Ye abhyaas call hai. Namaste ji", ask: "KYC update karna hai", nudge: "Jaldi kijiye" });
     expect(bodies[2].app_config.agent_variables).toMatchObject({ callback_line: "Ye Rohit nahi tha", line: "Ye Rohit nahi tha", parent_id: P });
   });
 });

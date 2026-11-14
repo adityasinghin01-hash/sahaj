@@ -4,8 +4,10 @@ import { mask, maskDigits, type ShieldRuntimePorts } from "@sahaj/shield";
 import { createContactsPort } from "./contacts";
 import { writeOutbox } from "./outbox";
 import { claimProvider, finishProvider } from "../lib/app_provider";
+import { drillOpening, maskedSarvamText, sarvamBridgeLabel } from "../lib/sarvam_variables";
 
 // Verified 2026-11-14: https://docs.sarvam.ai/voice-agents/api/instant-outbound/create.md
+const DRILL_UUID_RE = /^exp\.[a-z_]+\.[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 /** True only when every Sarvam outbound setting for this purpose is present and outbound is switched on. */
@@ -114,7 +116,7 @@ export function createCallsPort(
                 parent_id: input.parentId ?? input.personId,
                 person_id: input.personId,
                 ...Object.fromEntries(Object.entries(input.variables ?? {})
-                  .map(([name, value]) => [name, UUID_RE.test(value) ? value : maskDigits(mask(value))])),
+                  .map(([name, value]) => [name, (UUID_RE.test(value) || (name === "drill_id" && DRILL_UUID_RE.test(value))) ? value : maskDigits(mask(value))])),
                 // The callback prompt reads @callback_line; older prompts read @line.
                 ...(input.line ? { line: maskDigits(mask(input.line)), callback_line: maskDigits(mask(input.line)) } : {}),
               },
@@ -179,16 +181,29 @@ export function createCallsPort(
       return { status: "no_answer" };
     },
     async startResponderCall(input) {
-      // Experience drills use their own agent when configured (else the responder agent) and carry the
-      // generic script the drill prompt reads; family checks carry the check id as @incident_id.
       const drill = input.purpose === "experience_drill" && input.script ? input.script : null;
+      // Recover Maa from the saved check, never from the responder destination. Bind all three ids.
+      const rows = drill ? [] : await sql<{ parent_id: string; responder_name: string; subject_name: string }[]>`
+        select c.parent_id, r.display_name as responder_name, p.display_name as subject_name
+        from public.family_checks c
+        join public.people p on p.id=c.parent_id and p.family_id=c.family_id and p.role='parent'
+        join public.people r on r.id=c.asked_person_id and r.family_id=c.family_id
+        where c.id=${input.checkId} and c.family_id=${input.familyId} and c.asked_person_id=${input.toPersonId}
+        limit 1`;
+      const check = rows[0];
+      if (!drill && !check) return;
       await outbound(drill && env.SARVAM_AGENT_ID_EXPERIENCE ? "EXPERIENCE" : "RESPONDER", {
         familyId: input.familyId,
         personId: input.toPersonId,
+        parentId: drill ? input.toPersonId : check!.parent_id,
         key: `calls:responder:${input.checkId}`,
         variables: drill
-          ? { drill_id: input.checkId, opening: drill.opening_hi, ask: drill.ask_hi, nudge: drill.nudge_hi }
-          : { incident_id: input.checkId, check_id: input.checkId },
+          ? { drill_id: input.checkId, opening: drillOpening(drill.opening_hi), ask: drill.ask_hi, nudge: drill.nudge_hi }
+          : { incident_id: input.checkId, check_id: input.checkId,
+            responder_name: maskedSarvamText(check!.responder_name, 80), subject_name: maskedSarvamText(check!.subject_name, 80),
+            incident_summary: "Aapke naam se aaye call ki pushti ke liye parivaar ko madad chahiye.",
+            // No address is stored by this workflow; never infer permission from an active check.
+            address_line: "", is_danger: "no", bridge_to: sarvamBridgeLabel(env) },
       });
     },
     async startCallback(input) {
@@ -197,7 +212,13 @@ export function createCallsPort(
         personId: input.parentId,
         parentId: input.parentId,
         line: input.line,
-        key: `calls:callback:${input.parentId}:${createHash("sha256").update(input.line).digest("hex")}`,
+        variables: {
+          callback_reason: input.callbackReason ?? "family_check_answer",
+          ...(input.checkId ? { check_id: input.checkId } : {}),
+          ...(Number.isInteger(input.missedCount) && input.missedCount! > 0 && input.missedCount! < 1000
+            ? { missed_count: String(input.missedCount) } : {}),
+        },
+        key: `calls:callback:${input.checkId ?? input.parentId}:${createHash("sha256").update(input.line).digest("hex")}`,
       });
     },
   };
