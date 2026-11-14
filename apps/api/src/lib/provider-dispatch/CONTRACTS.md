@@ -2,7 +2,7 @@
 
 Owner: Kiro A. Reconciled with Phase 3 `c614a32` (`atlas-runtime/CONTRACTS.md`, migrations `20261114201500` / `20261114210000`).
 Code: `apps/api/src/lib/provider-dispatch/**`, `recording-worker/**`, `provider-ingestion/**`, `apps/api/src/app/api/twilio/gather/**`.
-SQL: `infra/supabase/migrations/20261114201600_phase2_dispatch_recording.sql` (unapplied). Final order: Phase 3 base `201500` (creates `outbox.action`, `outbox.incident_id`, `consent_max_age()`) -> this file `201600` -> Phase 3 review `210000` -> Phase 3 bridge `213000` (calls `bind_outbox_dispatch`, `call_recording_consent`, `dispatch_account`, reads `normalized_proof`).
+SQL: `infra/supabase/migrations/20261114201600_phase2_dispatch_recording.sql` (unapplied). Final order: Phase 3 base `201500` (creates `outbox.action`, `outbox.incident_id`, `consent_max_age()`) -> this file `201600` -> Phase 3 review `210000` -> Phase 3 bridge `213000` (calls `bind_outbox_dispatch`, `call_recording_consent`, `dispatch_account`, reads `normalized_proof`) -> **Phase 2 contact registry `20261114214500_phase2_contact_registry.sql`** (new, not yet applied to the shared scratch DB; its SQL test applies it inside a rolled-back transaction).
 Tests: `apps/api/tests/{provider-dispatch,recording-worker,provider-ingestion}`, `infra/supabase/tests/phase2_dispatch_recording.sql`, `apps/api/tests/provider-dispatch/sql-concurrency.ps1`.
 SQL fixtures follow the combined order: action values satisfy Phase 3's `action_requests_action_known`; each action request is attached to at most one outbox row (`outbox_one_per_action_request`; the conflict is asserted deliberately); when the bridge is present the test first proves `claim_dispatch` is refused by `dispatch_ledger_authorize` for an unauthorized row and then DISABLES that trigger inside the rolled-back transaction, so a claim satisfying the full Phase 3 authorization facts (executed request, live permission, active principal) is NOT covered by this file. `sahaj_private.outbox_proof` / `outbox_acceptance` from the bridge are run against the real proofs when they exist.
 **Scratch execution (2026-11-14, loopback PostgreSQL 17.12, parent-provided, all 9 migrations applied in the final order):** `phase2_dispatch_recording.sql` exits 0 and rolls back; `sql-concurrency.ps1 -Psql <psql.exe> -HostName 127.0.0.1 -Port 55439 -User postgres -Database postgres` passes all 17 checks, twice, leaves no rows and no disabled triggers. It now uses real Phase 3 authorization facts (principal, live permission, executed request, offered assignment), so the claim race runs through the bridge's `dispatch_ledger_authorize`. Hosted Supabase behaviour (roles, grants, PostgREST) is NOT covered by this scratch run. TypeScript tests use in-memory models of the SQL rules.
@@ -62,6 +62,27 @@ All take injected dependencies; none reads the environment.
 - `runGatherAcceptance` is the route itself: `POST /api/twilio/gather`.
 Factories for the real stores: `dispatchStore()`, `recordingStore()`, `recordingStorage()`, `purgeStore()`, `gatherStore()` (service role, read env through `serviceDatabase()` only when called).
 
+## 4a. Contact registry and destination resolver (`provider-dispatch/contacts.ts`)
+
+Exact exports from `apps/api/src/lib/provider-dispatch/index.ts`:
+```
+createContactResolver(db, { encryptionKeyHex: string, identitySecret: string, accounts: Partial<Record<'sarvam'|'twilio'|'whatsapp', string>> })
+  -> async (familyId, personId, provider) => string | null          // E.164 or null; throws ContactError('contact_lookup_failed') on DB error
+registerContactIdentity(db, { encryptionKeyHex, identitySecret }, { familyId, personId, source: 'sarvam'|'twilio'|'whatsapp'|'telecmi', accountId, e164 })
+  -> 'registered' | 'already_registered'                            // throws ContactError(code)
+revokeContactIdentity(db, { familyId, personId, source, accountId }) -> number (rows revoked)
+contactAad(...), contactDigits(e164), ContactError
+```
+- **Storage:** `provider_identities` row, `binding_kind='contact'`, `source`, `account_id` (Sarvam `app_id`, Twilio `AccountSid`, WhatsApp `phone_number_id`, TeleCMI `appid`), `external_id_hash = identityHash(source, account, digits)` where digits = E.164 without `+` (identical to what WhatsApp `from`/`recipient_id` and the Sarvam/TeleCMI `phoneDigits` parsers hash, so registered contacts match inbound traffic), `contact_ciphertext = encryptWebhook(e164, key, "sahaj:contact:v1:<family>:<person>:<source>:<account>:<hash>")`. No plaintext column, log, error or model input carries the number.
+- **Resolver** filters family, person, source, configured account, `binding_kind='contact'`, `enabled`, `revoked_at is null`, re-checks those on the row, decrypts under the AAD, requires E.164, and recomputes the hash. Missing, ambiguous (2+ rows), wrong-context, moved/tampered ciphertext or hash mismatch all return null; no account configured for the provider returns null without querying.
+- **Registration** (`register_contact_identity`, migration `214500`, service role only, takes the person lock first): validates the person is in the family; a number already bound to another family or person (active or revoked) raises `identity_owned_elsewhere`; this person's revoked row raises `identity_revoked` (revival is never implicit); a second active number for the same person and account raises `contact_already_registered` (also enforced by a partial unique index); returns `registered` / `already_registered`. `revoke_contact_identity` keeps the row (so the number can never silently move) and disables it.
+- **Trust boundary:** there is no HTTP route. Phase 4 setup calls `registerContactIdentity` only after authenticating and authorizing the adult adding the number. `service_role` still has direct table DML on `provider_identities` (existing grant, kept because other lanes write it); direct writers bypass these checks and are trusted.
+- **Keys:** `encryptionKeyHex` must be the same 64-hex key at registration and resolution (Phase 3 calls it `contactEncryptionKey`); `identitySecret` must equal `IDENTITY_HASH_SECRET` used by the inbound gateways.
+
+## 4b. WhatsApp delivery status (`whatsapp-ingestion.ts`, `event-store.ts`, `app/api/whatsapp/route.ts`)
+
+`POST /api/whatsapp` (unchanged: raw-byte `X-Hub-Signature-256` HMAC, 256 KiB bound, configured `WHATSAPP_PHONE_NUMBER_ID`) now stores, for each `statuses[]` item, a `whatsapp.status` raw event whose metadata is `person_id`, `status` (`sent|delivered|read|failed`, anything else `unsupported`) and **`provider_ref` only when** a `provider_identities` row `source='whatsapp', account_id=<configured phone_number_id>, binding_kind='message', attempt_id=<wamid>` (written by `complete_dispatch`) exists for the same family and person the status resolves to; otherwise `binding='unverified'`. When Meta omits `recipient_id` (BSUID-only users), the status is attributed through that message binding; with neither, the batch is refused 403. The metadata is also bound into the hashed encrypted envelope (absent for text messages, whose hashes are unchanged). The status job (`runStatusNormalizationJob`) then calls `record_delivery_proof`: `delivered`/`read` -> `delivery.confirmed`; `failed` -> `delivery.not_sent` (refused if it contradicts existing proof); `sent`/`unsupported`/unverified -> pending. Verified on the scratch database end to end (section 7).
+
 ## 5. Other contract points (unchanged)
 
 - Dispatch key `dispatch:<outboxId>:a<attempt>`; one live ledger row per outbox regardless of key. `denied` / `failed` / `delivery_unknown` / `duplicate` semantics as in the code comments. `deps.authorize` must re-evaluate current consent/permission/membership; `deps.resolveDestination` must filter by family AND person and never log numbers.
@@ -69,12 +90,21 @@ Factories for the real stores: `dispatchStore()`, `recordingStore()`, `recording
 - Recordings: Twilio and (opt-in, `SARVAM_RECORDING_RETRIEVAL=true` plus worker `sarvam` config) Sarvam; first recording per call wins; purged recordings are never stored again; purge deletes only `<family>/calls/<call>/...` exact stored paths.
 - Environment names introduced: `TWILIO_GATHER_CALLBACK_URL`, `SARVAM_RECORDING_RETRIEVAL`; worker config values are passed in by the caller.
 
+## 7. Scratch evidence for this pass (loopback PostgreSQL 17.12)
+
+- `infra/supabase/tests/phase2_contact_registry.sql`: exit 0, rolled back (applies migration `214500` inside the transaction when absent).
+- `SAHAJ_SCRATCH_PSQL=<psql.exe> pnpm exec vitest run tests/provider-dispatch/whatsapp-scratch.test.ts`: 4/4 pass against the real database through one psql session (`tests/provider-dispatch/psql-session.ts`, supabase-js stand-in), running as `service_role`, everything rolled back. It covers registration and resolution, a dispatch through the real ledger and the Phase 3 `dispatch_ledger_authorize` trigger to a scripted Meta transport, the signed `POST /api/whatsapp` status, the real `claim_raw_events`/`dispatch_raw_event`, the status job, `record_delivery_proof`, and Phase 3 `sahaj_private.outbox_proof = 'delivered'`. It also covers duplicate and BSUID statuses, a substituted recipient, another account, an unregistered recipient, a bad signature, `deleted`/`sent` statuses and a contradicting `failed`. Skipped (not failed) when the variable is unset.
+
 ## 6. Open items needing other lanes
 
-0. **Phase 3 bridge `c184a68` (read-only review, not edited):** (a) `20261114213000_phase3_bridge.sql` `request_consent` assigns `cid := sahaj_private.call_recording_consent(...)` as a scalar; the function returns a table, so that must become `select e.id into cid from sahaj_private.call_recording_consent(...) e`, otherwise `record_audio` consent fails at runtime. (b) Its comment says recording consent has \
+**Resolved since earlier passes (historical notes below kept for context):** Phase 3 `213000` now reads `call_recording_consent` as a table and applies `consent_max_age()` (formerly item 0); Phase 3 calls `bind_outbox_dispatch` and joins the strict proof predicates (formerly item 1); WhatsApp status proof now has a producer (formerly item 3).
+
+0. ~~RESOLVED in Phase 3 `213000`.~~ Historical: **Phase 3 bridge `c184a68` (read-only review, not edited):** (a) `20261114213000_phase3_bridge.sql` `request_consent` assigns `cid := sahaj_private.call_recording_consent(...)` as a scalar; the function returns a table, so that must become `select e.id into cid from sahaj_private.call_recording_consent(...) e`, otherwise `record_audio` consent fails at runtime. (b) Its comment says recording consent has \
 
 1. Phase 3 enqueue must call `bind_outbox_dispatch` and set `outbox.action` / `incident_id`; its `observe_delivery` / `outbox_acceptance` should add the strict join in section 2.
 2. Phase 3 cron must route `twilio.call_status` and the Sarvam/WhatsApp status events through `runStatusNormalizationJob`, `twilio.recording.retrieval_requested` and `sarvam.recording.retrieval_requested` through `runRecordingJob`, and schedule `runOutboxDispatchTick` / `runRecordingPurgeTick`. Phase 3's router lists only the Twilio recording event today.
-3. No producer exists for `whatsapp.status` events; WhatsApp `delivered|read` proof therefore cannot occur yet.
+3. ~~No producer exists for `whatsapp.status` events~~ RESOLVED (section 4b).
 4. Incident and assignment creation (Phase 4) is required before any urgent responder call can be bound.
+6. Phase 3 seam: `tests/provider-dispatch/entrypoints-shape.test.ts` compiles the exact `phase2-modules.ts` composition against this branch; the parent still has to replace the null seam in the combined tree.
+7. Deployment setup still external: real account ids, Graph version, webhook URLs, Meta media hosts, contact registration of real numbers, BSUID users (`packages/adapters/README.md`).
 5. Twilio media Basic auth (API key pair vs AccountSid:AuthToken), Twilio `.wav` redirect behaviour and Sarvam recording timing remain unconfirmed (see `packages/adapters/README.md`).

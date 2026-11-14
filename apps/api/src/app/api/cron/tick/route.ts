@@ -37,7 +37,9 @@ export async function POST(request: Request) {
     }
     // Provider side effects happen only here, at the tick boundary, never inside Atlas graph nodes. Absent entrypoints report unavailable.
     const dispatch = bridge.dispatchTick ? await bridge.dispatchTick(randomUUID()) : { status: "unavailable" };
-    const providers = { dispatch, status: bridge.statusJob ? "configured" : "unavailable", recording: bridge.recordingJob ? "configured" : "unavailable",
+    // Recording purge: counts only (purged/skipped/failed/refused). Never paths, ids or provider data.
+    const purge = bridge.purgeTick ? await bridge.purgeTick().catch(() => ({ status: "failed" })) : { status: "unavailable" };
+    const providers = { dispatch, purge, status: bridge.statusJob ? "configured" : "unavailable", recording: bridge.recordingJob ? "configured" : "unavailable",
       unavailable: bridge.unavailable };
     return NextResponse.json({ ...routed, workflow, providers, care_actions_run: 0, processing: "durable_workflow_queue" },
       { status: routed.failed > 0 ? 503 : 200 });

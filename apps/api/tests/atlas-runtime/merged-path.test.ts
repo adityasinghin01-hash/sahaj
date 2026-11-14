@@ -8,7 +8,7 @@ import { phase2Entrypoints } from "../../src/lib/atlas-runtime/phase2-modules";
 import { providerConfigFromEnv } from "../../src/lib/atlas-runtime/providers";
 import { createAtlasPorts } from "../../src/lib/atlas-runtime/repository";
 import { claimableKinds, routeEventKind, runWorkflowJobs } from "../../src/lib/atlas-runtime/runner";
-import { encryptWebhook } from "../../src/lib/webhook-security";
+import { encryptWebhook, identityHash } from "../../src/lib/webhook-security";
 
 /**
  * Merged-path acceptance. STAGED: Phase 2 modules are found at their stable repository paths with `import.meta.glob`, so
@@ -30,10 +30,13 @@ function realEntrypoints(): Phase2Entrypoints {
     runStatusNormalizationJob: (deps, id) => d.runStatusNormalizationJob(deps, id),
     recordingStore: db => r.recordingStore(db), recordingStorage: db => r.recordingStorage(db),
     runRecordingJob: (deps, db, id) => r.runRecordingJob(deps, db, id),
+    createContactResolver: (db, cfg) => d.createContactResolver(db, cfg),
+    purgeStore: db => r.purgeStore(db), runRecordingPurgeTick: deps => r.runRecordingPurgeTick(deps),
   };
 }
 
 const KEY = "ab".repeat(32);
+const CONTACT_KEY = "cd".repeat(32), IDENTITY_SECRET = "synthetic-identity-secret-0123456789abcdef", PHONE = "+919000000001";
 const F = "b3000000-0000-4000-8000-000000000001", PERSON = "c3000000-0000-4000-8000-000000000001";
 const JOB = "d3000000-0000-4000-8000-000000000001", EVENT = "e3000000-0000-4000-8000-000000000001", TOKEN = "99000000-0000-4000-8000-000000000001";
 const PRINCIPAL = "a6000000-0000-4000-8000-000000000001", OUTBOX = "a5000000-0000-4000-8000-000000000001", CALL = "ca000000-0000-4000-8000-000000000001";
@@ -118,7 +121,20 @@ function makeWorld() {
       }
     },
   };
+  // provider_identities read path for the REAL Phase 2 contact resolver (supabase-js query-builder shape).
+  const contactRows = PHASE2 ? [contactRow(PERSON, "sarvam", "app-1")] : [];
+  Object.assign(db, { from(table: string) { const filters: Array<[string, unknown]> = []; const q = {
+    select: () => q, eq: (c: string, v: unknown) => { filters.push([c, v]); return q; }, is: (c: string, v: unknown) => { filters.push([c, v]); return q; },
+    limit: async (n: number) => ({ data: table === "provider_identities" ? contactRows.filter(r => filters.every(([c, v]) => r[c] === v)).slice(0, n) : [], error: null }) }; return q; } });
   return Object.assign(w, { db });
+}
+
+/** A contact row encrypted exactly as the Phase 2 registry does (real contactAad, real identityHash). */
+function contactRow(person: string, source: "sarvam" | "twilio" | "whatsapp", account: string): Record<string, unknown> {
+  const d = dispatchModule as unknown as { contactAad(...a: string[]): string; contactDigits(e: string): string };
+  const hash = identityHash(source, account, d.contactDigits(PHONE), IDENTITY_SECRET);
+  return { family_id: F, person_id: person, source, account_id: account, external_id_hash: hash, binding_kind: "contact", enabled: true, revoked_at: null,
+    contact_ciphertext: encryptWebhook(Buffer.from(PHONE), CONTACT_KEY, d.contactAad(F, person, source, account, hash)) };
 }
 
 const atlasOf = (w: ReturnType<typeof makeWorld>, timeline: unknown[], saver = new MemorySaver()) =>
@@ -127,27 +143,55 @@ const helpers = () => phase2Helpers as unknown as { scripted(...r: unknown[]): {
 function config(transport: unknown, over: Partial<ProviderRuntimeConfig> = {}): ProviderRuntimeConfig {
   const providers = (helpers().deps({}, transport) as { providers: ProviderRuntimeConfig["providers"] }).providers;
   return { dispatchEnabled: true, transport: transport as never, identitySecret: "synthetic-identity-secret-0123456789abcdef",
-    resolveDestination: async () => "+919000000001", providers, ...over };
+    contactEncryptionKey: CONTACT_KEY, providers, ...over };
 }
 
+function fakeEntrypoints(calls: string[]): Phase2Entrypoints {
+  return {
+    dispatchStore: () => ({}), runOutboxDispatchTick: async () => { calls.push("runOutboxDispatchTick"); return { enabled: true, claimed: 0, outcomes: {} }; },
+    runStatusNormalizationJob: async () => ({ action: "complete", code: "x" }), recordingStore: () => ({}), recordingStorage: () => { calls.push("recordingStorage"); return {}; },
+    runRecordingJob: async () => ({ action: "complete", code: "x" }),
+    createContactResolver: (_db, cfg) => { calls.push(`createContactResolver:${Object.entries(cfg.accounts).map(([k, v]) => `${k}=${v}`).join(",")}`); return async () => null; },
+    purgeStore: () => { calls.push("purgeStore"); return {}; },
+    runRecordingPurgeTick: async deps => { calls.push(`runRecordingPurgeTick:enabled=${deps.enabled}:limit=${deps.limit}`); return { purged: 1, skipped: 0, failed: 0, refused: 0, enabled: true }; },
+  };
+}
 describe("integration seam (always runs)", () => {
   it("on a branch without Phase 2, the production seam is empty and every provider capability is unavailable", () => {
     const bridge = buildProviderBridge(phase2Entrypoints, makeWorld().db, providerConfigFromEnv({}));
     if (!PHASE2) {
-      expect(bridge).toEqual({ unavailable: ["phase2_entrypoints"] });
+      expect(bridge.unavailable[0]).toBe("phase2_entrypoints"); expect(bridge.dispatchTick ?? bridge.purgeTick ?? bridge.statusJob).toBeUndefined();
       expect(claimableKinds(bridge)).toEqual(["core1.atlas", "core1.proof"]);
     }
   });
-  it("production config never enables dispatch without the explicit flag, contact resolution and provider settings", () => {
-    const cfg = providerConfigFromEnv({ TWILIO_ACCOUNT_SID: "AC1", TWILIO_AUTH_TOKEN: "t", TWILIO_FROM_NUMBER: "+910", TWILIO_STATUS_CALLBACK_URL: "https://h.test/s" }, (async () => new Response()) as never);
-    expect(cfg.dispatchEnabled).toBe(false); expect(cfg.resolveDestination).toBeUndefined();
-    const fake: Phase2Entrypoints = { dispatchStore: () => ({}), runOutboxDispatchTick: async () => { throw new Error("must not run"); },
-      runStatusNormalizationJob: async () => ({ action: "complete", code: "x" }), recordingStore: () => ({}), recordingStorage: () => ({}), runRecordingJob: async () => ({ action: "complete", code: "x" }) };
-    const b = buildProviderBridge(fake, makeWorld().db, { ...cfg, dispatchEnabled: true });
-    expect(b.dispatchTick).toBeUndefined(); expect(b.unavailable).toContain("resolve_destination"); expect(b.unavailable).toContain("recording_config");
-    expect(JSON.stringify(b.unavailable)).not.toMatch(/AC1|\+910/);
+  it("bridge never composes dispatch without the explicit flag, contact key, identity secret and a configured provider", () => {
+    const calls: string[] = [];
+    const fake = fakeEntrypoints(calls);
+    const db = makeWorld().db;
+    const base: ProviderRuntimeConfig = { dispatchEnabled: true, transport: (async () => new Response()) as never, identitySecret: IDENTITY_SECRET, contactEncryptionKey: CONTACT_KEY,
+      providers: { whatsapp: { accessToken: "t", phoneNumberId: "123", graphVersion: "v23.0" } } };
+    for (const [over, name] of [[{ dispatchEnabled: false }, "dispatch_disabled"], [{ contactEncryptionKey: undefined }, "contact_encryption_key"],
+      [{ identitySecret: undefined }, "identity_secret"], [{ providers: undefined }, "provider_config"], [{ transport: undefined }, "transport"]] as const) {
+      const b = buildProviderBridge(fake, db, { ...base, ...over });
+      expect(b.dispatchTick).toBeUndefined(); expect(b.unavailable).toContain(name);
+    }
+    expect(calls).not.toContain("createContactResolver");
+    const ok = buildProviderBridge(fake, db, base);
+    expect(ok.dispatchTick).toBeDefined();
+    expect(calls).toContain("createContactResolver:whatsapp=123"); // accounts come from configured providers only
+    expect(ok.unavailable).toContain("whatsapp_text_content");
+    expect(JSON.stringify(ok.unavailable)).not.toMatch(/cdcd|synthetic-identity|"t"/);
   });
-  it("routes both recording retrieval events to the recording worker and status events to status", () => {
+  it("purge is never composed or invoked unless explicitly enabled; when enabled it calls the Phase 2 tick with enabled=true", async () => {
+    const calls: string[] = [];
+    const fake = fakeEntrypoints(calls);
+    const off = buildProviderBridge(fake, makeWorld().db, { dispatchEnabled: false });
+    expect(off.purgeTick).toBeUndefined(); expect(off.unavailable).toContain("purge_disabled");
+    expect(calls.filter(c => c.startsWith("purge") || c.startsWith("runRecordingPurgeTick"))).toEqual([]);
+    const on = buildProviderBridge(fake, makeWorld().db, { dispatchEnabled: false, purgeEnabled: true, purgeLimit: 500 });
+    expect(await on.purgeTick!()).toEqual({ purged: 1, skipped: 0, failed: 0, refused: 0, enabled: true });
+    expect(calls).toContain("runRecordingPurgeTick:enabled=true:limit=100"); // limit clamped
+  });  it("routes both recording retrieval events to the recording worker and status events to status", () => {
     expect(routeEventKind("twilio.recording.retrieval_requested")).toBe("core1.recording");
     expect(routeEventKind("sarvam.recording.retrieval_requested")).toBe("core1.recording");
     expect(routeEventKind("whatsapp.status")).toBe("core1.provider_status");
@@ -237,6 +281,47 @@ describe.skipIf(!PHASE2)("merged path with the real Phase 2 modules (runs after 
   });
 });
 
+describe.skipIf(!PHASE2)("recording purge through the real Phase 2 entrypoints (runs after integration)", () => {
+  const CALLX = "ca000000-0000-4000-8000-0000000000aa";
+  function purgeDb(candidates: Array<Record<string, unknown>>, finishResult = true) {
+    const calls: Array<[string, unknown]> = [];
+    const db = {
+      async rpc(name: string, a: Record<string, unknown>) { calls.push([name, a]);
+        if (name === "list_recording_purge_candidates") return { data: candidates, error: null };
+        if (name === "finish_recording_purge") return { data: finishResult, error: null };
+        return { data: null, error: { code: "XX000" } }; },
+      storage: { from(bucket: string) { return { remove: async (paths: string[]) => { calls.push([`remove:${bucket}`, paths]); return { error: null }; },
+        upload: async () => ({ error: { message: "unexpected" } }) }; } },
+    };
+    return { db, calls };
+  }
+  const cfg = (on: boolean): ProviderRuntimeConfig => ({ dispatchEnabled: false, purgeEnabled: on, purgeLimit: 10 });
+  it("disabled: nothing listed, nothing deleted", async () => {
+    const { db, calls } = purgeDb([{ family_id: F, call_id: CALLX, object_path: `${F}/calls/${CALLX}/r.wav`, reason: "retention" }]);
+    const b = buildProviderBridge(realEntrypoints(), db as never, cfg(false));
+    expect(b.purgeTick).toBeUndefined();
+    expect(calls).toEqual([]);
+  });
+  it("enabled: lists, deletes only the exact private-bucket path of that family and call, then compare-and-sets", async () => {
+    const good = `${F}/calls/${CALLX}/r.wav`;
+    const { db, calls } = purgeDb([
+      { family_id: F, call_id: CALLX, object_path: good, reason: "consent" },
+      { family_id: F, call_id: CALLX, object_path: `b3000000-0000-4000-8000-0000000000ff/calls/${CALLX}/x.wav`, reason: "retention" }, // other family's path
+      { family_id: F, call_id: CALLX, object_path: `${F}/voice/${CALLX}/x.wav`, reason: "retention" }, // outside calls/<call>/
+    ]);
+    const b = buildProviderBridge(realEntrypoints(), db as never, cfg(true));
+    const out = await b.purgeTick!();
+    expect(out).toEqual({ purged: 1, skipped: 0, failed: 0, refused: 2, enabled: true });
+    expect(calls.filter(c => String(c[0]).startsWith("remove:"))).toEqual([["remove:sahaj-recordings", [good]]]);
+    expect(calls.find(c => c[0] === "finish_recording_purge")![1]).toMatchObject({ p_family_id: F, p_call_id: CALLX, p_object_path: good });
+    expect(calls.find(c => c[0] === "list_recording_purge_candidates")![1]).toMatchObject({ p_limit: 10 });
+    expect(JSON.stringify(out)).not.toContain(CALLX);
+  });
+  it("a row that is no longer eligible at compare-and-set time is skipped, not counted as purged", async () => {
+    const { db } = purgeDb([{ family_id: F, call_id: CALLX, object_path: `${F}/calls/${CALLX}/r.wav`, reason: "retention" }], false);
+    expect(await buildProviderBridge(realEntrypoints(), db as never, cfg(true)).purgeTick!()).toEqual({ purged: 0, skipped: 1, failed: 0, refused: 0, enabled: true });
+  });
+});
 describe("SQL source contracts (static; the SQL itself runs only on scratch PostgreSQL)", () => {
   const repo = new URL("../../../../", import.meta.url);
   const read = (p: string) => readFileSync(new URL(p, repo), "utf8");
