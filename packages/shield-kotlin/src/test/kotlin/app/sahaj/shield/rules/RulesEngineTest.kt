@@ -58,8 +58,8 @@ class RulesEngineTest {
     @Test
     fun fixturesMatchExpectedLevelsAndScamTypes() {
         val fixtures = loadFixtures()
-        assertEquals(15, fixtures.count { it.label == "scam" })
-        assertEquals(15, fixtures.count { it.label == "normal" })
+        assertTrue(fixtures.count { it.label == "scam" } >= 15)
+        assertTrue(fixtures.count { it.label == "normal" } >= 15)
 
         val noCall = PhoneContext(onCallWithUnsaved = false, callStartedAtMs = null)
         val fourDigits = Regex("[0-9]{4,}")

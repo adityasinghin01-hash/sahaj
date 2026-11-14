@@ -1,0 +1,87 @@
+[
+  {
+    "id": "seq_01",
+    "name": "OTP SMS during active unknown 10-digit call",
+    "events": [
+      { "kind": "call", "at": 1763114400000, "number": "9800000301", "direction": "in" },
+      { "kind": "sms", "at": 1763114460000, "sender": "AX-HDFCBK-S", "text": "482913 is your OTP for HDFC Bank NetBanking. Do not share with anyone." }
+    ],
+    "expect": { "level": "red", "pattern": "P1" }
+  },
+  {
+    "id": "seq_02",
+    "name": "OTP SMS 3 minutes after international call ended",
+    "events": [
+      { "kind": "call", "at": 1763114400000, "ended_at": 1763114520000, "number": "+14155550199", "direction": "in" },
+      { "kind": "sms", "at": 1763114700000, "sender": "VM-SBIBNK-S", "text": "839201 is your SBI YONO OTP for Rs 5000. Do not share." }
+    ],
+    "expect": { "level": "red", "pattern": "P1" }
+  },
+  {
+    "id": "seq_03",
+    "name": "OTP SMS 10 minutes after unknown call ended (outside 5-min window)",
+    "events": [
+      { "kind": "call", "at": 1763114400000, "ended_at": 1763114460000, "number": "9800000302", "direction": "in" },
+      { "kind": "sms", "at": 1763115060000, "sender": "AX-HDFCBK-S", "text": "112233 is your OTP for HDFC Bank login. Do not share." }
+    ],
+    "expect": { "level": "green", "pattern": null }
+  },
+  {
+    "id": "seq_04",
+    "name": "OTP SMS during saved contact call",
+    "events": [
+      { "kind": "call", "at": 1763114400000, "number": "9800000101", "saved_contact": true, "direction": "in" },
+      { "kind": "sms", "at": 1763114430000, "sender": "JD-ICICIB-S", "text": "554433 is your OTP for ICICI Bank transaction. Do not share." }
+    ],
+    "expect": { "level": "green", "pattern": null }
+  },
+  {
+    "id": "seq_05",
+    "name": "Normal bank OTP with no call",
+    "events": [
+      { "kind": "sms", "at": 1763114400000, "sender": "VM-SBIBNK-S", "text": "902184 is your OTP for SBI NetBanking login. Do not share." }
+    ],
+    "expect": { "level": "green", "pattern": null }
+  },
+  {
+    "id": "seq_06",
+    "name": "Link + bank/KYC topic from 10-digit mobile number (P5 red)",
+    "events": [
+      { "kind": "sms", "at": 1763114400000, "sender": "9800000303", "text": "Your HDFC bank account needs update today: hdfc-verify-26.top/open" }
+    ],
+    "expect": { "level": "red", "pattern": "P5" }
+  },
+  {
+    "id": "seq_07",
+    "name": "Shortened link from business header without scam script (P5 yellow)",
+    "events": [
+      { "kind": "sms", "at": 1763114400000, "sender": "AX-COURIER-S", "text": "Track your parcel delivery status here: bit.ly/dlv26" }
+    ],
+    "expect": { "level": "yellow", "pattern": "P5" }
+  },
+  {
+    "id": "seq_08",
+    "name": "APK invitation received on WhatsApp / mobile sender",
+    "events": [
+      { "kind": "sms", "at": 1763114400000, "sender": "9800000304", "text": "Shaadi ka card bheja hai, open file: http://cards-26.xyz/wedding.apk" }
+    ],
+    "expect": { "level": "red", "pattern": "P5" }
+  },
+  {
+    "id": "seq_09",
+    "name": "Banking app opened during active unknown call (Phase 2 P9)",
+    "events": [
+      { "kind": "call", "at": 1763114400000, "number": "9800000305", "direction": "in" },
+      { "kind": "app_open", "at": 1763114490000, "package": "com.phonepe.app" }
+    ],
+    "expect": { "level": "red", "pattern": "P9" }
+  },
+  {
+    "id": "seq_10",
+    "name": "Long unknown video call > 20 min (Phase 2 P2/P6)",
+    "events": [
+      { "kind": "call", "at": 1763114400000, "ended_at": 1763115900000, "number": "+447911000202", "direction": "in", "video": true }
+    ],
+    "expect": { "level": "yellow", "pattern": "P2" }
+  }
+]
