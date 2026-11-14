@@ -47,11 +47,15 @@ describe('Core 1 Sarvam boundary', () => {
     const response = await createSarvamHandler(() => f.ports, { SARVAM_TOOL_TOKEN: env.SARVAM_TOOL_TOKEN })(request({ family_id, parent_id }), 'check_status');
     expect(response.status).toBe(401); expect(f.execute).not.toHaveBeenCalled();
   });
-  it('requires stable idempotency for mutations', async () => {
-    const f = fixture(); const req = request({ family_id, parent_id, permission_id: id, confirmed: true });
-    req.headers.delete('idempotency-key');
-    expect((await f.handle(req, 'cancel_permission')).status).toBe(400);
-    expect(f.execute).not.toHaveBeenCalled();
+  it('derives a stable idempotency key for mutations when Sarvam sends none', async () => {
+    const f = fixture();
+    const a = request({ family_id, parent_id, permission_id: id, confirmed: true }); a.headers.delete('idempotency-key');
+    const b = request({ family_id, parent_id, permission_id: id, confirmed: true }); b.headers.delete('idempotency-key');
+    expect((await f.handle(a, 'cancel_permission')).status).toBe(200);
+    expect((await f.handle(b, 'cancel_permission')).status).toBe(200);
+    const [k1, k2] = [f.execute.mock.calls[0][3], f.execute.mock.calls[1][3]];
+    expect(k1).toMatch(/^[0-9a-f]{64}$/);
+    expect(k2).toBe(k1); // same request in the same 2-minute window -> same key -> deduped downstream
   });
   it('derives idempotency from trusted call and invocation variables', async () => {
     const f = fixture(); const req = request({ agent_variables: { family_id, parent_id, call_id: id, turn_id: 'tool-invocation' }, input: { transcript: 'Riya ghar aa jao' } });

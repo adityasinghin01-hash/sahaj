@@ -148,9 +148,13 @@ export function createSarvamHandler(getPorts: () => SarvamPorts, env: Readonly<R
       input = validateToolInput(name as ToolName, envelope.input);
       const candidate = request.headers.get('idempotency-key') ?? envelope.body.idempotency_key ??
         (input.call_id && input.turn_id ? `${input.call_id}:${input.turn_id}` : undefined);
-      if (candidate === undefined && !['check_status', 'child_status'].includes(name)) throw new InvalidInput();
       if (candidate !== undefined && (typeof candidate !== 'string' || candidate.length < 8 || candidate.length > 200 || /[\r\n]/.test(candidate))) throw new InvalidInput();
-      key = typeof candidate === 'string' ? candidate : createHash('sha256').update(JSON.stringify(input)).digest('hex');
+      // Sarvam's dashboard tools cannot always send a per-invocation id. Without one, derive a stable key from the
+      // exact request + a 2-minute window: a retried tool call dedupes, a genuinely new request later still runs.
+      const windowStart = Math.floor(Date.now() / 120_000);
+      key = typeof candidate === 'string' ? candidate : createHash('sha256')
+        .update(JSON.stringify(['check_status', 'child_status'].includes(name) ? input : { name, ctx: envelope.ctx, input, windowStart }))
+        .digest('hex');
     } catch { return response(400, 'invalid_request'); }
     let timer: ReturnType<typeof setTimeout> | undefined;
     let abandoned = false;
