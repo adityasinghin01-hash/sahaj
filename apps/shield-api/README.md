@@ -337,3 +337,67 @@ select cron.schedule(
 ```bash
 curl -sS -H "x-cron-secret: $CRON_SECRET" "$BASE/api/cron/weekly-drills" | jq
 ```
+
+## C-07: WhatsApp family-check replies and opt-in live checks
+
+Set server-only `WHATSAPP_VERIFY_TOKEN` and `WHATSAPP_APP_SECRET` (at least 32
+characters). Register `<public base>/api/whatsapp/webhook` with Meta and subscribe
+to messages. GET verifies the token in constant time and returns the plain-text
+challenge. POST verifies `X-Hub-Signature-256` over the exact raw bytes before
+parsing; the maximum body is 256 KiB. Missing/short app secret fails closed (500),
+invalid signatures return 401, oversized bodies return 413. Valid signed events,
+including statuses-only and unrecognized payloads, receive 200 promptly.
+
+Text, button and interactive replies accept `CONFIRMED/haan/ha/yes/1` or
+`DENIED/nahi/na/no/2`, ignoring case and surrounding whitespace. The sender's
+last-ten-digit `numberFingerprint` must resolve to exactly one person with an
+unmasked E.164 `people.phone`. Only their newest `asked` check created within
+30 minutes is answered. Ambiguous people/phone matches and other text are ignored.
+The existing `family_check_result` tool then reads `confirmed`/`denied` as usual.
+No runtime answer writer is exposed, so the inbound adapter uses the same columns
+and states through `auxSql`. A transaction stores a hashed message ID in
+`dev_cache` for 24 hours, updates `state`/`answered_at`, and writes
+`shield.family_check.answered` with the existing canonical SHA-256 timeline chain.
+This prevents concurrent replays from answering another pending check. The cache
+port is link-result-only and has no atomic claim, hence this transactional cache
+access. No schema change or dependency installation is required.
+
+Next's `after` lifecycle performs the bounded database work after acknowledgement.
+Valid signed deliveries are acknowledged even if background storage fails; this
+is not a durable inbound queue. No raw reply text, routing number or provider
+error is logged or stored by this receiver. Expired `dev_cache` rows follow the
+host's existing cache cleanup policy.
+
+Scene C now sends a signed synthetic Meta `DENIED` reply, waits for that answer,
+then calls `family_check_result` and expects red. It upgrades only Rohit's masked
+demo phone fixture to `+919000000003` and refuses to impersonate real routing data.
+The running lab and scene player must share a lab-only `WHATSAPP_APP_SECRET`.
+The `_common.sh` secret list is owned by the other lane: its owner must add
+`WHATSAPP_VERIFY_TOKEN` and `WHATSAPP_APP_SECRET` to `REQUIRED_SECRETS`, generating
+at least 32 characters, then restart the lab. No other lab script is changed here.
+
+Run these checks manually when ready to use real accounts:
+
+```bash
+node scripts/lab/live-check.mjs
+node scripts/lab/live-check.mjs --send-whatsapp
+```
+
+The script reads `${LAB_ENV_FILE:-$HOME/dev/sahaj-secrets/shield.env}` with shell
+env taking precedence, and prints only configured variable names and fixed check
+results with timings. It imports the actual adapters through the workspace's
+already installed `jiti` TypeScript loader. Claude and Muse use separate router
+environments, so fallback cannot conceal a failed key. Langfuse uses the adapters'
+metadata-only tracing path, flushes, and polls the public traces API with Basic
+auth for a new observation carrying this run's task marker. With no model keys,
+Langfuse can test genuine `not_configured` router traces without paid inference.
+It also checks the OpenPhish feed, RDAP for `google.com`, the Meta v27 phone-number
+endpoint, and the loopback lab's `/api/health` for `ports.router === "real"`.
+
+WhatsApp sends are skipped without `--send-whatsapp`. With that flag, exactly one
+text (`Sahaj lab test ✓`) is sent only to `LAB_PHONE_ROHIT`, with no retries or
+other recipient fallback. This must be the lead's own phone. No phone numbers,
+tokens or raw provider failures are printed. Missing keyed configuration is
+SKIPPED; any attempted check failure makes the exit status nonzero. OpenPhish,
+RDAP and lab health need no keys and are always checked. The script does not
+start or reconfigure the lab. `--help` performs no checks.

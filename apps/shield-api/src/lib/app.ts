@@ -1,3 +1,4 @@
+import { createPgWhatsappInboundStore, type WhatsappInboundStore } from "./whatsapp_inbound";
 import type { Sql } from "postgres";
 import { createShieldRuntime } from "@sahaj/shield";
 import { getDbPools } from "./db";
@@ -41,6 +42,8 @@ export interface OutboxRow {
 }
 
 export interface ShieldApp {
+  whatsappInboundStore?: WhatsappInboundStore;
+  whatsappInboundWaitUntil?: (promise: Promise<unknown>) => void;
   env: Readonly<Record<string, string | undefined>>;
   portsStatus: PortsStatus;
   runtime: ReturnType<typeof createShieldRuntime>;
@@ -166,6 +169,8 @@ export function createShieldApp(env: Readonly<Record<string, string | undefined>
   return {
     env,
     portsStatus: getPortsStatus(env),
+    whatsappInboundStore: createPgWhatsappInboundStore(auxSql),
+    whatsappInboundWaitUntil: ports.waitUntil,
     runtime,
     recordBusyCallStatus: phase2.submitCallStatus,
     recordBusyReply: phase2.submitBusyReply,

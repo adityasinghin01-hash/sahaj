@@ -437,6 +437,16 @@ function makeScenes(device) {
       title: 'Keypad: "Rohit ka phone aaya, paise maang raha tha" -> family_check -> Rohit denies -> red',
       expectedLevel: "red",
       async run() {
+        if (!env.WHATSAPP_APP_SECRET || env.WHATSAPP_APP_SECRET.length < 32) {
+          throw new Error("Scene C needs lab-only WHATSAPP_APP_SECRET (at least 32 characters) in the lab and player env");
+        }
+        // Upgrade only the masked demo fixture; never replace or impersonate a real number.
+        const rohitId = "22222222-2222-4222-8222-222222222223";
+        await sql`update public.people set phone='+919000000003'
+          where id=${rohitId} and family_id=${FAMILY_ID} and phone like '%X%'`;
+        const [rohit] = await sql`select id from public.people
+          where id=${rohitId} and family_id=${FAMILY_ID} and phone='+919000000003'`;
+        if (!rohit) throw new Error("Scene C needs the synthetic Rohit phone fixture; real routing data is never impersonated");
         const mark = new Date();
         const startRes = await reqJson("/api/sarvam/tool/family_check", {
           method: "POST",
@@ -453,10 +463,24 @@ function makeScenes(device) {
           );
         }
         const checkId = startRes.data.check_id;
-        await sql`
-          update public.family_checks
-          set state = 'denied', answered_at = now()
-          where id = ${checkId}`;
+        const webhookBody = JSON.stringify({
+          object: "whatsapp_business_account",
+          entry: [{ changes: [{ field: "messages", value: {
+            messaging_product: "whatsapp",
+            messages: [{ id: `wamid.lab.${randomUUID()}`, from: "919000000003", type: "text", text: { body: "DENIED" } }],
+          } }] }],
+        });
+        const signature = createHmac("sha256", env.WHATSAPP_APP_SECRET).update(webhookBody).digest("hex");
+        const inbound = await reqJson("/api/whatsapp/webhook", {
+          method: "POST", body: webhookBody, headers: { "X-Hub-Signature-256": `sha256=${signature}` },
+        });
+        if (inbound.status !== 200) throw new Error(`WhatsApp webhook failed (${inbound.status})`);
+        // The webhook acknowledges promptly and processes through Next's after lifecycle.
+        const answered = await pollUntil(async () => {
+          const [check] = await sql`select state from public.family_checks where id=${checkId}`;
+          return check?.state === "denied";
+        });
+        if (!answered) throw new Error("WhatsApp webhook did not record the synthetic DENIED answer");
         const resultRes = await reqJson("/api/sarvam/tool/family_check_result", {
           method: "POST",
           headers: sarvamHeaders,
@@ -482,7 +506,7 @@ function makeScenes(device) {
             Boolean(verdict) &&
             Boolean(riya.match),
           inputSummary:
-            'POST /api/sarvam/tool/family_check(Rohit) -> DB denied("Nahi") -> /api/sarvam/tool/family_check_result',
+            'POST /api/sarvam/tool/family_check(Rohit) -> POST /api/whatsapp/webhook(DENIED, signed) -> /api/sarvam/tool/family_check_result',
           scamType: verdict?.scam_type || "family_in_trouble",
           reasonsText: verdict
             ? englishReasons(verdict.reasons)
