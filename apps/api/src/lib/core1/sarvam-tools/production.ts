@@ -73,13 +73,13 @@ export function createProductionSarvamDeps(env: Record<string, string | undefine
   };
   const child = async (ctx: ToolContext) => requireRow(await sql<{ id: string }[]>`
     select p.id from public.people p join public.family_memberships m on m.family_id=p.family_id and m.person_id=p.id
-    where p.family_id=${ctx.familyId} and p.role='child' and p.active and m.revoked_at is null
+    where p.family_id=${ctx.familyId} and p.role='child' and m.revoked_at is null
     order by m.created_at limit 1`).id;
 
   return {
     now,
     async assertParent(ctx) {
-      requireRow(await sql`select id from public.people where family_id=${ctx.familyId} and id=${ctx.parentId} and role='parent' and active`);
+      requireRow(await sql`select id from public.people where family_id=${ctx.familyId} and id=${ctx.parentId} and role='parent'`);
     },
     async runOnce(tool, ctx, input, key, work) {
       if (!/^[a-f0-9]{64}$/i.test(keyHex)) throw new Error('encryption_not_configured');
