@@ -46,14 +46,18 @@ returns table(id uuid,granted_at timestamptz) language sql stable security defin
 $$;
 revoke all on function sahaj_private.call_recording_consent(uuid,uuid,uuid) from public,anon,authenticated,service_role;
 ------------------------------------------------------------------ proof marker on raw_events
--- Only the proof-writer functions below may create normalized proof. Provider callbacks stay raw.
+-- Only the proof-writer functions below (owner-run, SECURITY DEFINER) may create normalized proof. Provider callbacks stay raw.
 alter table public.raw_events add column normalized_proof boolean not null default false;
 create function sahaj_private.guard_normalized_proof() returns trigger
 language plpgsql set search_path='' as $$
 declare volatile_cols constant text[] := array['attempt_count','max_attempts','retry_at','lease_token','lease_until','worker_id','last_error_code'];
 begin
   if tg_op='INSERT' then
-    if new.normalized_proof and coalesce(current_setting('sahaj.proof_writer',true),'')<>'1' then
+    -- TRUST BOUNDARY: only the role that OWNS raw_events may create normalized proof. The proof functions below are SECURITY
+    -- DEFINER and owned by that role, so inside them current_user is the owner; service_role, with REST or direct SQL, is not.
+    -- (An earlier version trusted a custom GUC, which any SQL session can set; that is not a credential and is gone.)
+    -- The owner / a superuser can of course still write anything: this protects against service_role, not against the database owner.
+    if new.normalized_proof and current_user is distinct from (select pg_get_userbyid(c.relowner) from pg_class c where c.oid=tg_relid) then
       raise exception 'proof_writer_required' using errcode='42501';
     end if;
     return new;
@@ -389,12 +393,10 @@ begin
     'action',oaction,'provider_action',l.action,'account_id',acct,'dispatch_key',l.idempotency_key,'provider_ref',l.provider_ref,'person_id',l.person_id,
     'source_event_id',e.id);
   pevent := 'delivery:'||l.idempotency_key||':'||p_outcome;
-  perform set_config('sahaj.proof_writer','1',true);
   insert into public.raw_events(family_id,source,provider_event_id,event_type,metadata,status,payload_hash,processed_at,normalized_proof)
     values(p_family_id,e.source,pevent,case when p_outcome='delivered' then 'delivery.confirmed' else 'delivery.not_sent' end,meta,
       'processed',encode(sha256(convert_to(meta::text,'UTF8')),'hex'),now(),true)
     on conflict(source,provider_event_id) do nothing;
-  perform set_config('sahaj.proof_writer','',true);
   select id into pid from public.raw_events where source=e.source and provider_event_id=pevent and family_id=p_family_id and normalized_proof;
   if pid is null then raise exception 'proof_conflict' using errcode='23505'; end if;
   return jsonb_build_object('proof_event_id',pid,'dispatch_key',l.idempotency_key,'outbox_id',l.outbox_id,'outcome',p_outcome);
@@ -517,11 +519,9 @@ begin
   end if;
   meta := d||jsonb_build_object('normalized',true,'verified_by','twilio_signature','source_event_id',e.id);
   pevent := 'responder.accepted:'||a.id;
-  perform set_config('sahaj.proof_writer','1',true);
   insert into public.raw_events(family_id,source,provider_event_id,event_type,metadata,status,payload_hash,processed_at,normalized_proof)
     values(p_family_id,'twilio',pevent,'responder.accepted',meta,'processed',encode(sha256(convert_to(meta::text,'UTF8')),'hex'),now(),true)
     on conflict(source,provider_event_id) do nothing;
-  perform set_config('sahaj.proof_writer','',true);
   select id into pid from public.raw_events where source='twilio' and provider_event_id=pevent and family_id=p_family_id and normalized_proof;
   if pid is null then raise exception 'proof_conflict' using errcode='23505'; end if;
   return jsonb_build_object('proof_event_id',pid,'assignment_id',a.id);

@@ -1,9 +1,11 @@
--- Run as database owner after 20261114201600_phase2_dispatch_recording.sql on a SCRATCH database. All fixtures are synthetic and rolled back.
+-- Migration order this file is written for: Phase 3 base 201500 -> Phase 2 201600 -> Phase 3 review 210000 -> Phase 3 bridge 213000
+-- (it also runs with only Phase 2 applied: Phase 3 objects are touched conditionally). Run as the database OWNER on a SCRATCH database. All fixtures are synthetic and rolled back.
 -- NOT YET EXECUTED by its author (no Postgres was available): the parent runs it after review. Never run against the real project.
 -- Concurrency (two sessions) is covered separately by phase2_concurrency.ps1.
 begin;
 alter table public.outbox add column if not exists action text;
 alter table public.outbox add column if not exists incident_id uuid;
+alter table public.action_requests add column if not exists target_id text;
 insert into public.families(id,name) values
  ('b2000000-0000-4000-8000-000000000001','Synthetic Phase2 A'),('b2000000-0000-4000-8000-000000000002','Synthetic Phase2 B');
 insert into public.people(id,family_id,display_name,role) values
@@ -19,22 +21,29 @@ insert into public.calls(id,family_id,person_id,provider) values
  ('d2000000-0000-4000-8000-000000000006','b2000000-0000-4000-8000-000000000001','c2000000-0000-4000-8000-000000000001','twilio');
 insert into public.incidents(id,family_id,person_id,severity) values
  ('a2000000-0000-4000-8000-000000000001','b2000000-0000-4000-8000-000000000001','c2000000-0000-4000-8000-000000000001','urgent');
-insert into public.action_requests(id,family_id,person_id,action,expires_at) values
- ('a3000000-0000-4000-8000-000000000001','b2000000-0000-4000-8000-000000000001','c2000000-0000-4000-8000-000000000001','urgent_responder',now()+interval '1 hour'),
- ('a3000000-0000-4000-8000-000000000002','b2000000-0000-4000-8000-000000000001','c2000000-0000-4000-8000-000000000001','other_action',now()+interval '1 hour');
+-- actions must satisfy Phase 3's action_requests_action_known; each request may be used by at most ONE outbox row (outbox_one_per_action_request)
+insert into public.action_requests(id,family_id,person_id,action,expires_at,target_id) values
+ ('a3000000-0000-4000-8000-000000000001','b2000000-0000-4000-8000-000000000001','c2000000-0000-4000-8000-000000000001','urgent_responder',now()+interval '1 hour','c2000000-0000-4000-8000-000000000003'),
+ ('a3000000-0000-4000-8000-000000000002','b2000000-0000-4000-8000-000000000001','c2000000-0000-4000-8000-000000000001','check_in',now()+interval '1 hour','c2000000-0000-4000-8000-000000000001');
 insert into public.assignments(id,family_id,incident_id,person_id,expires_at) values
  ('a4000000-0000-4000-8000-000000000001','b2000000-0000-4000-8000-000000000001','a2000000-0000-4000-8000-000000000001','c2000000-0000-4000-8000-000000000003',now()+interval '1 hour');
 insert into public.outbox(id,family_id,kind,dedupe_key,payload_ciphertext,status,attempt_count,lease_token,lease_until,action_request_id) values
  ('e2000000-0000-4000-8000-000000000001','b2000000-0000-4000-8000-000000000001','call','k1','x','processing',1,'f2000000-0000-4000-8000-000000000001',now()+interval '1 minute',null),
  ('e2000000-0000-4000-8000-000000000002','b2000000-0000-4000-8000-000000000001','call','k2','x','processing',1,'f2000000-0000-4000-8000-000000000002',now()+interval '1 minute','a3000000-0000-4000-8000-000000000001'),
  ('e2000000-0000-4000-8000-000000000003','b2000000-0000-4000-8000-000000000002','call','k3','x','processing',1,'f2000000-0000-4000-8000-000000000003',now()+interval '1 minute',null),
- ('e2000000-0000-4000-8000-000000000004','b2000000-0000-4000-8000-000000000001','call','k4','x','processing',1,'f2000000-0000-4000-8000-000000000004',now()+interval '1 minute',null),
- ('e2000000-0000-4000-8000-000000000005','b2000000-0000-4000-8000-000000000001','call','k5','x','processing',1,'f2000000-0000-4000-8000-000000000005',now()+interval '1 minute','a3000000-0000-4000-8000-000000000002');
+ ('e2000000-0000-4000-8000-000000000004','b2000000-0000-4000-8000-000000000001','call','k4','x','processing',1,'f2000000-0000-4000-8000-000000000004',now()+interval '1 minute','a3000000-0000-4000-8000-000000000002'),
+ ('e2000000-0000-4000-8000-000000000005','b2000000-0000-4000-8000-000000000001','call','k5','x','processing',1,'f2000000-0000-4000-8000-000000000005',now()+interval '1 minute',null);
 
 -- care/domain actions (Phase 3 outbox.action) differ from provider operations (ledger.action)
 update public.outbox set action='check_in' where id in ('e2000000-0000-4000-8000-000000000001','e2000000-0000-4000-8000-000000000004','e2000000-0000-4000-8000-000000000005');
 update public.outbox set action='urgent_responder',incident_id='a2000000-0000-4000-8000-000000000001' where id='e2000000-0000-4000-8000-000000000002';
-update public.outbox set action_request_id='a3000000-0000-4000-8000-000000000002' where id='e2000000-0000-4000-8000-000000000004';
+-- deliberate conflict, asserted: a second outbox row cannot reuse a request already attached to another outbox row
+do $$ begin
+  if exists(select 1 from pg_indexes where indexname='outbox_one_per_action_request') then -- Phase 3 base is applied
+    begin update public.outbox set action_request_id='a3000000-0000-4000-8000-000000000002' where id='e2000000-0000-4000-8000-000000000005';
+      raise exception 'FAIL one request attached to two outbox rows'; exception when unique_violation then null; end;
+  end if;
+end $$;
 
 -- Phase 3 predicates (c614a32 outbox_proof / outbox_acceptance), mirrored here without Phase 3's target_id column, plus the
 -- strict form the bridge requires: normalized_proof AND the stored ledger and binding rows. Both must hold for real proof.
@@ -135,19 +144,51 @@ do $$ begin
   exception when check_violation then null; end;
 end $$;
 
--- ---------------------------------------------------------------- proof flag cannot be forged
+-- ---------------------------------------------------------------- proof flag: who can write it
+-- Trust boundary: only the role that OWNS raw_events (the definer proof functions) can create normalized proof. service_role,
+-- with REST or direct SQL, cannot, and setting the old custom GUC in its own session is not a credential. The owner/superuser can
+-- by definition (asserted last, so nobody mistakes this for protection against the database owner).
 do $$ begin
   begin
+    set local role service_role;
+    perform set_config('sahaj.proof_writer','1',true);
     insert into public.raw_events(family_id,source,provider_event_id,event_type,metadata,status,normalized_proof)
       values('b2000000-0000-4000-8000-000000000001','twilio','forged-proof','delivery.not_sent','{}','processed',true);
-    raise exception 'FAIL forged normalized_proof insert';
+    raise exception 'FAIL service_role forged normalized_proof insert';
   exception when insufficient_privilege then null; end;
+  reset role;
   insert into public.raw_events(family_id,source,provider_event_id,event_type,metadata,status)
     values('b2000000-0000-4000-8000-000000000001','twilio','plain-raw','delivery.not_sent','{}','processed');
-  begin
-    update public.raw_events set normalized_proof=true where provider_event_id='plain-raw';
-    raise exception 'FAIL normalized_proof flip';
+  begin update public.raw_events set normalized_proof=true where provider_event_id='plain-raw'; raise exception 'FAIL normalized_proof flip (owner)';
   exception when insufficient_privilege then null; end;
+  begin
+    set local role service_role;
+    update public.raw_events set normalized_proof=true where provider_event_id='plain-raw';
+    raise exception 'FAIL normalized_proof flip (service_role)';
+  exception when insufficient_privilege then null; end;
+  reset role;
+  -- generic ingestion (what REST can call) never produces proof
+  if (select normalized_proof from public.ingest_raw_event('twilio','generic-ingest','delivery.confirmed','b2000000-0000-4000-8000-000000000001','{}',repeat('a',64),null)) then
+    raise exception 'FAIL generic ingestion produced proof';
+  end if;
+  insert into public.raw_events(family_id,source,provider_event_id,event_type,metadata,status,normalized_proof)
+    values('b2000000-0000-4000-8000-000000000001','twilio','owner-direct','delivery.not_sent','{}','processed',true); -- trusted owner boundary
+end $$;
+-- ---------------------------------------------------------------- Phase 3 authorization trigger (bridge 213000), when present
+-- With the bridge applied, every ledger insert is authorized by dispatch_ledger_authorize. Prove claim_dispatch goes through it
+-- (the fixture has no executed request or live permission, so the claim MUST be refused), then disable it for the rest of this
+-- file: the Phase 2 mechanics below are tested in isolation, and Phase 3's own tests cover authorization. LIMITATION: a claim
+-- that satisfies the full Phase 3 authorization facts is not exercised here.
+do $$ begin
+  if exists(select 1 from pg_trigger where tgname='dispatch_ledger_authorize' and tgrelid='public.dispatch_ledger'::regclass and not tgisinternal) then
+    perform public.bind_outbox_dispatch('b2000000-0000-4000-8000-000000000001','e2000000-0000-4000-8000-000000000001','c2000000-0000-4000-8000-000000000001','sarvam','sarvam.outbound_call','d2000000-0000-4000-8000-000000000001');
+    begin
+      perform public.claim_dispatch('b2000000-0000-4000-8000-000000000001','c2000000-0000-4000-8000-000000000001','dispatch:o1:gate','sarvam','sarvam.outbound_call','e2000000-0000-4000-8000-000000000001','f2000000-0000-4000-8000-000000000001','d2000000-0000-4000-8000-000000000001');
+      raise exception 'FAIL claim bypassed the Phase 3 authorization trigger';
+    exception when insufficient_privilege then null; end;
+    if exists(select 1 from public.dispatch_ledger) then raise exception 'FAIL refused claim left a ledger row'; end if;
+    alter table public.dispatch_ledger disable trigger dispatch_ledger_authorize;
+  end if;
 end $$;
 
 -- ---------------------------------------------------------------- bindings are immutable and gate every claim
@@ -245,6 +286,9 @@ do $$ declare fam uuid := 'b2000000-0000-4000-8000-000000000001'; tw uuid := 'd2
   if pg_temp.p3_delivery(o,'c2000000-0000-4000-8000-000000000002',true) is not null then raise exception 'FAIL proof matched another person'; end if;
   perform pg_temp.assert_frozen((proof->>'proof_event_id')::uuid);
   if pg_temp.p3_delivery(o,'c2000000-0000-4000-8000-000000000001',true) is distinct from 'not_sent' then raise exception 'FAIL frozen proof changed meaning'; end if;
+  if to_regprocedure('sahaj_private.outbox_proof(uuid)') is not null and sahaj_private.outbox_proof(o) is distinct from 'not_sent' then
+    raise exception 'FAIL Phase 3 bridge outbox_proof rejects the real proof (or accepts the forged one)';
+  end if;
   if public.record_delivery_proof(fam,src,'confirmed_not_sent')->>'proof_event_id'<>proof->>'proof_event_id' then raise exception 'FAIL proof replay'; end if;
   if public.reconcile_dispatch(fam,'dispatch:other:a1',(proof->>'proof_event_id')::uuid,'confirmed_not_sent') then raise exception 'FAIL other key'; end if;
   if public.reconcile_dispatch(fam,k,(proof->>'proof_event_id')::uuid,'delivered') then raise exception 'FAIL other outcome'; end if;
@@ -321,6 +365,9 @@ do $$ declare fam uuid := 'b2000000-0000-4000-8000-000000000001'; tw uuid := 'd2
   if not pg_temp.p3_accept(o,false) or not pg_temp.p3_accept(o,true) then raise exception 'FAIL real responder.accepted vs Phase 3 predicate'; end if;
   perform pg_temp.assert_frozen((proof->>'proof_event_id')::uuid);
   if not pg_temp.p3_accept(o,true) then raise exception 'FAIL frozen acceptance changed meaning'; end if;
+  if to_regprocedure('sahaj_private.outbox_acceptance(uuid)') is not null and not sahaj_private.outbox_acceptance(o) then
+    raise exception 'FAIL Phase 3 bridge outbox_acceptance rejects the real responder.accepted proof';
+  end if;
   if (select status from public.assignments where id=asg)<>'accepted' then raise exception 'FAIL status'; end if;
   if not public.accept_assignment_verified(fam,asg,(proof->>'proof_event_id')::uuid) then raise exception 'FAIL idempotent accept'; end if;
   p2 := public.record_responder_acceptance(fam,'AC:gather:CA1');
