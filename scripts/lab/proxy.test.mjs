@@ -3,7 +3,10 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import http from "node:http";
 import { createHash, randomBytes } from "node:crypto";
-import { createProxy, DOOR_RULES, SUPABASE_RULES, route } from "./proxy.mjs";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { createLabStorage, createProxy, DOOR_RULES, SUPABASE_RULES, route, withLabStorageRemove } from "./proxy.mjs";
 
 function echo(name) {
   return http.createServer((req, res) => {
@@ -73,7 +76,7 @@ test("door streams bytes unchanged, keeps headers, adds X-Forwarded-*", async (t
   assert.ok(logs.every((l) => !l.includes("x=1")));
 });
 
-test("supabase gateway strips /rest/v1 and refuses auth/storage", async (t) => {
+test("supabase gateway strips /rest/v1 and refuses auth (and storage when no lab store is configured)", async (t) => {
   const pg = echo("pgrst");
   const pgu = await listen(pg);
   const proxy = createProxy({ rules: SUPABASE_RULES, targets: { pgrst: pgu }, fallback: { to: "none", status: 404, error: "not_found" } });
@@ -84,6 +87,54 @@ test("supabase gateway strips /rest/v1 and refuses auth/storage", async (t) => {
   assert.equal((await fetch(new URL("/auth/v1/user", pu))).status, 501);
   assert.equal((await fetch(new URL("/storage/v1/object/x", pu))).status, 501);
   assert.equal((await fetch(new URL("/other", pu))).status, 404);
+});
+
+test("lab storage: service key required, upload/info/sign/signed GET/remove, no traversal", async (t) => {
+  const dir = await mkdtemp(join(tmpdir(), "lab-storage-test-"));
+  const key = "k".repeat(40);
+  const storage = withLabStorageRemove(createLabStorage({ dir, serviceKey: key }), { dir, serviceKey: key });
+  const proxy = createProxy({ rules: SUPABASE_RULES, targets: { pgrst: new URL("http://127.0.0.1:1"), storage }, fallback: { to: "none", status: 404, error: "not_found" } });
+  const pu = await listen(proxy);
+  t.after(async () => { proxy.close(); await rm(dir, { recursive: true, force: true }); });
+  const auth = { authorization: `Bearer ${key}` };
+  const bytes = randomBytes(1024);
+  assert.equal((await fetch(new URL("/storage/v1/object/sahaj-voice/fam/post/a.ogg", pu), { method: "POST", body: bytes, headers: { authorization: "Bearer nope", "content-type": "audio/ogg" } })).status, 403);
+  const up = await fetch(new URL("/storage/v1/object/sahaj-voice/fam/post/a.ogg", pu), { method: "POST", body: bytes, headers: { ...auth, "content-type": "audio/ogg", "x-upsert": "false" } });
+  assert.equal(up.status, 200);
+  assert.equal((await up.json()).Key, "sahaj-voice/fam/post/a.ogg");
+  assert.equal((await fetch(new URL("/storage/v1/object/sahaj-voice/fam/post/a.ogg", pu), { method: "POST", body: bytes, headers: { ...auth, "content-type": "audio/ogg" } })).status, 400);
+  const info = await (await fetch(new URL("/storage/v1/object/info/sahaj-voice/fam/post/a.ogg", pu), { headers: auth })).json();
+  assert.deepEqual([info.size, info.content_type], [1024, "audio/ogg"]);
+  const signed = await (await fetch(new URL("/storage/v1/object/sign/sahaj-voice/fam/post/a.ogg", pu), { method: "POST", body: JSON.stringify({ expiresIn: 60 }), headers: { ...auth, "content-type": "application/json" } })).json();
+  const got = await fetch(new URL(`/storage/v1${signed.signedURL}`, pu));
+  assert.equal(got.status, 200);
+  assert.equal(createHash("sha256").update(Buffer.from(await got.arrayBuffer())).digest("hex"), createHash("sha256").update(bytes).digest("hex"));
+  assert.equal((await fetch(new URL(`/storage/v1${signed.signedURL.replace("a.ogg", "b.ogg")}`, pu))).status, 400);
+  assert.equal((await fetch(new URL("/storage/v1/object/sahaj-voice/..%2F..%2Fetc/passwd", pu), { method: "POST", body: "x", headers: auth })).status, 400);
+  const del = await fetch(new URL("/storage/v1/object/sahaj-voice", pu), { method: "DELETE", body: JSON.stringify({ prefixes: ["fam/post/a.ogg"] }), headers: { ...auth, "content-type": "application/json" } });
+  assert.equal((await del.json()).length, 1);
+  assert.equal((await fetch(new URL("/storage/v1/object/info/sahaj-voice/fam/post/a.ogg", pu), { headers: auth })).status, 404);
+});
+
+test("lab storage index mirrors storage.objects; a failed index write leaves no file", async (t) => {
+  const dir = await mkdtemp(join(tmpdir(), "lab-storage-index-"));
+  const key = "k".repeat(40);
+  const rows = new Map();
+  let failPut = false;
+  const index = { put: async (b, n, id) => { if (failPut) throw new Error("db down"); rows.set(`${b}/${n}`, id); }, remove: async (b, n) => { rows.delete(`${b}/${n}`); } };
+  const storage = withLabStorageRemove(createLabStorage({ dir, serviceKey: key, index }), { dir, serviceKey: key, index });
+  const proxy = createProxy({ rules: SUPABASE_RULES, targets: { pgrst: new URL("http://127.0.0.1:1"), storage }, fallback: { to: "none", status: 404, error: "not_found" } });
+  const pu = await listen(proxy);
+  t.after(async () => { proxy.close(); await rm(dir, { recursive: true, force: true }); });
+  const auth = { authorization: `Bearer ${key}`, "content-type": "audio/ogg" };
+  const up = await fetch(new URL("/storage/v1/object/sahaj-voice/fam/voice/a.ogg", pu), { method: "POST", body: "abc", headers: auth });
+  assert.equal(up.status, 200);
+  assert.equal(rows.get("sahaj-voice/fam/voice/a.ogg"), (await up.json()).Id);
+  await fetch(new URL("/storage/v1/object/sahaj-voice", pu), { method: "DELETE", body: JSON.stringify({ prefixes: ["fam/voice/a.ogg"] }), headers: { authorization: auth.authorization, "content-type": "application/json" } });
+  assert.equal(rows.size, 0);
+  failPut = true;
+  assert.equal((await fetch(new URL("/storage/v1/object/sahaj-voice/fam/voice/b.ogg", pu), { method: "POST", body: "abc", headers: auth })).status, 503);
+  assert.equal((await fetch(new URL("/storage/v1/object/info/sahaj-voice/fam/voice/b.ogg", pu), { headers: { authorization: auth.authorization } })).status, 404);
 });
 
 test("upstream down -> 502 JSON", async (t) => {

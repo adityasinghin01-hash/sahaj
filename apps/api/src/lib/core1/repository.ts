@@ -70,7 +70,7 @@ export class SupabaseCore1Repository implements Core1RepositoryPort {
   async getCircleRecord(familyId: string, personId: string): Promise<CircleRecord | null> {
     const { data, error } = await this.client
       .from('circle')
-      .select('family_id, person_id, rank, active, approved_at, consent_at, revoked_at')
+      .select('family_id, person_id, rank, approved_at, consent_at, revoked_at')
       .eq('family_id', familyId)
       .eq('person_id', personId)
       .maybeSingle();
@@ -83,7 +83,8 @@ export class SupabaseCore1Repository implements Core1RepositoryPort {
       familyId: data.family_id,
       personId: data.person_id,
       rank: data.rank,
-      active: data.active,
+      // public.circle has no active column: a circle entry is active until revoked.
+      active: data.revoked_at === null,
       approvedAt: data.approved_at,
       consentAt: data.consent_at,
       revokedAt: data.revoked_at,
@@ -165,13 +166,13 @@ export class SupabaseCore1Repository implements Core1RepositoryPort {
   }): Promise<void> {
     const { error } = await this.client.from('raw_events').insert({
       id: params.eventId,
-      familyId: params.familyId,
+      family_id: params.familyId,
       source: 'core1_command',
       provider_event_id: params.scopedIdempotencyKey,
       event_type: `command.${params.commandType}`,
       payload_hash: params.payloadHash,
       payload_ciphertext: params.payloadCiphertext,
-      status: 'queued',
+      status: 'pending',
       metadata: {
         command: params.commandType,
         actorPersonId: params.actorPersonId,

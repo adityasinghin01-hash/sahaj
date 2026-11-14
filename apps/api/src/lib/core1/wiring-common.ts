@@ -132,8 +132,8 @@ export function createSupabaseCore1AuthPort(
 
       const { data: memberships, error } = await db
         .from('family_memberships')
-        .select('id,family_id,person_id,role,revoked_at,people!inner(id,active)')
-        .eq('auth_user_id', user.id)
+        .select('family_id,person_id,role,revoked_at,people!inner(id)')
+        .eq('user_id', user.id)
         .is('revoked_at', null);
 
       if (error) {

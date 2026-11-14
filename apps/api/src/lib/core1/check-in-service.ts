@@ -1195,7 +1195,6 @@ export function createSupabaseCheckInStore(db: SupabaseClientLike): CheckInStore
         .select('id')
         .eq('family_id', familyId)
         .eq('id', personId)
-        .eq('active', true)
         .maybeSingle();
       return Boolean(data);
     },

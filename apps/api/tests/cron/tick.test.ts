@@ -21,7 +21,7 @@ it("routes durable events, dead-letters unknown types, and reports no care actio
   const res = await POST(req(SECRET));
   expect(res.status).toBe(200);
   expect(await res.json()).toMatchObject({ dispatched: 1, deadLettered: 1, failed: 0, care_actions_run: 0, workflow: { status: "not_configured" } });
-  expect(rpc.mock.calls.map(c => c[0])).toEqual(["claim_raw_events", "dispatch_raw_event", "dead_letter_raw_event"]);
+  expect(rpc.mock.calls.map(c => c[0])).toEqual(["claim_raw_events", "dispatch_raw_event", "dead_letter_raw_event", "claim_workflow_jobs_for_kinds"]);
   expect(rpc.mock.calls[1][1]).toMatchObject({ p_workflow_kind: "core1.atlas" });
 });
 it("enable flags alone never configure dispatch; purge is unavailable without the seam and fails closed with it", async () => {
@@ -33,11 +33,11 @@ it("enable flags alone never configure dispatch; purge is unavailable without th
   if (!phase2Entrypoints) {
     expect(body.providers).toMatchObject({ purge: { status: "unavailable" }, status: "unavailable" });
     expect(body.providers.unavailable[0]).toBe("phase2_entrypoints");
-    expect(rpc.mock.calls.map(c => c[0])).toEqual(["claim_raw_events"]); // nothing claimed, listed or deleted
+    expect(rpc.mock.calls.map(c => c[0])).toEqual(["claim_raw_events", "claim_workflow_jobs_for_kinds"]); // no job claimed, nothing listed or deleted
   } else {
     // Combined tree: purge runs, the (mocked) store returns no candidate list, and the tick reports failed. No deletion.
     expect(body.providers.purge).toEqual({ status: "failed" });
-    expect(rpc.mock.calls.map(c => c[0])).toEqual(["claim_raw_events", "list_recording_purge_candidates"]);
+    expect(rpc.mock.calls.map(c => c[0])).toEqual(["claim_raw_events", "claim_workflow_jobs_for_kinds", "list_recording_purge_candidates"]);
   }
   for (const p of body.providers.unavailable) expect(p).toMatch(/^([A-Z0-9_]+:(missing|invalid)|[a-z0-9_]+)$/); // names only, never values
 });

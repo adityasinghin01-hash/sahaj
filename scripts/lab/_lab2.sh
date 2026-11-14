@@ -31,6 +31,10 @@ LAB2_PROVIDERS="${LAB2_PROVIDERS:-on}"
 PG_DATA="$LAB2_DIR/pg"
 PG_RUN="$LAB2_DIR/pg_run"
 PG_LOG_FILE="$LAB2_DIR/pg.log"
+# Lab-only TLS for the Atlas checkpoint connection (verify-full). The CA exists only in this directory and is trusted only
+# by the apps/api lab process (NODE_EXTRA_CA_CERTS); nothing is added to the system keychain.
+LAB2_TLS_DIR="$LAB2_DIR/tls"
+LAB2_CA_CERT="$LAB2_TLS_DIR/ca.crt"
 LAB2_ENV_OUT="$LAB2_DIR/lab2.env"
 SECRETS_FILE="${LAB_ENV_FILE:-$HOME/dev/sahaj-secrets/shield.env}"
 
@@ -40,11 +44,13 @@ API_URL="http://${LAB2_HOST}:${LAB2_API_PORT}"
 GW_URL="http://${LAB2_HOST}:${LAB2_GW_PORT}"
 PGRST_URL="http://${LAB2_HOST}:${LAB2_PGRST_PORT}"
 SERVICE_DB_URL="postgres://service_role@${LAB2_HOST}:${LAB2_PG_PORT}/${LAB2_DB}"
+# Atlas checkpoint login: the migrations' sahaj_atlas_runtime role, given LOGIN + a generated password by the lab only.
+ATLAS_DB_ROLE="sahaj_atlas_runtime"
 
 # Secrets @sahaj/shield-api needs; generated locally when the secrets file lacks them (same list as v1 _common.sh).
 SHIELD_OWN_SECRETS=(SHIELD_DEVICE_PAIRING_SECRET DEV_ADMIN_TOKEN SARVAM_TOOL_TOKEN CRON_SECRET SMS_GATEWAY_SECRET SUPABASE_JWT_SECRET SARVAM_WEBHOOK_SECRET)
 # Secrets we own for the joined lab (never provider keys). Generated once into lab2.env and reused.
-LAB2_OWN_SECRETS=(WEBHOOK_ENCRYPTION_KEY IDENTITY_HASH_SECRET MISSEDCALL_HOOK_SECRET SARVAM_HOOK_SECRET)
+LAB2_OWN_SECRETS=(WEBHOOK_ENCRYPTION_KEY IDENTITY_HASH_SECRET MISSEDCALL_HOOK_SECRET SARVAM_HOOK_SECRET ATLAS_DB_PASSWORD)
 # Provider/AI keys removed from both servers when LAB2_PROVIDERS=off.
 PROVIDER_KEYS=(ANTHROPIC_API_KEY MUSE_API_KEY GEMINI_API_KEY SAFE_BROWSING_KEY SARVAM_API_KEY EXPO_ACCESS_TOKEN LANGFUSE_SECRET_KEY LANGFUSE_PUBLIC_KEY LANGFUSE_BASE_URL)
 # Never in a server env: build-only secrets and the real demo phones (only load-phones.ts reads those).
@@ -117,20 +123,50 @@ run_psql2() {
   "$(pg_bin_path psql)" -X -q -v ON_ERROR_STOP=1 -h "$LAB2_HOST" -p "$LAB2_PG_PORT" -U postgres -d "$db" "$@"
 }
 
+# Creates the lab CA and a server certificate for 127.0.0.1/localhost once (10 years; keys chmod 600).
+ensure_lab2_tls() {
+  mkdir -p "$LAB2_TLS_DIR"; chmod 700 "$LAB2_TLS_DIR"
+  [[ -s "$LAB2_TLS_DIR/server.crt" && -s "$LAB2_TLS_DIR/server.key" && -s "$LAB2_CA_CERT" ]] && return 0
+  echo "== creating lab-only CA + Postgres server certificate in $LAB2_TLS_DIR"
+  ( cd "$LAB2_TLS_DIR"
+    openssl req -x509 -newkey rsa:2048 -nodes -days 3650 -subj "/CN=Sahaj lab2 local CA" \
+      -addext "basicConstraints=critical,CA:TRUE" -addext "keyUsage=critical,keyCertSign,cRLSign" \
+      -keyout ca.key -out ca.crt >/dev/null 2>&1
+    openssl req -newkey rsa:2048 -nodes -subj "/CN=127.0.0.1" -keyout server.key -out server.csr >/dev/null 2>&1
+    printf 'basicConstraints=CA:FALSE\nkeyUsage=critical,digitalSignature,keyEncipherment\nextendedKeyUsage=serverAuth\nsubjectAltName=IP:127.0.0.1,DNS:localhost\n' >server.ext
+    openssl x509 -req -in server.csr -CA ca.crt -CAkey ca.key -CAcreateserial -days 3650 -extfile server.ext -out server.crt >/dev/null 2>&1
+    rm -f server.csr server.ext ca.srl
+    chmod 600 ca.key server.key; chmod 644 ca.crt server.crt )
+}
+
+# The Atlas login may only connect over TLS with its password; every other lab role keeps local trust.
+ensure_lab2_hba() {
+  local hba="$PG_DATA/pg_hba.conf" marker="# sahaj-lab2 atlas tls"
+  grep -q "$marker" "$hba" 2>/dev/null && return 0
+  { echo "$marker"
+    echo "hostssl ${LAB2_DB} ${ATLAS_DB_ROLE} 127.0.0.1/32 scram-sha-256"
+    echo "host    all ${ATLAS_DB_ROLE} 0.0.0.0/0 reject"
+    echo "local   all ${ATLAS_DB_ROLE} reject"
+    cat "$hba"; } >"$hba.new" && mv "$hba.new" "$hba"
+}
+
 start_pg2() {
   ensure_lab2_dirs
+  ensure_lab2_tls
   if [[ ! -f "$PG_DATA/PG_VERSION" ]]; then
     echo "== initdb $PG_DATA"
     "$(pg_bin_path initdb)" -D "$PG_DATA" -U postgres -A trust --no-locale -E UTF8 >"$LAB2_DIR/initdb.log" 2>&1 \
       || { cat "$LAB2_DIR/initdb.log" >&2; exit 2; }
   fi
+  ensure_lab2_hba
   if pg2_is_running; then
     echo "== PostgreSQL already running on ${LAB2_HOST}:${LAB2_PG_PORT} ($PG_DATA)"
+    "$(pg_bin_path pg_ctl)" -D "$PG_DATA" reload >/dev/null 2>&1 || true
   else
     if port_in_use "$LAB2_PG_PORT"; then echo "ERROR: port $LAB2_PG_PORT is taken by another process" >&2; exit 2; fi
     echo "== starting PostgreSQL 16 on ${LAB2_HOST}:${LAB2_PG_PORT}"
     "$(pg_bin_path pg_ctl)" -D "$PG_DATA" -l "$PG_LOG_FILE" -w \
-      -o "-p $LAB2_PG_PORT -k $PG_RUN -c listen_addresses=${LAB2_HOST}" start >/dev/null \
+      -o "-p $LAB2_PG_PORT -k $PG_RUN -c listen_addresses=${LAB2_HOST} -c ssl=on -c ssl_cert_file=$LAB2_TLS_DIR/server.crt -c ssl_key_file=$LAB2_TLS_DIR/server.key -c password_encryption=scram-sha-256" start >/dev/null \
       || { tail -n 30 "$PG_LOG_FILE" >&2 || true; exit 2; }
   fi
 }
@@ -239,28 +275,43 @@ server_env() {
       only_env PROXY_MODE PROXY_HOST PROXY_PORT SHIELD_URL API_URL
       ;;
     proxy-supabase)
-      export PROXY_MODE=supabase PROXY_HOST="$LAB2_HOST" PROXY_PORT="$LAB2_GW_PORT" PGRST_URL
-      only_env PROXY_MODE PROXY_HOST PROXY_PORT PGRST_URL
+      # LAB_STORAGE_DIR turns on the lab-only object store (scripts/lab/proxy.mjs createLabStorage) for voice media.
+      # LAB_STORAGE_DB_URL mirrors each stored object into storage.objects, as Supabase Storage does (voice-post RPCs check it).
+      export PROXY_MODE=supabase PROXY_HOST="$LAB2_HOST" PROXY_PORT="$LAB2_GW_PORT" PGRST_URL LAB_STORAGE_DIR="$LAB2_DIR/storage" SUPABASE_SERVICE_ROLE_KEY \
+        LAB_STORAGE_DB_URL="$SERVICE_DB_URL"
+      only_env PROXY_MODE PROXY_HOST PROXY_PORT PGRST_URL LAB_STORAGE_DIR SUPABASE_SERVICE_ROLE_KEY LAB_STORAGE_DB_URL
       ;;
     cron-shield)
       export SHIELD_API_URL="$DOOR_URL" CRON_SECRET
       only_env SHIELD_API_URL CRON_SECRET
       ;;
     cron-tick)
-      export TICK_URL="$DOOR_URL/api/cron/tick" CRON_SECRET
-      only_env TICK_URL CRON_SECRET
+      export TICK_BASE_URL="$DOOR_URL" CRON_SECRET TICK_INTERVAL_SECONDS="${LAB2_TICK_SECONDS:-30}" DEMO_TIMER_SCALE
+      only_env TICK_BASE_URL CRON_SECRET TICK_INTERVAL_SECONDS DEMO_TIMER_SCALE
       ;;
     shield)
       export DATABASE_URL="$SERVICE_DB_URL"
+      unset ATLAS_DB_PASSWORD
       unset SUPABASE_SERVICE_ROLE_KEY SIGNING_PRIVATE_KEY SIGNING_PUBLIC_KEY TIMELINE_SIGNING_PRIVATE_KEY SAHAJ_LAB_MODE
       ;;
     api)
       export SAHAJ_LAB_MODE=1 SUPABASE_URL="$GW_URL"
-      # Atlas checkpoints need verify-full TLS (packages/atlas/scripts/database-url.mjs); the lab cluster has no TLS,
-      # so DATABASE_URL stays unset and /api/cron/tick reports workflow:not_configured instead of failing.
-      unset DATABASE_URL SHIELD_DEVICE_PAIRING_SECRET DEV_ADMIN_TOKEN SMS_GATEWAY_SECRET SARVAM_WEBHOOK_SECRET
+      # Atlas checkpoints: verify-full TLS (packages/atlas/scripts/database-url.mjs) against the lab CA, as the
+      # restricted sahaj_atlas_runtime login. LAB2_ATLAS=off leaves DATABASE_URL unset (workflow: not_configured).
+      if [[ "${LAB2_ATLAS:-on}" != "off" ]]; then
+        export DATABASE_URL="postgres://${ATLAS_DB_ROLE}:${ATLAS_DB_PASSWORD}@${LAB2_HOST}:${LAB2_PG_PORT}/${LAB2_DB}?sslmode=verify-full"
+        export NODE_EXTRA_CA_CERTS="$LAB2_CA_CERT"
+      else
+        unset DATABASE_URL
+      fi
+      # TeleCMI missed-call ingestion needs an app id + virtual number. Without real ones the lab uses synthetic values
+      # (not a dialable number); joined-smoke.mjs posts a synthetic CDR with the same values.
+      export TELECMI_APP_ID="${TELECMI_APP_ID:-900001}" TELECMI_VIRTUAL_NUMBER="${TELECMI_VIRTUAL_NUMBER:-910000000099}"
+      # The device pairing secret is shared with shield-api: Maa's paired-device routes (/api/core1/maa/**) verify with it.
+      unset DEV_ADMIN_TOKEN SMS_GATEWAY_SECRET SARVAM_WEBHOOK_SECRET ATLAS_DB_PASSWORD
       ;;
     pgrst)
+      unset ATLAS_DB_PASSWORD
       only_env SUPABASE_JWT_SECRET LAB2_HOST LAB2_PG_PORT LAB2_DB LAB2_PGRST_PORT
       export PGRST_DB_URI="postgres://authenticator@${LAB2_HOST}:${LAB2_PG_PORT}/${LAB2_DB}"
       export PGRST_DB_SCHEMAS=public PGRST_DB_ANON_ROLE=anon PGRST_JWT_SECRET="$SUPABASE_JWT_SECRET"
@@ -294,8 +345,20 @@ apply_lab2_sql() {
   while IFS= read -r m; do apply_tracked2 "dev/$(basename "$m")" "$m" && n=$((n + 1)); done \
     < <(find "$REPO_ROOT/infra/supabase/dev" -maxdepth 1 -name '*.sql' | LC_ALL=C sort)
   echo "== lab_applied: $n new file(s), $(run_psql2 "$LAB2_DB" -tA -c 'select count(*) from public.lab_applied') tracked"
+  enable_atlas_login
+  # Lab object store (proxy.mjs) plays Supabase Storage: it records objects in storage.objects as service_role.
+  run_psql2 "$LAB2_DB" -c "grant usage on schema storage to service_role; grant select, insert, delete on storage.objects to service_role;" >/dev/null
   # PostgREST caches the schema; ask it to reload (ignored when it is not running yet).
   run_psql2 "$LAB2_DB" -c "notify pgrst, 'reload schema'" >/dev/null || true
+}
+
+# Lab only: the migrations create sahaj_atlas_runtime NOLOGIN ("existing login credentials are deliberately preserved").
+# Give it LOGIN with the generated password (read by psql from the environment, never on a command line).
+enable_atlas_login() {
+  [[ "${ATLAS_DB_PASSWORD:-}" =~ ^[0-9a-f]{32,}$ ]] || { echo "ERROR: ATLAS_DB_PASSWORD missing or not hex" >&2; return 1; }
+  # The statement goes through stdin (not argv) so the password never shows in ps.
+  printf "alter role %s with login password '%s';\n" "$ATLAS_DB_ROLE" "$ATLAS_DB_PASSWORD" | run_psql2 "$LAB2_DB" >/dev/null
+  echo "== Atlas checkpoint login enabled for ${ATLAS_DB_ROLE} (TLS + password only)"
 }
 
 load_lab2_phones() {

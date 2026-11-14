@@ -212,7 +212,7 @@ export function createSupabaseRefillStore(db: SupabaseClientLike): RefillStore {
     async verifyPersonInFamily(familyId, personId) {
       const { data, error } = await db
         .from('people')
-        .select('id,active')
+        .select('id')
         .eq('family_id', familyId)
         .eq('id', personId)
         .maybeSingle();
@@ -364,7 +364,7 @@ export function createSupabaseRefillStore(db: SupabaseClientLike): RefillStore {
           .eq('action_request_id', actionRequestId),
         db
           .from('family_memberships')
-          .select('person_id,role,revoked_at,people!inner(active)')
+          .select('person_id,role,revoked_at,people!inner(id)')
           .eq('family_id', familyId)
           .is('revoked_at', null),
       ]);

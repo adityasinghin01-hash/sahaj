@@ -3,7 +3,9 @@ import { safeTokenEquals } from "@/lib/secrets";
 import { serviceDatabase } from "@/lib/database";
 import { randomUUID } from "node:crypto";
 import { WebhookError } from "@/lib/webhook-security";
-import { dispatchEvents, runWorkflowJobs, type ClaimedEvent } from "@/lib/atlas-runtime/runner";
+import { dispatchEvents, runCommandJobs, runWorkflowJobs, type ClaimedEvent } from "@/lib/atlas-runtime/runner";
+import { createProductionCommandHandlers, runMissedCallNudgePass } from "@/lib/atlas-runtime/command-handlers";
+import { createProductionMissedCallNudgeDeps, processTeleCmiRawMissedCallsForFamily } from "@/lib/core1/missed-call-nudge-service";
 import { createAtlasRuntime } from "@/lib/atlas-runtime/factory";
 import { loadAtlasConfig } from "@/lib/atlas-runtime/config";
 import { buildProviderBridge } from "@/lib/atlas-runtime/bridge";
@@ -26,10 +28,22 @@ export async function POST(request: Request) {
   if (process.env.MAINTENANCE_KILL === "true") return NextResponse.json({ paused: true }, { status: 503 });
   try {
     const db = serviceDatabase();
+    // Core 1: TeleCMI missed calls -> Riya nudge, before claiming so the nudge pass still sees them pending.
+    let missedCalls: Record<string, unknown>;
+    try {
+      const nudgeDeps = createProductionMissedCallNudgeDeps();
+      missedCalls = await runMissedCallNudgePass(db, familyId => processTeleCmiRawMissedCallsForFamily(familyId, nudgeDeps));
+    } catch { missedCalls = { status: "failed" }; }
     const { data: events, error } = await db.rpc("claim_raw_events", { p_worker_id: randomUUID(), p_limit: 20, p_lease_seconds: 60 });
     if (error) throw new WebhookError("event_claim_failed", 503);
     // Routing only turns accepted input into durable work or an explicit dead letter. No care action runs here.
     const routed = await dispatchEvents(db as unknown as RpcDb, (events ?? []) as ClaimedEvent[]);
+
+    // Core 1 commands and Core 2 events need no graph, so they run with or without Atlas checkpoint configuration.
+    let commands: Record<string, unknown>;
+    try {
+      commands = await runCommandJobs({ db: db as unknown as RpcDb, workerId: randomUUID(), handlers: createProductionCommandHandlers(db) });
+    } catch { commands = { status: "failed" }; }
 
     const bridge = buildProviderBridge(phase2Entrypoints, db as unknown as RpcDb, providerConfigFromEnv(process.env));
     // Names of missing or invalid variables are reported; values never are. Events are still routed when this is incomplete.
@@ -58,6 +72,8 @@ export async function POST(request: Request) {
 
     return NextResponse.json({
       ...routed,
+      missed_calls: missedCalls,
+      commands,
       workflow,
       providers,
       core1_wiring: {
@@ -65,7 +81,7 @@ export async function POST(request: Request) {
         checkIn: checkInRun,
         urgent: urgentRun,
       },
-      care_actions_run: 0,
+      care_actions_run: typeof commands.done === "number" ? commands.done : 0,
       processing: "durable_workflow_queue",
     },
       { status: routed.failed > 0 ? 503 : 200 });

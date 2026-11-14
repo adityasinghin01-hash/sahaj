@@ -1061,7 +1061,6 @@ export function createSupabaseUrgentHelpStore(db: SupabaseClientLike): UrgentHel
         .select('id')
         .eq('family_id', familyId)
         .eq('id', personId)
-        .eq('active', true)
         .maybeSingle();
       return Boolean(data);
     },

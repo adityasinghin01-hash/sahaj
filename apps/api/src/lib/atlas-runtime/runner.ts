@@ -12,6 +12,16 @@ export const KIND_RECORDING = "core1.recording";
 export const KIND_RECORDING_TWILIO = "core1.recording.twilio";
 export const KIND_RECORDING_SARVAM = "core1.recording.sarvam";
 const RECORDING_KINDS: Record<string, RecordingProvider | "legacy"> = { [KIND_RECORDING]: "legacy", [KIND_RECORDING_TWILIO]: "twilio", [KIND_RECORDING_SARVAM]: "sarvam" };
+/** Core 1 product commands (authenticated app/device input) executed by the Core 1 command handler. */
+export const KIND_CORE1_COMMAND = "core1.command";
+/** Core 2 durable inputs. Core 2 applies its state change in the request; the job confirms the stored input. */
+export const KIND_CORE2_EVENT = "core2.event";
+/** Kinds run by runCommandJobs, independent of Atlas/checkpoint configuration. */
+export const COMMAND_KINDS = [KIND_CORE1_COMMAND, KIND_CORE2_EVENT] as const;
+const CORE1_COMMAND_EVENT = /^command\.(check_in|urgent_help|voice_message|refill_proposal|missed_call_nudge|family_report)$/;
+/** Maa's paired-device routes store the bare command name (source core1_maa_device). */
+const MAA_DEVICE_EVENTS: ReadonlySet<string> = new Set(["urgent_help", "voice_message"]);
+const CORE2_EVENT = /^core2\.[a-z_]{1,40}(\.[a-z_]{1,40}){1,3}$/;
 /** Kinds this runtime executes. */
 export const RUNTIME_KINDS = [KIND_ATLAS, KIND_PROOF, KIND_STATUS, KIND_RECORDING, KIND_RECORDING_TWILIO, KIND_RECORDING_SARVAM] as const;
 /**
@@ -41,8 +51,15 @@ export function routeEventKind(eventType: string): string | null {
   if (eventType === "twilio.call_status") return KIND_STATUS;
   if (eventType === "twilio.recording.retrieval_requested") return KIND_RECORDING_TWILIO;
   if (eventType === "sarvam.recording.retrieval_requested") return KIND_RECORDING_SARVAM;
+  // The Gather callback is turned into normalized `responder.accepted` proof synchronously at ingestion; the raw input is a fact.
+  if (eventType === "twilio.gather.response") return KIND_PROOF;
+  if (CORE1_COMMAND_EVENT.test(eventType) || MAA_DEVICE_EVENTS.has(eventType)) return KIND_CORE1_COMMAND;
+  if (CORE2_EVENT.test(eventType)) return KIND_CORE2_EVENT;
   return null;
 }
+
+/** Event types are product constants, never personal data; still bounded and charset-limited before logging. */
+const safeEventType = (t: unknown) => typeof t === "string" ? t.replace(/[^a-z0-9_.]/gi, "?").slice(0, 80) : "invalid";
 
 export interface ClaimedEvent { id: string; event_type: string; lease_token: string }
 
@@ -53,6 +70,7 @@ export async function dispatchEvents(db: RpcDb, events: ClaimedEvent[]) {
     try {
       const kind = routeEventKind(event.event_type);
       if (!kind) {
+        console.warn(`[atlas-runtime] dead-letter raw event: unknown_event_type event_type=${safeEventType(event.event_type)}`);
         await call(db, "dead_letter_raw_event", { p_event_id: event.id, p_lease_token: event.lease_token, p_error_code: "unknown_event_type" }, "dead_letter_failed");
         deadLettered++; continue;
       }
@@ -103,7 +121,7 @@ async function finish(db: RpcDb, job: ClaimedJob, state: "completed" | "interrup
     p_checkpoint_ref: checkpoint, p_interrupt_ref: interrupt, p_error_code: code }, "finish_failed");
 }
 
-interface JobEvent { eventId: string; source: string; providerEventId: string; eventType: string; metadata: Record<string, unknown> }
+interface JobEvent { eventId: string; source: string; providerEventId: string; eventType: string; metadata: Record<string, unknown>; payloadCiphertext: string | null }
 async function loadJobEvent(db: RpcDb, job: ClaimedJob): Promise<JobEvent> {
   const row = await call<Record<string, unknown> | null>(db, "load_job_event",
     { p_family_id: job.family_id, p_job_id: job.id, p_lease_token: job.lease_token }, "event_load_failed");
@@ -111,7 +129,8 @@ async function loadJobEvent(db: RpcDb, job: ClaimedJob): Promise<JobEvent> {
     throw new RuntimeError("event_unusable");
   }
   const metadata = typeof row.metadata === "object" && row.metadata !== null && !Array.isArray(row.metadata) ? row.metadata as Record<string, unknown> : {};
-  return { eventId: row.eventId, source: row.source, providerEventId: row.providerEventId, eventType: row.eventType, metadata };
+  const payloadCiphertext = typeof row.payloadCiphertext === "string" ? row.payloadCiphertext : null;
+  return { eventId: row.eventId, source: row.source, providerEventId: row.providerEventId, eventType: row.eventType, metadata, payloadCiphertext };
 }
 
 /** Disposition codes go to last_error_code, which allows only [a-z0-9_]. */
@@ -204,4 +223,50 @@ export async function runWorkflowJobs(deps: RunnerDeps) {
     }
   }
   return summary;
+}
+/** One claimed Core 1 / Core 2 command event, as stored. The ciphertext is decrypted only inside the handler. */
+export interface CommandEvent { familyId: string; jobId: string; eventId: string; source: string; providerEventId: string; eventType: string;
+  metadata: Record<string, unknown>; payloadCiphertext: string | null }
+/** done: acted on (or confirmed already applied). rejected: permanent, recorded with the code. retry: fail with backoff. */
+export type CommandOutcome = { action: "done" | "rejected" | "retry"; code: string };
+export interface CommandHandlers {
+  core1?(event: CommandEvent): Promise<CommandOutcome>;
+  core2?(event: CommandEvent): Promise<CommandOutcome>;
+}
+export interface CommandRunnerDeps { db: RpcDb; workerId: string; handlers: CommandHandlers; limit?: number }
+
+/**
+ * Executes Core 1 command and Core 2 event jobs. Runs every tick, with or without Atlas checkpoint configuration, because
+ * these handlers need no graph. A kind is claimed only when its handler is injected, so missing wiring leaves work queued.
+ */
+export async function runCommandJobs(deps: CommandRunnerDeps) {
+  const { db } = deps;
+  const kinds = [...(deps.handlers.core1 ? [KIND_CORE1_COMMAND] : []), ...(deps.handlers.core2 ? [KIND_CORE2_EVENT] : [])];
+  const summary = { claimed: 0, done: 0, rejected: 0, failed: 0, leaseLost: 0 };
+  if (!kinds.length) return { ...summary, status: "unavailable" as const };
+  const jobs = await call<ClaimedJob[] | null>(db, "claim_workflow_jobs_for_kinds",
+    { p_worker_id: deps.workerId, p_kinds: kinds, p_limit: deps.limit ?? 20, p_lease_seconds: 120 }, "command_claim_failed");
+  for (const job of jobs ?? []) {
+    summary.claimed++;
+    try {
+      if (!UUID.test(job.id) || !UUID.test(job.family_id)) throw new RuntimeError("invalid_job");
+      const handler = job.workflow_kind === KIND_CORE1_COMMAND ? deps.handlers.core1 : job.workflow_kind === KIND_CORE2_EVENT ? deps.handlers.core2 : undefined;
+      if (!handler) throw new RuntimeError("unknown_kind");
+      const ev = await loadJobEvent(db, job);
+      const out = await handler({ familyId: job.family_id, jobId: job.id, ...ev });
+      const code = safeCode(out.code);
+      if (out.action === "retry") throw new RuntimeError(code);
+      if (out.action === "rejected") console.warn(`[atlas-runtime] ${job.workflow_kind} job rejected: ${code} event_type=${safeEventType(ev.eventType)}`);
+      // A completed job records its outcome code (as status/recording jobs do): done codes and rejection codes alike.
+      if (await finish(db, job, "completed", null, null, code)) { if (out.action === "done") summary.done++; else summary.rejected++; }
+      else summary.leaseLost++;
+    } catch (error) {
+      const code = error instanceof RuntimeError && /^[a-z0-9_]{1,80}$/.test(error.code) ? error.code : "command_failed";
+      if (code === "stale_lease") { summary.leaseLost++; continue; }
+      console.warn(`[atlas-runtime] ${safeEventType(job.workflow_kind)} job failed (will retry with backoff): ${code}`);
+      try { await finish(db, job, "failed", null, null, code); } catch { /* lease expiry makes it claimable again */ }
+      summary.failed++;
+    }
+  }
+  return { ...summary, status: "ok" as const };
 }

@@ -130,7 +130,7 @@ export function createSupabaseMissedCallNudgeStore(db: SupabaseClientLike): Miss
     async verifyFamilyPerson(familyId, personId) {
       const { data, error } = await db
         .from('people')
-        .select('id,active')
+        .select('id')
         .eq('family_id', familyId)
         .eq('id', personId)
         .maybeSingle();

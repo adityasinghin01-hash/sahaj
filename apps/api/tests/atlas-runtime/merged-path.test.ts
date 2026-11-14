@@ -266,7 +266,8 @@ describe("integration seam (always runs)", () => {
     expect(routeEventKind("twilio.recording.retrieval_requested")).toBe("core1.recording.twilio");
     expect(routeEventKind("sarvam.recording.retrieval_requested")).toBe("core1.recording.sarvam");
     expect(routeEventKind("whatsapp.status")).toBe("core1.provider_status");
-    expect(routeEventKind("twilio.gather.response")).toBeNull();
+    // The Gather input becomes normalized proof synchronously at ingestion; its raw row is a fact, not a dead letter.
+    expect(routeEventKind("twilio.gather.response")).toBe("core1.proof");
   });
   it("recording jobs map Phase 2 dispositions: complete finishes with a safe code, retry fails with backoff", async () => {
     for (const [disp, state, code] of [[{ action: "complete", code: "rejected:no_consent" }, "completed", "rejected_no_consent"], [{ action: "retry", code: "media_404" }, "failed", "recording_media_404"]] as const) {
