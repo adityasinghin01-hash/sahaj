@@ -8,6 +8,7 @@ import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Build
 import android.provider.Settings
+import android.util.Log
 import app.sahaj.shield.core.LocalLevel
 import app.sahaj.shield.core.LocalVerdict
 import app.sahaj.shield.core.Pairing
@@ -36,6 +37,7 @@ class SahajShieldModule : Module() {
 
   private var pendingRole: Promise? = null
   private var pendingOverlay: Promise? = null
+  private var pendingRedirection: Promise? = null
 
   private val verdictListener: (LocalVerdict) -> Unit = { v ->
     sendEvent(
@@ -91,6 +93,28 @@ class SahajShieldModule : Module() {
       activity.startActivityForResult(rm.createRequestRoleIntent(RoleManager.ROLE_CALL_SCREENING), RC_ROLE)
     }
 
+    /**
+     * ROLE_CALL_REDIRECTION. Resolves "held" | "denied" | "not_declared_yet" | "role_unavailable" | "unsupported_sdk".
+     * The CallRedirectionService manifest entry is Phase 2; until it exists Android cannot grant the role,
+     * so this resolves "not_declared_yet" without opening the system dialog.
+     */
+    AsyncFunction("requestCallRedirectionRole") { promise: Promise ->
+      if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) { promise.resolve("unsupported_sdk"); return@AsyncFunction }
+      val rm = context.getSystemService(RoleManager::class.java)
+      if (rm == null || !rm.isRoleAvailable(RoleManager.ROLE_CALL_REDIRECTION)) { promise.resolve("role_unavailable"); return@AsyncFunction }
+      if (rm.isRoleHeld(RoleManager.ROLE_CALL_REDIRECTION)) { promise.resolve("held"); return@AsyncFunction }
+      if (!hasCallRedirectionService()) { promise.resolve("not_declared_yet"); return@AsyncFunction }
+      val activity = appContext.currentActivity ?: run { promise.reject(CodedException("E_NO_ACTIVITY", "No activity", null)); return@AsyncFunction }
+      pendingRedirection?.resolve("denied")
+      pendingRedirection = promise
+      activity.startActivityForResult(rm.createRequestRoleIntent(RoleManager.ROLE_CALL_REDIRECTION), RC_REDIRECTION)
+    }
+
+    /** Debug test screen: writes to logcat with tag "SahajShieldTest". */
+    Function("debugLog") { message: String ->
+      Log.i(TEST_LOG_TAG, message)
+    }
+
     AsyncFunction("requestOverlayPermission") { promise: Promise ->
       if (shield.alerts.canDrawOverlays()) { promise.resolve(true); return@AsyncFunction }
       val activity = appContext.currentActivity ?: run { promise.reject(CodedException("E_NO_ACTIVITY", "No activity", null)); return@AsyncFunction }
@@ -110,6 +134,7 @@ class SahajShieldModule : Module() {
           pendingRole?.resolve(held); pendingRole = null
         }
         RC_OVERLAY -> { pendingOverlay?.resolve(shield.alerts.canDrawOverlays()); pendingOverlay = null }
+        RC_REDIRECTION -> { pendingRedirection?.resolve(if (redirectionRoleHeld()) "held" else "denied"); pendingRedirection = null }
       }
     }
 
@@ -146,6 +171,15 @@ class SahajShieldModule : Module() {
     }, *perms)
   }
 
+  private fun redirectionRoleHeld(): Boolean = Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q &&
+    context.getSystemService(RoleManager::class.java)?.isRoleHeld(RoleManager.ROLE_CALL_REDIRECTION) == true
+
+  @Suppress("DEPRECATION")
+  private fun hasCallRedirectionService(): Boolean =
+    context.packageManager.queryIntentServices(
+      Intent("android.telecom.CallRedirectionService").setPackage(context.packageName), 0,
+    ).isNotEmpty()
+
   private fun granted(p: String) = context.checkSelfPermission(p) == PackageManager.PERMISSION_GRANTED
 
   private fun status(): Map<String, Any?> {
@@ -158,6 +192,7 @@ class SahajShieldModule : Module() {
       "contacts" to granted(Manifest.permission.READ_CONTACTS),
       "notifications" to (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU || granted(Manifest.permission.POST_NOTIFICATIONS)),
       "callScreeningRole" to roleHeld,
+      "callRedirectionRole" to redirectionRoleHeld(),
       "overlay" to rt.alerts.canDrawOverlays(),
       "batteryOptimizationIgnored" to KeepAlive.isIgnoringBatteryOptimizations(context),
       "autostartScreenAvailable" to KeepAlive.hasAutostartScreen(context),
@@ -172,5 +207,7 @@ class SahajShieldModule : Module() {
   companion object {
     private const val RC_ROLE = 0x5A01
     private const val RC_OVERLAY = 0x5A02
+    private const val RC_REDIRECTION = 0x5A03
+    private const val TEST_LOG_TAG = "SahajShieldTest"
   }
 }

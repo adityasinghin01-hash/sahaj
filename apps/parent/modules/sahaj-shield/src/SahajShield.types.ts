@@ -16,6 +16,7 @@ export type ShieldStatus = {
   contacts: boolean;
   notifications: boolean;
   callScreeningRole: boolean;
+  callRedirectionRole: boolean;
   overlay: boolean;
   batteryOptimizationIgnored: boolean;
   autostartScreenAvailable: boolean;
@@ -25,6 +26,13 @@ export type ShieldStatus = {
   queuedEvents: number;
   rulesVersion: string;
 };
+
+export type CallRedirectionResult =
+  | 'held'
+  | 'denied'
+  | 'not_declared_yet'
+  | 'role_unavailable'
+  | 'unsupported_sdk';
 
 export type ShieldPairing = {
   baseUrl: string;
