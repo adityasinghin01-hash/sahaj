@@ -41,7 +41,46 @@ export type ShieldStatus = {
   p9Polling: boolean;
   /** P2: WhatsApp call notifications with a running timer. */
   p2CallsTracked: number;
+  /** P6: timing an unsaved-number call right now. */
+  p6Timing: boolean;
+  /** "rules.json" when every Phase 2/3 threshold/list came from rules.json, else "fallback:<n fields>". */
+  configSource: string;
+  /** Step 3.4: this phone is the "1 Sahaj SMS" gateway (every SMS is forwarded, no rules). */
+  gatewayMode: boolean;
 };
+
+/** Last finished call, without the number. */
+export type LastCall =
+  | { ended: false }
+  | {
+      ended: true;
+      unsaved: boolean;
+      /** CallerType: series_1600 | series_140 | mobile_10 | international | saved_contact | unknown. */
+      callerType: string;
+      incoming: boolean | null;
+      /** Incoming 1600-series call: "Ye registered bank number tha". */
+      registeredBank: boolean;
+      durationSeconds: number;
+      endedAt: number;
+    };
+
+export type AfterCallAnswer = 'otp_shared' | 'claimed_bank' | 'no';
+export type AfterCallReportResult = 'sent' | 'nothing_sent' | 'not_paired';
+
+/** Step 3.4 gateway status. Never contains the secret or the full URL. */
+export type GatewayStatus = {
+  enabled: boolean;
+  configured: boolean;
+  apiHost: string | null;
+  gatewayId: string | null;
+  queued: number;
+  smsPermission: boolean;
+  /** Last 5 forwards, newest first: time + status only (no number, no text). */
+  recent: { at: number; status: 'queued' | 'sent' | 'retrying' | 'dropped' }[];
+};
+
+/** null = saved. */
+export type GatewayConfigError = 'bad_url' | 'https_required' | 'secret_too_short' | 'secret_bad_chars' | null;
 
 /** Phase 2 features. All OFF by default; each one turns on after its phone test passes. */
 export type ShieldFeature =
@@ -49,7 +88,8 @@ export type ShieldFeature =
   | 'p9_bank_app'
   | 'p2_video_call'
   | 'p3_apk'
-  | 'installed_apps';
+  | 'installed_apps'
+  | 'p6_long_call';
 
 export const SHIELD_FEATURES: readonly ShieldFeature[] = [
   'p8_pause_call',
@@ -57,6 +97,7 @@ export const SHIELD_FEATURES: readonly ShieldFeature[] = [
   'p2_video_call',
   'p3_apk',
   'installed_apps',
+  'p6_long_call',
 ];
 
 export type ShieldFeatures = Record<ShieldFeature, boolean> & {

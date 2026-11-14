@@ -3,13 +3,16 @@
 // a system settings screen.
 import { router, useLocalSearchParams } from 'expo-router';
 import {
+  AppWindow,
   ArrowRight,
   BatteryFull,
+  Bell,
   BellRing,
   Check,
   Contact,
   Delete,
   EllipsisVertical,
+  Gauge,
   Layers,
   MessageSquareText,
   PhoneIncoming,
@@ -29,7 +32,7 @@ import { Icon } from '@/components/ui/icon';
 import { pairWithCode, type PairResult } from '@/lib/pairing';
 import { useT } from '@/lib/prefs';
 import { RESTRICTED_SETTINGS_SDK, STEPS, sessionDone, type StepId } from '@/lib/setup';
-import { shield, shieldAvailable, type ShieldStatus } from '@/lib/shield';
+import { shield, shieldAvailable, type ShieldFeatures, type ShieldStatus } from '@/lib/shield';
 import { cn } from '@/lib/utils';
 
 const ICONS: Record<StepId, LucideIcon> = {
@@ -39,18 +42,25 @@ const ICONS: Record<StepId, LucideIcon> = {
   overlay: Layers,
   screening: PhoneIncoming,
   restricted: ShieldAlert,
+  usage: Gauge,
+  notifications: Bell,
+  apps: AppWindow,
   battery: BatteryFull,
   test: BellRing,
 };
 
 function useStatus() {
   const [status, setStatus] = React.useState<ShieldStatus | null>(() => shield.getStatus());
-  const refresh = React.useCallback(() => setStatus(shield.getStatus()), []);
+  const [features, setFeatures] = React.useState<ShieldFeatures | null>(() => shield.getFeatures());
+  const refresh = React.useCallback(() => {
+    setStatus(shield.getStatus());
+    setFeatures(shield.getFeatures());
+  }, []);
   React.useEffect(() => {
     const sub = AppState.addEventListener('change', (s) => s === 'active' && refresh());
     return () => sub.remove();
   }, [refresh]);
-  return { status, refresh };
+  return { status, features, refresh };
 }
 
 export default function SetupStep() {
@@ -58,12 +68,12 @@ export default function SetupStep() {
   const { step: stepParam } = useLocalSearchParams<{ step: string }>();
   const index = Math.max(0, STEPS.findIndex((s) => s.id === stepParam));
   const step = STEPS[index];
-  const { status, refresh } = useStatus();
+  const { status, features, refresh } = useStatus();
   const [, force] = React.useReducer((x: number) => x + 1, 0);
   const [busy, setBusy] = React.useState(false);
 
   const notNeeded = step.id === 'restricted' && status != null && status.sdkInt < RESTRICTED_SETTINGS_SDK;
-  const statusSays = status ? step.granted(status) : null;
+  const statusSays = status ? step.granted(status, features) : null;
   const done = notNeeded || statusSays === true || sessionDone.has(step.id);
   const last = index === STEPS.length - 1;
 
@@ -93,6 +103,16 @@ export default function SetupStep() {
           await Linking.openSettings();
           sessionDone.add('restricted');
           break;
+        case 'usage':
+          shield.openUsageAccess();
+          break;
+        case 'notifications':
+          shield.openNotificationAccess();
+          break;
+        case 'apps':
+          // Turns on the installed-app check; the module runs the first scan at once, then every 6 h.
+          shield.setFeature('installed_apps', true);
+          break;
         case 'battery':
           shield.openBattery();
           break;
@@ -115,8 +135,20 @@ export default function SetupStep() {
     else router.push({ pathname: '/setup/[step]', params: { step: STEPS[index + 1].id } });
   };
 
-  const allowLabel = step.id === 'test' ? t('test_now') : step.id === 'restricted' ? t('open_settings') : t('allow');
-  const allowIcon = step.id === 'test' ? BellRing : step.id === 'restricted' ? Settings2 : ShieldAlert;
+  const allowLabel =
+    step.id === 'test'
+      ? t('test_now')
+      : step.id === 'restricted' || step.id === 'usage' || step.id === 'notifications'
+        ? t('open_settings')
+        : step.id === 'apps'
+          ? t('turn_on')
+          : t('allow');
+  const allowIcon =
+    step.id === 'test'
+      ? BellRing
+      : step.id === 'restricted' || step.id === 'usage' || step.id === 'notifications'
+        ? Settings2
+        : ShieldAlert;
 
   return (
     <MaaScreen>

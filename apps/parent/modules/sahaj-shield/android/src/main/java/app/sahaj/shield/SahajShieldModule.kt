@@ -1,7 +1,6 @@
 package app.sahaj.shield
 
 import android.Manifest
-import android.app.NotificationManager
 import android.app.role.RoleManager
 import android.content.ComponentName
 import android.content.Context
@@ -11,6 +10,7 @@ import android.net.Uri
 import android.os.Build
 import android.provider.Settings
 import android.util.Log
+import app.sahaj.shield.core.AfterCallReporter
 import app.sahaj.shield.core.Feature
 import app.sahaj.shield.core.LocalLevel
 import app.sahaj.shield.core.LocalVerdict
@@ -74,13 +74,21 @@ class SahajShieldModule : Module() {
       InstalledApps.schedulePeriodic(context)
       val app = context.applicationContext
       rt.worker.execute { InstalledApps.scanNow(app) }
+      // Device status heartbeat: on start + every 6 h (+ on every permission change, below).
+      HeartbeatSchedule.schedulePeriodic(context)
+      rt.heartbeatNow(force = true)
     }
 
     OnDestroy {
       appContext.reactContext?.let { ShieldRuntime.get(it).verdictListeners.remove(verdictListener) }
     }
 
-    Function("getStatus") { status() }
+    Function("getStatus") {
+      val s = status()
+      // Screens call this when they come back from a system settings page: a changed permission → heartbeat.
+      shield.heartbeatNow(force = false)
+      s
+    }
 
     // Non-sensitive display choices only. Device credentials remain in SecureStore.
     Function("getUiPreferences") {
@@ -149,6 +157,79 @@ class SahajShieldModule : Module() {
     /** T6: Sahaj Maa is enabled in Settings → Notification access. */
     Function("isNotificationAccessGranted") { notificationAccessGranted() }
 
+    /** Setup wizard: Settings → Usage access (P9). Returns which screen opened. */
+    Function("openUsageAccessSettings") {
+      openFirst(
+        "usage_access" to Intent(Settings.ACTION_USAGE_ACCESS_SETTINGS),
+        "app_details" to Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.parse("package:" + context.packageName)),
+      )
+    }
+
+    /** Setup wizard: Settings → Notification access (P2/P3). Returns which screen opened. */
+    Function("openNotificationAccessSettings") {
+      val detail = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+        Intent(Settings.ACTION_NOTIFICATION_LISTENER_DETAIL_SETTINGS).putExtra(
+          Settings.EXTRA_NOTIFICATION_LISTENER_COMPONENT_NAME,
+          ComponentName(context, ShieldNotificationListener::class.java).flattenToString(),
+        )
+      } else null
+      openFirst(
+        *listOfNotNull(
+          detail?.let { "listener_detail" to it },
+          "listener_list" to Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS),
+          "app_details" to Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.parse("package:" + context.packageName)),
+        ).toTypedArray()
+      )
+    }
+
+    // ---- Step 3.3 after-call screen ----
+
+    /** The last finished call, without the number: { ended, unsaved, callerType, incoming, registeredBank, durationSeconds }. */
+    Function("getLastCall") {
+      val c = shield.calls.lastCall()
+      if (c == null) mapOf("ended" to false) else mapOf(
+        "ended" to true,
+        "unsaved" to c.unsaved,
+        "callerType" to shield.afterCall.lastCallerType(),
+        "incoming" to c.incoming,
+        "registeredBank" to (c.incoming == true && c.callerType == "series_1600"),
+        "durationSeconds" to (c.durationMs / 1000).toInt(),
+        "endedAt" to c.endedAtMs.toDouble(),
+      )
+    }
+
+    /** "otp_shared" | "claimed_bank" | "no" → voice_report event (nothing for "no"). Returns "sent" | "nothing_sent" | "not_paired". */
+    Function("reportAfterCall") { answer: String ->
+      val a = AfterCallReporter.Answer.byId(answer) ?: throw CodedException("E_BAD_ANSWER", "Unknown answer", null)
+      val rt = shield
+      if (a != AfterCallReporter.Answer.NO && !rt.isPaired()) return@Function "not_paired"
+      val r = rt.afterCall.report(a)
+      rt.debugEvents.add("after-call · ${a.id} → $r")
+      r
+    }
+
+    // ---- Step 3.4 gateway mode (spare phone). The secret never comes back to JS. ----
+
+    Function("getGatewayStatus") { gatewayStatus() }
+
+    /** Stores URL + secret encrypted on this phone. Returns null on success, else an error code. */
+    Function("setGatewayConfig") { apiUrl: String, secret: String ->
+      val err = shield.saveGatewayConfig(apiUrl, secret)
+      Log.i(TEST_LOG_TAG, "gateway config ${if (err == null) "saved" else "rejected: $err"}")
+      err
+    }
+
+    Function("setGatewayMode") { on: Boolean ->
+      shield.setGatewayMode(on)?.let { throw CodedException("E_GATEWAY", it, null) }
+      Log.i(TEST_LOG_TAG, "gateway mode=$on")
+      gatewayStatus()
+    }
+
+    Function("clearGateway") {
+      shield.clearGateway()
+      gatewayStatus()
+    }
+
     /** T4/T6: recent debug lines from the redirection and notification services (newest first, memory only). */
     Function("getDebugEvents") { shield.debugEvents.snapshot() }
 
@@ -178,6 +259,7 @@ class SahajShieldModule : Module() {
         RC_OVERLAY -> { pendingOverlay?.resolve(shield.alerts.canDrawOverlays()); pendingOverlay = null }
         RC_REDIRECTION -> { pendingRedirection?.resolve(if (redirectionRoleHeld()) "held" else "denied"); pendingRedirection = null }
       }
+      shield.heartbeatNow(force = false)
     }
 
     Function("openBatteryOptimizationSettings") { KeepAlive.openBatteryOptimization(context) }
@@ -247,6 +329,7 @@ class SahajShieldModule : Module() {
     pm.askForPermissions({ result ->
       val granted = result.values.all { it.status == expo.modules.interfaces.permissions.PermissionsStatus.GRANTED }
       shield.ensureCallMonitor()
+      shield.heartbeatNow(force = false)
       promise.resolve(granted)
     }, *perms)
   }
@@ -260,14 +343,34 @@ class SahajShieldModule : Module() {
       Intent("android.telecom.CallRedirectionService").setPackage(context.packageName), 0,
     ).isNotEmpty()
 
-  private fun notificationAccessGranted(): Boolean {
-    val cn = ComponentName(context, ShieldNotificationListener::class.java)
-    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O_MR1) {
-      val nm = context.getSystemService(NotificationManager::class.java)
-      return nm?.isNotificationListenerAccessGranted(cn) == true
+  private fun notificationAccessGranted(): Boolean = shield.notificationListenerGranted()
+
+  private fun openFirst(vararg tries: Pair<String, Intent>): String {
+    for ((name, intent) in tries) {
+      try {
+        context.startActivity(intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+        return name
+      } catch (_: Exception) {
+        // try the next one
+      }
     }
-    val enabled = Settings.Secure.getString(context.contentResolver, "enabled_notification_listeners") ?: return false
-    return enabled.split(':').any { ComponentName.unflattenFromString(it) == cn }
+    return "none"
+  }
+
+  /** Never includes the secret or the full URL: only whether it is set, the host and the last 5 forwards (time + status). */
+  private fun gatewayStatus(): Map<String, Any?> {
+    val rt = shield
+    val c = rt.gatewayStore.load()
+    val host = c?.apiUrl?.let { runCatching { Uri.parse(it).host }.getOrNull() }
+    return mapOf(
+      "enabled" to (c?.enabled == true),
+      "configured" to (c != null),
+      "apiHost" to host,
+      "gatewayId" to c?.gatewayId,
+      "queued" to rt.gatewayQueued(),
+      "smsPermission" to (granted(Manifest.permission.RECEIVE_SMS) && granted(Manifest.permission.READ_SMS)),
+      "recent" to rt.gatewayRecent.list().map { mapOf("at" to it.atMs.toDouble(), "status" to it.status) },
+    )
   }
 
   private fun granted(p: String) = context.checkSelfPermission(p) == PackageManager.PERMISSION_GRANTED
@@ -298,6 +401,9 @@ class SahajShieldModule : Module() {
       "p8NumbersKept" to rt.phase2.numbers.size(System.currentTimeMillis()),
       "p9Polling" to rt.phase2.bankApps.isPolling,
       "p2CallsTracked" to rt.phase2.whatsAppCalls.trackedCount,
+      "p6Timing" to rt.phase2.longCalls.isTiming,
+      "configSource" to rt.configSource,
+      "gatewayMode" to rt.gateway.isOn(),
     )
   }
 

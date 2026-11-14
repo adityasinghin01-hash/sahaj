@@ -3,7 +3,12 @@
 import { Platform } from 'react-native';
 
 import SahajShield, {
+  type AfterCallAnswer,
+  type AfterCallReportResult,
   type CallRedirectionResult,
+  type GatewayConfigError,
+  type GatewayStatus,
+  type LastCall,
   type LocalVerdictEvent,
   type ShieldFeature,
   type ShieldFeatures,
@@ -12,7 +17,7 @@ import SahajShield, {
 } from '../../modules/sahaj-shield';
 
 export { SHIELD_FEATURES } from '../../modules/sahaj-shield';
-export type { LocalVerdictEvent, ShieldFeature, ShieldFeatures, ShieldStatus };
+export type { AfterCallAnswer, GatewayStatus, LastCall, LocalVerdictEvent, ShieldFeature, ShieldFeatures, ShieldStatus };
 
 export const shieldAvailable = Platform.OS === 'android';
 
@@ -52,6 +57,18 @@ export const shield = {
   openAutostart: () => safe(() => SahajShield.openAutostartSettings(), 'none'),
   setPairing: (p: ShieldPairing) => safeAsync(() => SahajShield.setPairing(p), false),
   testRedScreen: () => safe(() => SahajShield.testRedScreen(), false),
+  openUsageAccess: () => safe(() => SahajShield.openUsageAccessSettings(), 'none'),
+  openNotificationAccess: () => safe(() => SahajShield.openNotificationAccessSettings(), 'none'),
+  getLastCall: (): LastCall => safe(() => SahajShield.getLastCall(), { ended: false }),
+  /** Off Android (preview) nothing is sent. */
+  reportAfterCall: (a: AfterCallAnswer): AfterCallReportResult | 'unavailable' =>
+    safe<AfterCallReportResult | 'unavailable'>(() => SahajShield.reportAfterCall(a), 'unavailable'),
+  getGatewayStatus: (): GatewayStatus | null => safe(() => SahajShield.getGatewayStatus(), null),
+  /** Returns null on success, an error code, or 'unavailable'. The secret goes straight to native storage. */
+  setGatewayConfig: (apiUrl: string, secret: string): GatewayConfigError | 'unavailable' =>
+    safe<GatewayConfigError | 'unavailable'>(() => SahajShield.setGatewayConfig(apiUrl, secret), 'unavailable'),
+  setGatewayMode: (on: boolean): GatewayStatus | null => safe(() => SahajShield.setGatewayMode(on), null),
+  clearGateway: (): GatewayStatus | null => safe(() => SahajShield.clearGateway(), null),
   /** Subscribes to verdicts; returns an unsubscribe function (no-op off Android). */
   onVerdict(cb: (v: LocalVerdictEvent) => void): () => void {
     if (!shieldAvailable) return () => {};

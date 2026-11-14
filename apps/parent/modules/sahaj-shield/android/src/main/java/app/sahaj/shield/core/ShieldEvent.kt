@@ -19,6 +19,8 @@ data class ShieldEvent(
   val localLevel: String?,
   /** Strings, numbers or booleans only, never phone numbers. */
   val context: Map<String, Any>,
+  /** CallerType (shield.ts), Phase 3 call events only. Never the number. */
+  val callerType: String? = null,
 ) {
   fun toJson(): String {
     val w = Json.ObjectWriter()
@@ -31,6 +33,7 @@ data class ShieldEvent(
     w.put("occurred_at", occurredAt)
     if (maskedText != null) w.put("masked_text", maskedText)
     if (senderType != null) w.put("sender_type", senderType)
+    if (callerType != null) w.put("caller_type", callerType)
     w.putStrings("link_domains", linkDomains)
     w.putStrings("matched_rules", matchedRules)
     if (localLevel != null) w.put("local_level", localLevel)
@@ -89,7 +92,7 @@ object EventFactory {
 }
 
 /**
- * Phase 2 signal events (call_out, app_open, notification, install). No masked_text and no sender:
+ * Phase 2/3 signal events (call_out, call_state, app_open, notification, install, voice_report). No masked_text and no sender:
  * only the rule id, the level and a flat context of yes/no facts, package names and durations.
  * Every string value is masked again, so a stray 4+ digit run can never leave the phone.
  */
@@ -101,6 +104,7 @@ fun EventFactory.fromSignal(
   idempotencyKey: String,
   occurredAtMs: Long,
   level: LocalLevel = LocalLevel.RED,
+  callerType: String? = null,
 ): ShieldEvent {
   require(kind in SIGNAL_KINDS) { "unsupported signal kind" }
   val safe = linkedMapOf<String, Any>()
@@ -125,11 +129,12 @@ fun EventFactory.fromSignal(
     matchedRules = listOf(Masker.mask(ruleId).take(64)),
     localLevel = level.wire,
     context = safe,
+    callerType = callerType?.takeIf { it in ShieldConfig.CALLER_TYPES },
   )
 }
 
-/** ShieldEventKind values (packages/shared/src/shield.ts) that Phase 2 sends. */
-val SIGNAL_KINDS = setOf("call_out", "app_open", "notification", "install")
+/** ShieldEventKind values (packages/shared/src/shield.ts) that Phase 2/3 signals send. */
+val SIGNAL_KINDS = setOf("call_out", "call_state", "app_open", "notification", "install", "voice_report")
 
 object IsoTime {
   /** UTC ISO-8601 with milliseconds, accepted by z.string().datetime(). */

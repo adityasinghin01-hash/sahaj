@@ -53,9 +53,17 @@ interface Phase2Alerts {
   fun showWarning(warning: Warning, callActive: Boolean)
 }
 
-/** Queues one masked signal event (kind ∈ ShieldEventKind). Does nothing if the phone is not paired. */
+/**
+ * Queues one masked signal event (kind ∈ SIGNAL_KINDS). Does nothing if the phone is not paired.
+ * The 3-argument form sends local_level red and no caller_type (Phase 2). Phase 3 calls the
+ * 5-argument form; the phone's sink overrides it. A sink that only implements the 3-argument form
+ * (old tests) still receives the event, without level/caller type.
+ */
 fun interface SignalEventSink {
   fun enqueue(kind: String, ruleId: String, context: Map<String, Any>)
+
+  fun enqueue(kind: String, ruleId: String, context: Map<String, Any>, level: LocalLevel, callerType: String?) =
+    enqueue(kind, ruleId, context)
 }
 
 fun interface Cancellable { fun cancel() }
@@ -71,8 +79,8 @@ fun interface ForegroundSource {
 }
 
 /**
- * Package lists. rules.json v1.0.0 has no package lists, so they live here for now
- * (listed in .cards/K-A5.report.md so they can move into rules.json).
+ * FALLBACK package lists, used only when the bundled rules.json cannot be read (see ShieldConfig).
+ * The live lists come from rules.json patterns.P9.packages / P4.packages / P3.play_store_installers.
  */
 object AppLists {
   /** P9: banking / UPI apps. */
@@ -154,6 +162,7 @@ class BankAppWatch(
   private val currentCall: () -> CallStateTracker.Snapshot,
   private val clock: () -> Long,
   private val packages: Set<String> = AppLists.BANKING_UPI,
+  private val pollMs: Long = POLL_MS,
 ) {
   private val lock = Any()
   private var poll: Cancellable? = null
@@ -168,7 +177,7 @@ class BankAppWatch(
     if (shouldPoll && poll == null) {
       sinceMs = s.callStartedAtMs?.coerceAtMost(clock()) ?: clock()
       firedThisCall = false
-      poll = scheduler.every(POLL_MS) { tick() }
+      poll = scheduler.every(pollMs) { tick() }
     } else if (!shouldPoll && poll != null) {
       stopLocked()
     }
@@ -198,11 +207,11 @@ class BankAppWatch(
   }
 
   /** Simulate button: an unsaved call starts, a UPI app opens, the call ends — same code path. */
-  fun simulate(): String {
+  fun simulate(pkg: String = "com.phonepe.app"): String {
     if (!switches.isOn(Feature.P9_BANK_APP)) return "off"
     try {
       onCallState(CallStateTracker.Snapshot(callActive = true, onCallWithUnsaved = true, callStartedAtMs = clock()))
-      tick(override = listOf("com.phonepe.app"))
+      tick(override = listOf(pkg))
     } finally {
       onCallState(CallStateTracker.Snapshot(callActive = false, onCallWithUnsaved = false, callStartedAtMs = null))
       refresh() // back to the real call state
@@ -230,6 +239,7 @@ class WhatsAppCallWatch(
   private val events: SignalEventSink,
   private val scheduler: Scheduler,
   private val clock: () -> Long,
+  private val baseThresholdMs: Long = BASE_THRESHOLD_MS,
 ) {
   private class Tracked(val startedAtMs: Long, val timer: Cancellable, val simulated: Boolean)
 
@@ -237,7 +247,7 @@ class WhatsAppCallWatch(
   private val tracked = HashMap<String, Tracked>()
   private val fired = HashSet<String>()
 
-  fun thresholdMs(): Long = BASE_THRESHOLD_MS / switches.demoScale.coerceAtLeast(1)
+  fun thresholdMs(): Long = baseThresholdMs / switches.demoScale.coerceAtLeast(1)
 
   val trackedCount: Int get() = synchronized(lock) { tracked.size }
 
@@ -353,6 +363,9 @@ class InstalledAppWatch(
   private val flagged: FlaggedAppStore,
   private val selfPackage: String,
   private val clock: () -> Long,
+  private val remoteControl: Set<String> = AppLists.REMOTE_CONTROL,
+  private val playStoreInstallers: Set<String> = AppLists.PLAY_STORE_INSTALLERS,
+  private val recentMs: Long = RECENT_MS,
 ) {
   /** Pure check, no side effects. */
   fun evaluate(apps: List<InstalledApp>): List<AppFlag> {
@@ -360,12 +373,12 @@ class InstalledAppWatch(
     val out = mutableListOf<AppFlag>()
     for (a in apps) {
       if (a.packageName == selfPackage) continue
-      if (a.packageName in AppLists.REMOTE_CONTROL) {
+      if (a.packageName in remoteControl) {
         out += AppFlag(a.packageName, REASON_REMOTE, "pattern.P4", a.installer)
         continue
       }
-      val recent = now - a.firstInstallMs in 0..RECENT_MS
-      if (!a.isSystem && recent && a.installer !in AppLists.PLAY_STORE_INSTALLERS) {
+      val recent = now - a.firstInstallMs in 0..recentMs
+      if (!a.isSystem && recent && !isPlayStore(a.installer)) {
         out += AppFlag(a.packageName, REASON_OUTSIDE_PLAY, "pattern.P3", a.installer)
       }
     }
@@ -384,11 +397,21 @@ class InstalledAppWatch(
       val hours = ((clock() - app.firstInstallMs) / 3_600_000L).coerceAtLeast(0).toInt()
       events.enqueue(
         "install", f.ruleId,
-        signalContext(simulated, "package" to f.packageName, "reason" to f.reason, "installer" to (f.installer ?: "unknown"), "installed_hours_ago" to hours),
+        signalContext(
+          simulated,
+          "package" to f.packageName,
+          "reason" to f.reason,
+          "installer" to (f.installer ?: "unknown"),
+          "first_install_ms" to app.firstInstallMs,
+          "installed_hours_ago" to hours,
+        ),
       )
     }
     return fresh
   }
+
+  /** P3 install-source classification: null (adb / unknown) and anything not in the list count as outside Play. */
+  fun isPlayStore(installer: String?): Boolean = installer != null && installer in playStoreInstallers
 
   private fun AppFlag.id() = "$packageName|$reason"
 
@@ -411,12 +434,23 @@ class Phase2Shield(
   flaggedApps: FlaggedAppStore,
   selfPackage: String,
   private val clock: () -> Long = System::currentTimeMillis,
+  /** Thresholds and package lists from rules.json (ShieldConfig.fromRulesJson); defaults = old constants. */
+  val config: ShieldConfig = ShieldConfig.DEFAULT,
+  /** P6: her own normal unsaved-call length (on the phone only). null = memory only. */
+  callLengths: CallLengthHistory = CallLengthHistory(),
+  /** Phase 3 call-end notes (1600-series note). */
+  callNotes: CallNotes = CallNotes { },
 ) {
   val outgoing = OutgoingCallGuard(switches, numbers, alerts, events, clock)
-  val bankApps = BankAppWatch(switches, alerts, events, scheduler, foreground, currentCall, clock)
-  val whatsAppCalls = WhatsAppCallWatch(switches, alerts, events, scheduler, clock)
+  val bankApps = BankAppWatch(switches, alerts, events, scheduler, foreground, currentCall, clock, config.p9Packages, config.p9PollMs)
+  val whatsAppCalls = WhatsAppCallWatch(switches, alerts, events, scheduler, clock, config.p2MinDurationMs)
   val apk = ApkWatch(switches, alerts, events, clock)
-  val installed = InstalledAppWatch(switches, alerts, events, flaggedApps, selfPackage, clock)
+  val installed = InstalledAppWatch(
+    switches, alerts, events, flaggedApps, selfPackage, clock,
+    config.p4Packages, config.p3PlayStoreInstallers, config.p3RecentInstallMs,
+  )
+  /** P6 (Step 3.3): unsaved-number call far longer than her normal → quiet call_state event. */
+  val longCalls = LongCallWatch(switches, events, scheduler, callLengths, callNotes, clock)
 
   init {
     switches.addListener { f, on ->
@@ -424,6 +458,7 @@ class Phase2Shield(
         Feature.P8_PAUSE_CALL -> if (!on) numbers.clear()
         Feature.P9_BANK_APP -> bankApps.refresh()
         Feature.P2_VIDEO_CALL -> if (!on) whatsAppCalls.stopAll()
+        Feature.P6_LONG_CALL -> longCalls.onCallState(currentCall())
         else -> Unit
       }
     }
@@ -435,7 +470,13 @@ class Phase2Shield(
     numbers.recordFromSms(input.sender, input.body, input.receivedAtMs)
   }
 
-  fun onCallState(s: CallStateTracker.Snapshot) = bankApps.onCallState(s)
+  fun onCallState(s: CallStateTracker.Snapshot) {
+    bankApps.onCallState(s)
+    longCalls.onCallState(s)
+  }
+
+  /** From CallStateTracker when a call ends. */
+  fun onCallEnded(summary: CallStateTracker.CallSummary) = longCalls.onCallEnded(summary)
 
   /**
    * Test-screen "simulate" button: feeds fake signals through the same code path as the real
@@ -452,7 +493,7 @@ class Phase2Shield(
         val d = outgoing.onOutgoingCall(SIM_NUMBER, replace = { log("P8 simulate: would re-place the call unmodified") }, simulated = true)
         if (d == OutgoingCallGuard.Decision.PAUSED) "paused" else "placed_unmodified"
       }
-      Feature.P9_BANK_APP -> bankApps.simulate()
+      Feature.P9_BANK_APP -> bankApps.simulate(config.p9Packages.firstOrNull() ?: "com.phonepe.app")
       Feature.P2_VIDEO_CALL -> {
         val key = "simulated:p2:${clock()}"
         if (whatsAppCalls.onCallNotification(key, titleIsSavedContact = false, simulated = true)) {
@@ -466,11 +507,12 @@ class Phase2Shield(
       Feature.INSTALLED_APPS -> {
         val now = clock()
         val fake = listOf(
-          InstalledApp("com.anydesk.anydeskandroid", "com.android.vending", now - 30L * 86_400_000L, false),
+          InstalledApp(config.p4Packages.firstOrNull() ?: "com.anydesk.anydeskandroid", "com.android.vending", now - 30L * 86_400_000L, false),
           InstalledApp("com.example.shaadicard", "com.google.android.packageinstaller", now - 3_600_000L, false),
         )
         "flags_${installed.scan(fake, simulated = true).size}"
       }
+      Feature.P6_LONG_CALL -> longCalls.simulate()
     }
   }
 

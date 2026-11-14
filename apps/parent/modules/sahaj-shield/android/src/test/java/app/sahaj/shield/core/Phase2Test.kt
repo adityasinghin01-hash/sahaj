@@ -506,9 +506,11 @@ class Phase2Test {
   }
 
   private fun assertNoNumbers(json: String) {
+    // first_install_ms is a timestamp the card asks for (install events); it is not a phone number.
     val stripped = json
       .replace(Regex("\"idempotency_key\":\"[^\"]*\""), "")
       .replace(Regex("\"occurred_at\":\"[^\"]*\""), "")
+      .replace(Regex("\"first_install_ms\":[0-9]+"), "")
     assertFalse(json, Masker.hasLongDigitRun(stripped))
     assertFalse(json, stripped.contains(Phase2Shield.SIM_NUMBER))
   }

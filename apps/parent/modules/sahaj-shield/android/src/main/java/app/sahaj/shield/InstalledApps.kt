@@ -12,6 +12,7 @@ import androidx.work.WorkManager
 import androidx.work.Worker
 import androidx.work.WorkerParameters
 import app.sahaj.shield.core.Feature
+import app.sahaj.shield.core.HeartbeatMonitor
 import app.sahaj.shield.core.InstalledApp
 import java.util.concurrent.TimeUnit
 
@@ -81,6 +82,27 @@ internal object InstalledApps {
 class InstalledAppsWorker(context: Context, params: WorkerParameters) : Worker(context, params) {
   override fun doWork(): Result {
     InstalledApps.scanNow(applicationContext)
+    return Result.success()
+  }
+}
+
+/** Device status heartbeat every 6 h (WorkManager, same as the installed-app scan). */
+internal object HeartbeatSchedule {
+  private const val WORK_NAME = "sahaj_shield_heartbeat"
+
+  fun schedulePeriodic(context: Context) {
+    runCatching {
+      val req = PeriodicWorkRequest.Builder(HeartbeatWorker::class.java, HeartbeatMonitor.PERIOD_HOURS, TimeUnit.HOURS).build()
+      WorkManager.getInstance(context.applicationContext)
+        .enqueueUniquePeriodicWork(WORK_NAME, ExistingPeriodicWorkPolicy.KEEP, req)
+    }.onFailure { Log.w(ShieldRuntime.TAG, "could not schedule heartbeat: ${it.javaClass.simpleName}") }
+  }
+}
+
+class HeartbeatWorker(context: Context, params: WorkerParameters) : Worker(context, params) {
+  override fun doWork(): Result {
+    // Wait (bounded) so the heartbeat is in the persistent queue before WorkManager lets the process go.
+    runCatching { ShieldRuntime.get(applicationContext).heartbeatNow(force = true).get(30, TimeUnit.SECONDS) }
     return Result.success()
   }
 }

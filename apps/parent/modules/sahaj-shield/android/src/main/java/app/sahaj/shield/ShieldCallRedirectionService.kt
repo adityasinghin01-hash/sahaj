@@ -26,7 +26,7 @@ class ShieldCallRedirectionService : CallRedirectionService() {
       val number = handle.schemeSpecificPart.orEmpty()
       val saved = Contacts.isSaved(this, number)
       // P9 also covers calls she dials to an unsaved number.
-      rt.calls.onOutgoingDialled(saved == true)
+      rt.calls.onOutgoingDialled(saved == true, rt.config.callerType(number, saved == true))
       // Telecom says when UI is not allowed (e.g. car mode): then we never pause.
       if (allowInteractiveResponsePresentation) {
         decision = rt.phase2.outgoing.onOutgoingCall(number, replace = { rt.replaceCall(number) })
