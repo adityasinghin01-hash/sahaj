@@ -224,9 +224,12 @@ export default function MaaProofScreen() {
 
   React.useEffect(() => {
     if (!livePaired) return;
-    void loadLive();
+    const initial = setTimeout(() => void loadLive(), 0);
     const id = setInterval(() => void loadLive(), POLL_MS);
-    return () => clearInterval(id);
+    return () => {
+      clearTimeout(initial);
+      clearInterval(id);
+    };
   }, [livePaired, loadLive]);
 
   React.useEffect(() => {
