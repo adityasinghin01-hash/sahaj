@@ -12,3 +12,5 @@ ios/
 !apps/parent/modules/**/android/
 .DS_Store
 coverage/
+*.tsbuildinfo
+next-env.d.ts

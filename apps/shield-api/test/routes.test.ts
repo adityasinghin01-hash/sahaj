@@ -768,7 +768,7 @@ describe("shield-api route handlers", () => {
     expect(JSON.parse(String(init.body))).toMatchObject({
       messaging_product: "whatsapp",
       recipient_type: "individual",
-      to: "919811112222",
+      to: "919000000002",
       type: "text",
     });
   });
