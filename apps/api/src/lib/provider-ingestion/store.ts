@@ -1,6 +1,6 @@
 import { serviceDatabase } from "../database";
 import { encryptWebhook, identityHash, payloadHash, WebhookError } from "../webhook-security";
-import type { ConsentRow, Identity, ProviderEvent, ProviderStore } from "./gateway";
+import type { ConsentRow, GatherStore, Identity, ProviderEvent, ProviderStore } from "./gateway";
 
 /** Supabase-backed store. Service role stays server-side; nothing here logs payloads or phone numbers. */
 export function providerStore(): ProviderStore {
@@ -52,6 +52,7 @@ export function providerStore(): ProviderStore {
       // person_id and consent/call IDs live inside the hashed, encrypted envelope as well as metadata, so a replay
       // after identity reassignment or consent change within one family conflicts instead of being accepted.
       const envelope: Record<string, unknown> = { ...event.payload, person_id: event.personId };
+      if (event.digit) envelope.digit = event.digit;
       if (event.callId) envelope.call_id = event.callId;
       if (event.consentId) envelope.consent_id = event.consentId;
       const body = Buffer.from(JSON.stringify(envelope));
@@ -59,6 +60,7 @@ export function providerStore(): ProviderStore {
       if (event.callId) metadata.call_id = event.callId;
       if (event.consentId) metadata.consent_id = event.consentId;
       if (event.review) metadata.review = event.review;
+      if (event.digit) metadata.digit = event.digit;
       const { error } = await db.rpc("ingest_raw_event", {
         p_source: event.source, p_provider_event_id: event.id, p_event_type: event.type, p_family_id: event.familyId,
         p_metadata: metadata,
@@ -69,6 +71,22 @@ export function providerStore(): ProviderStore {
         const conflict = error.code === "23505";
         throw new WebhookError(conflict ? "event_id_conflict" : "event_persistence_failed", conflict ? 409 : 503);
       }
+    },
+  };
+}
+
+/** Gather acceptance: durable proof first, then the guarded assignment update. Both SQL functions are idempotent. */
+export function gatherStore(db: { rpc(name: string, args: Record<string, unknown>): PromiseLike<{ data: unknown; error: { code?: string } | null }> } = serviceDatabase()): GatherStore {
+  return {
+    async acceptFromGather(familyId, gatherProviderEventId) {
+      const recorded = await db.rpc("record_responder_acceptance", { p_family_id: familyId, p_gather_provider_event_id: gatherProviderEventId });
+      // 42501: the call, assignment, responder or window could not be proven. Fail closed, no evidence written.
+      if (recorded.error) { if (recorded.error.code === "42501") return null; throw new WebhookError("acceptance_persistence_failed", 503); }
+      const d = recorded.data as { proof_event_id?: unknown; assignment_id?: unknown } | null;
+      if (!d || typeof d.proof_event_id !== "string" || typeof d.assignment_id !== "string") throw new WebhookError("acceptance_persistence_failed", 503);
+      const accepted = await db.rpc("accept_assignment_verified", { p_family_id: familyId, p_assignment_id: d.assignment_id, p_provider_event_id: d.proof_event_id });
+      if (accepted.error) throw new WebhookError("acceptance_persistence_failed", 503);
+      return accepted.data === true ? { proofEventId: d.proof_event_id, assignmentId: d.assignment_id } : null;
     },
   };
 }
