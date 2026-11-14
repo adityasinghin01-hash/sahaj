@@ -316,6 +316,11 @@ class SahajShieldModule : Module() {
       shield.worker.execute { promise.resolve(InstalledApps.scanNow(app)) }
     }
 
+    Function("playWarningLine") { line: Int, drillHandled: Boolean? ->
+      shield.alerts.playWarningLine(line, drillHandled, shield.calls.snapshot().callActive)
+    }
+    Function("stopWarningAudio") { shield.alerts.stopWarningAudio() }
+
     Function("testRedScreen") {
       val rt = shield
       rt.alerts.showRedScreen(

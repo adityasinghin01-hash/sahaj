@@ -58,6 +58,9 @@ export const shield = {
   openAutostart: () => safe(() => SahajShield.openAutostartSettings(), 'none'),
   setPairing: (p: ShieldPairing) => safeAsync(() => SahajShield.setPairing(p), false),
   testRedScreen: () => safe(() => SahajShield.testRedScreen(), false),
+  playWarningLine: (line: number, drillHandled: boolean | null = null) =>
+    safe(() => SahajShield.playWarningLine(line, drillHandled), undefined),
+  stopWarningAudio: () => safe(() => SahajShield.stopWarningAudio(), undefined),
   openUsageAccess: () => safe(() => SahajShield.openUsageAccessSettings(), 'none'),
   openNotificationAccess: () => safe(() => SahajShield.openNotificationAccessSettings(), 'none'),
   getLastCall: (): LastCall => safe(() => SahajShield.getLastCall(), { ended: false }),

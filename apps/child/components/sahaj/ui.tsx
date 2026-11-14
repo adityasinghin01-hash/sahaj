@@ -315,6 +315,7 @@ export function Btn({
   label,
   icon,
   onPress,
+  disabled = false,
   kind = 'primary',
   className,
   size = 'md',
@@ -322,6 +323,7 @@ export function Btn({
   label: string;
   icon?: LucideIcon;
   onPress?: () => void;
+  disabled?: boolean;
   kind?: 'primary' | 'dark' | 'soft' | 'ghost' | 'teal' | 'danger';
   className?: string;
   size?: 'md' | 'lg';
@@ -336,16 +338,30 @@ export function Btn({
   } as const;
   return (
     <Tap
-      onPress={onPress}
+      disabled={disabled}
+      accessibilityState={{ disabled }}
+      onPress={disabled ? undefined : onPress}
       haptic={kind === 'danger' ? 'medium' : 'light'}
       className={cn(
+        disabled && 'opacity-50',
         'flex-row items-center justify-center rounded-full px-5',
-        size === 'lg' ? 'h-14' : 'h-12',
+        size === 'lg' ? 'min-h-14 py-3' : 'min-h-12 py-2',
         kinds[kind][0],
         className
       )}>
-      {icon ? <Icon as={icon} size={18} className={cn('mr-2', kinds[kind][1])} /> : null}
-      <Text className={cn('font-jk-bold text-[15px] tracking-[-0.1px]', kinds[kind][1])}>
+      {icon ? (
+        <Icon
+          as={icon}
+          size={18}
+          className={cn(disabled && 'opacity-50', 'mr-2', kinds[kind][1])}
+        />
+      ) : null}
+      <Text
+        className={cn(
+          disabled && 'opacity-50',
+          'font-jk-bold text-[15px] tracking-[-0.1px]',
+          kinds[kind][1]
+        )}>
         {label}
       </Text>
     </Tap>

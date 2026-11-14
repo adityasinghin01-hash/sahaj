@@ -1,3 +1,5 @@
+import { Core2Gate } from '@/components/core2/common';
+import { LiveContacts } from '@/components/core2/contacts';
 import { Icon } from '@/components/ui/icon';
 import {
   Card,
@@ -17,7 +19,7 @@ import { router } from 'expo-router';
 import { ChevronRight, KeyRound, Plus, Settings2, UsersRound } from 'lucide-react-native';
 import { View } from 'react-native';
 
-export default function Circle() {
+function DemoCircle() {
   const demo = useDemo();
   const ordered = [...circle].sort(
     (a, b) => Number(b.id === demo.onDuty) - Number(a.id === demo.onDuty)
@@ -136,4 +138,8 @@ export default function Circle() {
       </View>
     </Screen>
   );
+}
+
+export default function Circle() {
+  return <Core2Gate title="contacts" demo={<DemoCircle />}><LiveContacts /></Core2Gate>;
 }

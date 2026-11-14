@@ -1,7 +1,6 @@
 // In-app red warning. Same look as the native overlay (AlertController.kt): danger red #C62828,
 // one big line, the reason in one line, [OK] (white, red text) and [Call Riya] (green).
 // Plays the bundled warning clip and vibrates. Opened by a RED onVerdict while the app is open.
-import { useAudioPlayer } from 'expo-audio';
 import { router, useLocalSearchParams } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import { Check, OctagonAlert, Phone } from 'lucide-react-native';
@@ -14,9 +13,8 @@ import { Icon } from '@/components/ui/icon';
 import { family, type Bi } from '@/lib/demo';
 import { useT } from '@/lib/prefs';
 import { useCall } from '@/lib/call';
+import { shield } from '@/lib/shield';
 
-// Placeholder clip: the same Hindi line the native overlay plays (res/raw/shield_warning_hi.wav).
-const CLIP = require('../../assets/audio/shield_warning_hi.wav');
 
 /** One plain reason per scam type, so English mode never shows a Hindi rule reason. */
 const REASONS: Partial<Record<string, Bi>> = {
@@ -39,24 +37,20 @@ export default function Warning() {
   const { t, pick, lang } = useT();
   const call = useCall();
   const params = useLocalSearchParams<{ scamType?: string; reason?: string; test?: string }>();
-  const player = useAudioPlayer(CLIP);
   const pulse = useSharedValue(0);
 
   React.useEffect(() => {
     // Real alerts already use the native controller, which waits for a call to end.
     // React owns audio only for the explicit Settings/setup preview.
     if (params.test !== '1') return;
-    try {
-      player.play();
-    } catch {
-      // audio unavailable: the screen and vibration still work
-    }
+    shield.playWarningLine(1);
     if (Platform.OS !== 'web') Vibration.vibrate([0, 700, 300, 700, 300, 700]);
     pulse.value = withRepeat(withTiming(1, { duration: 900, easing: Easing.inOut(Easing.sin) }), -1, true);
     return () => {
+      shield.stopWarningAudio();
       if (Platform.OS !== 'web') Vibration.cancel();
     };
-  }, [player, pulse, params.test]);
+  }, [pulse, params.test]);
 
   const icon = useAnimatedStyle(() => ({ transform: [{ scale: 1 + pulse.value * 0.08 }] }));
 
@@ -71,11 +65,7 @@ export default function Warning() {
         : t('warning_reason_default');
 
   const close = () => {
-    try {
-      player.pause();
-    } catch {
-      // already released
-    }
+    if (params.test === '1') shield.stopWarningAudio();
     if (router.canGoBack()) router.back();
     else router.replace('/');
   };

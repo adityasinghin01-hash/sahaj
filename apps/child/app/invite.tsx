@@ -1,7 +1,9 @@
+import { Core2Gate } from '@/components/core2/common';
+import { LiveInvite } from '@/components/core2/contacts';
 import { Btn, Card, Field, Notice, Pop, Screen, T, TopBar } from '@/components/sahaj/ui';
 import { circleSettings, updateDemo, useDemo } from '@/lib/demo';
 import * as React from 'react';
-export default function Invite() {
+function DemoInvite() {
   const demo = useDemo();
   const [name, setName] = React.useState(circleSettings.invite.name);
   const [role, setRole] = React.useState(circleSettings.invite.role);
@@ -53,4 +55,8 @@ export default function Invite() {
       </T>
     </Screen>
   );
+}
+
+export default function Invite() {
+  return <Core2Gate title="invite" demo={<DemoInvite />}><LiveInvite /></Core2Gate>;
 }

@@ -1,3 +1,5 @@
+import { Core2Gate } from '@/components/core2/common';
+import { LiveReassurance } from '@/components/core2/reassurance';
 import { Icon } from '@/components/ui/icon';
 import {
   Btn,
@@ -25,7 +27,7 @@ import Animated, {
   withTiming,
 } from 'react-native-reanimated';
 
-export default function Safe() {
+function DemoSafe() {
   const demo = useDemo();
   const [stage, setStage] = React.useState<'idle' | 'recording' | 'sending' | 'heard'>(
     demo.safeSent ? 'heard' : 'idle'
@@ -217,4 +219,8 @@ export default function Safe() {
       </T>
     </Screen>
   );
+}
+
+export default function Safe() {
+  return <Core2Gate title="safeTitle" demo={<DemoSafe />}><LiveReassurance /></Core2Gate>;
 }
