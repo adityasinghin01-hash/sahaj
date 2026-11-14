@@ -19,7 +19,7 @@ export interface CommandDeps {
   getMedicine(ctx: ToolContext, medicineId: string): Promise<MedicineRecord | null>;
   setMedicineCount(ctx: ToolContext, medicineId: string, count: number, key: string): Promise<void>;
   proposeRefill(ctx: ToolContext, medicineId: string, vendorId: string | undefined, key: string): Promise<void>;
-  responderCommand(tool: 'accept_incident' | 'decline_incident', ctx: ToolContext, input: ToolInput, key: string): Promise<void>;
+  responderCommand(tool: 'accept_incident' | 'decline_incident', ctx: ToolContext, input: ToolInput, key: string): Promise<ToolResult>;
   audit(tool: ToolName, ctx: ToolContext, key: string): Promise<void>;
   now(): Date;
 }
@@ -51,7 +51,7 @@ export function createCommandPorts(deps: CommandDeps): SarvamPorts {
             break;
           }
           case 'accept_incident':
-          case 'decline_incident': await deps.responderCommand(tool, ctx, input, key); result = { status: 'queued' }; break;
+          case 'decline_incident': result = await deps.responderCommand(tool, ctx, input, key); break;
         }
         await deps.audit(tool, ctx, key);
         return result;

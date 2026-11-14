@@ -131,4 +131,26 @@ describe('Core 1 Sarvam boundary', () => {
       expect(f.execute).not.toHaveBeenCalled();
     } finally { vi.useRealTimers(); }
   });
+  it('K-SARVAMCALL: responder decision needs no raw_event_id, reads saved ids from agent_variables, is keyed per call id', async () => {
+    const f = fixture();
+    f.execute.mockResolvedValue({ status: 'accepted' });
+    const body = { agent_variables: { family_id, parent_id, call_id: id, incident_id: id, assignment_id: id, responder_person_id: id, attempt_id: 'att-synth-1' },
+      input: { promise_minutes: 10 } };
+    const req = new Request('http://localhost/api/core1/sarvam/accept_incident', { method: 'POST', headers: {
+      'content-type': 'application/json', authorization: 'Bearer test-tool-secret' }, body: JSON.stringify(body) });
+    const response = await f.handle(req, 'accept_incident');
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({ result: { status: 'accepted' }, transfer: false });
+    expect(f.execute).toHaveBeenCalledWith('accept_incident', { familyId: family_id, parentId: parent_id },
+      { call_id: id, incident_id: id, assignment_id: id, responder_person_id: id, provider_call_ref: 'att-synth-1', promise_minutes: 10 },
+      `responder-decision:${id}`);
+  });
+  it('K-SARVAMCALL: a refused decision (foreign/expired call) transfers with the fixed line', async () => {
+    const f = fixture();
+    f.execute.mockRejectedValue(new Error('sarvam_decision_refused'));
+    const response = await f.handle(request({ family_id, parent_id, call_id: id, incident_id: id, assignment_id: id, responder_person_id: id }), 'decline_incident');
+    expect(await response.json()).toEqual({ line_hi: FALLBACK_LINE, result: { error: 'unavailable' }, transfer: true });
+    const bad = await f.handle(request({ family_id, parent_id, call_id: id, incident_id: id, assignment_id: id, responder_person_id: id, provider_call_ref: 'bad ref!' }), 'decline_incident');
+    expect(bad.status).toBe(400);
+  });
 });

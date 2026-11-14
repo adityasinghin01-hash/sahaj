@@ -4,8 +4,11 @@
  *   ("Riya ka sandesh aaya hai" or "<Sender> ka sandesh aaya hai") to tokens
  *   registered in `public.app_push_tokens`. Never includes phone numbers/OTPs.
  * - Keypad recipient (`people.device = 'keypad'`): creates a `calls` row +
- *   binds an outbox row + dispatches via Phase 2 `dispatchOutbound`
- *   (`twilio.create_call`) pointing to the consented AI-disclosed TwiML URL.
+ *   binds an outbox row + dispatches via Phase 2 `dispatchOutbound`.
+ *   CALL_PROVIDER=sarvam (default): `sarvam.outbound_call` with the CALLBACK agent, purpose=voice_message and
+ *   line/callback_line = "<Sender> ka sandesh: <masked AI transcript>" (or the fixed "awaaz bheji hai" line when no
+ *   transcript exists). Heard only from that call's Sarvam post-call event (connected, >= 10 s).
+ *   CALL_PROVIDER=twilio: `twilio.create_call` pointing to the consented AI-disclosed TwiML URL.
  */
 
 import { randomUUID } from 'node:crypto';
@@ -18,6 +21,16 @@ import type { DispatchStore } from '@/lib/provider-dispatch/types';
 import { enqueueAuthorizedSend, claimAuthorizedSend, claimAuthorizedPush, type SendClaim } from './authorized-send';
 import { createDispatchAuthorizer } from '../atlas-runtime/bridge';
 import { createSupabaseVoiceTimelinePort, type VoiceTimelinePort } from './voice-auth';
+import {
+  SARVAM_AI_INTRODUCTION,
+  buildSarvamAgentVariables,
+  callProvider,
+  createSarvamCallRuntime,
+  voiceNoteLine,
+  withSarvamAgentTransport,
+  type CallProvider,
+  type SarvamCallRuntime,
+} from './sarvam-calls';
 
 export interface VoiceNotifyInput {
   familyId: string;
@@ -25,6 +38,8 @@ export interface VoiceNotifyInput {
   senderId: string;
   recipientId: string;
   replyToId?: string | null;
+  /** AI transcript of the voice note, when one exists. Masked before it reaches the call. */
+  transcript?: string | null;
 }
 
 export interface PersonDeviceInfo {
@@ -42,6 +57,7 @@ export interface VoiceNotifyResult {
   providerRef?: string;
   pushCount?: number;
   reason?: string;
+  provider?: CallProvider;
 }
 
 export interface ExpoPushMessage {
@@ -54,7 +70,7 @@ export interface ExpoPushMessage {
 
 export interface VoiceNotifyRepo {
   getPerson: (familyId: string, personId: string) => Promise<PersonDeviceInfo | null>;
-  enqueueAuthorized: (input: VoiceNotifyInput) => Promise<{ id: string; duplicate: boolean }>;
+  enqueueAuthorized: (input: VoiceNotifyInput, callProvider?: CallProvider) => Promise<{ id: string; duplicate: boolean }>;
   claim: (familyId: string, outboxId: string) => Promise<SendClaim | null>;
   claimPush: (familyId: string, outboxId: string, lease: string) => Promise<string[] | null>;
   updateOutboxStatus: (outboxId: string, lease: string, status: 'completed' | 'failed' | 'delivery_unknown', lastErrorCode?: string | null) => Promise<void>;
@@ -71,6 +87,10 @@ export interface VoiceNotifyDeps {
     store: DispatchStore;
     deps: Omit<DispatchDeps, 'store'>;
   };
+  /** Keypad call provider. Omitted = 'twilio' (pre-K-SARVAMCALL behaviour). Production: CALL_PROVIDER, default sarvam. */
+  callProvider?: CallProvider;
+  /** Sarvam CALLBACK-agent runtime (null/undefined = not configured; the authorized row stays pending). */
+  sarvam?: SarvamCallRuntime | null;
   newId?: () => string;
 }
 
@@ -165,9 +185,10 @@ export function createSupabaseVoiceNotifyDeps(db: SupabaseClient): VoiceNotifyDe
         language: String(row.language ?? 'Hindi'),
       };
     },
-    async enqueueAuthorized(input) {
+    async enqueueAuthorized(input, provider) {
       return enqueueAuthorizedSend(db, encryptionKeyHex, { familyId: input.familyId, subjectId: input.senderId,
-        recipientId: input.recipientId, sourceId: input.voicePostId, kind: 'core1.voice_notify', dedupeKey: `voice_notify:${input.voicePostId}` });
+        recipientId: input.recipientId, sourceId: input.voicePostId, kind: 'core1.voice_notify', dedupeKey: `voice_notify:${input.voicePostId}`,
+        ...(provider === 'sarvam' ? { callProvider: 'sarvam' as const } : {}) });
     },
     claim: (familyId, outboxId) => claimAuthorizedSend(db, familyId, outboxId),
     claimPush: (familyId, outboxId, lease) => claimAuthorizedPush(db, familyId, outboxId, lease),
@@ -207,6 +228,8 @@ export function createSupabaseVoiceNotifyDeps(db: SupabaseClient): VoiceNotifyDe
     encryptionKeyHex,
     keypadBaseUrl: twilioEnv?.baseUrl,
     dispatch,
+    callProvider: callProvider(process.env),
+    sarvam: callProvider(process.env) === 'sarvam' ? createSarvamCallRuntime(db, process.env, 'CALLBACK') : null,
   };
 }
 
@@ -224,10 +247,16 @@ export async function notifyVoicePost(
   const channel: 'smartphone_push' | 'keypad_call' =
     recipient.device === 'smartphone' ? 'smartphone_push' : 'keypad_call';
 
-  const inserted = await deps.repo.enqueueAuthorized(input);
+  const provider: CallProvider = deps.callProvider ?? 'twilio';
+  const inserted = channel === 'keypad_call' && provider === 'sarvam'
+    ? await deps.repo.enqueueAuthorized(input, 'sarvam')
+    : await deps.repo.enqueueAuthorized(input);
   const outboxId = inserted.id;
   // Configuration gaps leave the authorized row pending without consuming a dispatch attempt.
-  if (channel === 'keypad_call' && (!deps.dispatch || !deps.keypadBaseUrl)) {
+  if (channel === 'keypad_call' && provider === 'sarvam' && !deps.sarvam) {
+    return { channel, outboxId, dispatched: false, reason: 'sarvam_not_configured', provider };
+  }
+  if (channel === 'keypad_call' && provider === 'twilio' && (!deps.dispatch || !deps.keypadBaseUrl)) {
     return { channel, outboxId, dispatched: false, reason: 'twilio_not_configured' };
   }
   if (channel === 'smartphone_push' && deps.pushEnabled === false) {
@@ -279,6 +308,8 @@ export async function notifyVoicePost(
     return { channel, outboxId, dispatched: false, pushCount: 0, reason };
   }
 
+  if (provider === 'sarvam') return dispatchSarvamVoiceNote(deps, input, senderName, outboxId, claim, newId);
+
   // The atomic enqueue already created and bound the recipient's scheduled call.
   if (!deps.dispatch || !deps.keypadBaseUrl || !claim.callId) throw new Error('voice_dispatch_binding_missing');
   const callId = claim.callId;
@@ -322,4 +353,61 @@ export async function notifyVoicePost(
 
   const reason = 'code' in outcome ? outcome.code : outcome.status;
   return { channel, outboxId, dispatched: false, reason };
+}
+
+/**
+ * Keypad voice note through the Sarvam CALLBACK agent. The agent reads `line` / `callback_line`: the masked AI transcript
+ * (said to be an AI-read transcript) or, with no transcript, the fixed "awaaz bheji hai" line. No family voice is imitated.
+ * Placing the call is not "heard": only the post-call event for this call (connected, >= 10 s) marks it heard.
+ */
+async function dispatchSarvamVoiceNote(
+  deps: VoiceNotifyDeps,
+  input: VoiceNotifyInput,
+  senderName: string,
+  outboxId: string,
+  claim: SendClaim,
+  newId: () => string,
+): Promise<VoiceNotifyResult> {
+  const sarvam = deps.sarvam;
+  if (!sarvam || !claim.callId) throw new Error('voice_dispatch_binding_missing');
+  const line = voiceNoteLine(senderName, input.transcript);
+  const variables = buildSarvamAgentVariables({
+    purpose: 'voice_message',
+    introduction: SARVAM_AI_INTRODUCTION,
+    callback_reason: 'voice_message',
+    line,
+    callback_line: line,
+    family_id: input.familyId,
+    parent_id: input.recipientId,
+    call_id: claim.callId,
+    voice_post_id: input.voicePostId,
+  });
+  const outcome = await dispatchOutbound(
+    { ...sarvam.deps, transport: withSarvamAgentTransport(sarvam.deps.transport, { agentId: sarvam.agentId, variables }) },
+    {
+      familyId: input.familyId,
+      personId: input.recipientId,
+      outboxId,
+      outboxLease: claim.lease,
+      attempt: claim.attempt,
+      callId: claim.callId,
+      payload: { action: 'sarvam.outbound_call', language: 'Hindi' },
+    },
+  );
+  if (outcome.status === 'dispatched') {
+    if (deps.timeline) {
+      await deps.timeline.append({
+        familyId: input.familyId,
+        eventId: newId(),
+        dedupeKey: `voice_notify_call:${input.voicePostId}`,
+        eventType: 'voice_post.notified',
+        entityId: input.voicePostId,
+        humanLine: 'Placed Sarvam keypad call to read the family voice message (AI-read; not yet heard).',
+        payload: { channel: 'keypad_call', provider: 'sarvam', callId: claim.callId, providerRef: outcome.providerRef },
+      });
+    }
+    return { channel: 'keypad_call', outboxId, dispatched: true, providerRef: outcome.providerRef, provider: 'sarvam' };
+  }
+  const reason = 'code' in outcome ? outcome.code : outcome.status;
+  return { channel: 'keypad_call', outboxId, dispatched: false, reason, provider: 'sarvam' };
 }

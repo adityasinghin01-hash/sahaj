@@ -84,8 +84,8 @@ An incomplete or uncertain mutation transfers on retry instead of repeating its 
 | `<PUBLIC_URL>/api/core1/sarvam/mark_private` | POST | `call_id: "@call_id"` | checkin, checkin_hearing |
 | `<PUBLIC_URL>/api/core1/sarvam/cancel_permission` | POST | `permission_id` (saved standing permission UUID), `confirmed: true` **only after read-back and spoken yes** | Madad |
 | `<PUBLIC_URL>/api/core1/sarvam/medicine_count` | POST | `medicine_id` (matched saved medicine UUID), `count` (absolute remaining tablets, integer 0–999), optional `vendor_id` (saved approved pharmacy UUID) | checkin, checkin_hearing |
-| `<PUBLIC_URL>/api/core1/sarvam/accept_incident` | POST | `call_id: "@call_id"`, `incident_id: "@incident_id"`, `assignment_id: "@assignment_id"`, `responder_person_id: "@responder_person_id"`, `raw_event_id: "@raw_event_id"` (verified normalized provider proof), `promise_minutes` (integer 1–180) | responder, **only when the host supplies verified proof** |
-| `<PUBLIC_URL>/api/core1/sarvam/decline_incident` | POST | Same saved IDs/proof as accept, without `promise_minutes` | responder, **only when the host supplies verified proof** |
+| `<PUBLIC_URL>/api/core1/sarvam/accept_incident` | POST | `family_id: "@family_id"`, `parent_id: "@parent_id"`, `call_id: "@call_id"`, `incident_id: "@incident_id"`, `assignment_id: "@assignment_id"`, `responder_person_id: "@responder_person_id"`, `promise_minutes` (integer 1–180, the minutes the responder said). Optional `provider_call_ref` (Sarvam's own call/attempt id, if the dashboard can send it). No `raw_event_id`: the server builds the proof. | responder (**enabled**) |
+| `<PUBLIC_URL>/api/core1/sarvam/decline_incident` | POST | Same fields as accept, without `promise_minutes` | responder (**enabled**) |
 | `<PUBLIC_URL>/api/core1/matcher/free-time-tool` (tool name `save_free_time`) | POST | `said` (what Maa said about when she is free, e.g. `shaam 6 ke baad free hoon`) | checkin, checkin_hearing |
 | `<PUBLIC_URL>/api/core2/any-phone/verify` (tool name `any_phone_verify`) | POST | `family_id: "@family_id"`, `said_name`, `said_code_word`, `status_kind` (`help` or `safe`), optional `call_ref: "@call_id"`. **No `parent_id`** (the route rejects unknown fields) and never a phone number. Speak `spoken_text`. | Madad |
 
@@ -99,7 +99,15 @@ Speak the returned **`line_hi` exactly**. Core 1 responses are `{ "line_hi": "..
 
 Consent writes use the existing purposes `check_in`, `call_recording`, and `call_transcript` for `call`, `record`, and `share`. `mark_private` appends an exact-call transcript refusal, which the existing post-call ingestion gate checks, and stores an encrypted private marker. It never copies private words to the timeline. There is no `v_shareable` view in this checkout; any future summary/report writer must honor this refusal. `CALL_CONSENT_VERSION` must match ingestion, and writes need database/encryption/timeline signing configuration.
 
-The urgent tools import the existing Core 1 `urgent_help` command; at baseline it only queues the command, so the urgent-help lane must finish its execution/persistence wiring before live use. A queued command does **not** prove that a responder has accepted. Responder Core 2 HTTP routes already exist, but no bare Sarvam spoken "haan" can serve as normalized acceptance proof. Keep the responder tools disabled until the host supplies proof for the saved call/assignment; absent or mismatched proof transfers to Riya.
+The urgent tools import the existing Core 1 `urgent_help` command; a queued command does **not** prove that a responder has accepted.
+
+**Responder accept/decline (enabled, K-SARVAMCALL).** All urgent-help responder calls are now Sarvam outbound calls placed by `apps/api` with the responder agent. When the server places the call it saves our call (`calls` row) and, once Sarvam answers the request, Sarvam's attempt id on that row and in the dispatch ledger. The call is bound to exactly one family, incident, assignment and responder. The spoken "haan" is never trusted on its own: `accept_incident` succeeds only if `@call_id` is a call **we** placed through Sarvam for exactly that `@assignment_id` and `@responder_person_id`, and the assignment is still offered. The server then writes the normalized proof itself and runs the normal accept (signed timeline line, push to Riya). `decline_incident` with the same checks offers the next circle member (or alerts Riya when nobody is left).
+
+- One decision per call id. A retry of the same decision returns the same result and sends nothing twice. The other decision after that is refused.
+- If the body has no `Idempotency-Key`, the server uses `responder-decision:<call_id>`.
+- The ids may also come in `variables` / `agent_variables` / `context` (same as `family_id`). If you send `provider_call_ref` (alias `sarvam_call_id` or `attempt_id`), it must equal the attempt id Sarvam returned for that call.
+- A wrong, foreign or expired call id, a call for another assignment, or a second different decision answers `{ "line_hi": "Maaf kijiye, main aapko abhi Riya se jod rahi hoon.", "result": { "error": "unavailable" }, "transfer": true }`. Speak it and `call_transfer` to `@bridge_to`.
+- Replies on success: accept → `result.status = "accepted"`, `line_hi` "Shukriya, aapka jawab Riya ko bhej diya hai."; decline → `result.status = "offered"` (next person) or `"escalated"` (nobody left; "Koi baat nahi. Main Riya ko bata rahi hoon.").
 
 ### Per-agent tool table (paste exactly these; nothing else)
 
@@ -110,7 +118,7 @@ Each prompt file's "Tools" table lists the same set with one line on when to cal
 | Madad (inbound keypad helper) | `madad.md` | `classify_scam`, `check_message`, `family_check`, `family_check_result`, `check_code_word`, `money_sent` | `raise_urgent`, `check_status`, `leave_message`, `cancel_permission`, `child_status` (speaks the `/api/core2/truth-line` status), `child_scam_check`, `any_phone_verify` |
 | Daily check-in | `checkin.md` (+ `drill_checkin.md` section 3) | `classify_scam`, `drill_answer` | `record_consent`, `reschedule`, `mark_private`, `medicine_count`, `save_free_time`, `raise_urgent` |
 | Daily check-in, hearing mode | `checkin_hearing.md` | `classify_scam` | `record_consent`, `reschedule`, `mark_private`, `medicine_count`, `save_free_time`, `raise_urgent` |
-| Responder | `responder.md` | none | `accept_incident`, `decline_incident` (only when the host supplies verified proof) |
+| Responder | `responder.md` | none | `accept_incident`, `decline_incident` (enabled; the server proves the call) |
 | Callback | `callback.md` | `classify_scam`, `money_sent` | `raise_urgent` |
 | Experience drill | `experience_drill.md` | `experience_turn` | none |
 | Call gateway screener | `call_gateway.md` | `call_screen` | none |
@@ -157,10 +165,15 @@ Each prompt file's "Tools" table lists the same set with one line on when to cal
 ## 4. Agent: responder (outbound, calls a circle member)
 
 - **Prompt file:** `packages/shared/prompts/sarvam/responder.md`.
+- **Urgent help (Core 1, `apps/api`, purpose `urgent_help`).** When Maa (or Riya for her) asks for help, `apps/api` calls the top consented circle member with this agent. `agent_variables` sent:
+  - `purpose` = `urgent_help`, `introduction` = `Main Sahaj ki AI sahayak hoon.`
+  - `responder_name` (e.g. `Rohit`), `subject_name` (Maa's address form, e.g. `Meena ji`), `incident_summary` (short and masked, e.g. `Meena ji ne Sahaj se turant madad maangi hai.`), `address_line` = `""`, `is_danger` = `"yes"` (critical) / `"no"`, `bridge_to` (the transfer label from section 3, may be empty).
+  - Saved ids for the tools: `family_id`, `parent_id` (Maa), `incident_id`, `assignment_id`, `responder_person_id` (also `person_id`), `call_id` (our call id). Pass them unchanged into `accept_incident` / `decline_incident`.
+  - No answer / offer timeout: the server offers the next circle member with a new call (unchanged logic).
 - **Variables the Shield server sends:** `purpose` = `responder`, `introduction`, `family_id`, `parent_id` (Maa, not the responder), `person_id` (responder), `responder_name`, `subject_name`, `incident_summary`, `address_line`, `incident_id`, `check_id`, `is_danger`, `bridge_to`, and the same AI first-message override as the check-in.
 - Names come from the saved family-check/recipient binding. The short summary asks for confirmation of a call made in the responder's name; it contains no numbers or OTPs. The check UUID is `incident_id` / `check_id`; it is not a Core 1 incident or acceptance proof. `address_line` is empty: this workflow has no consent-backed address source. `is_danger` is `"no"` for a family check. `bridge_to` is the configured transfer label from section 3.
 - **Dashboard prompt adjustment:** C-17 sends `is_danger` as `"yes"` / `"no"`. In the pasted responder prompt, change the condition `@is_danger "true"` to `@is_danger "yes"` (and use `"yes"` in danger test cases).
-- **Shield tools:** none. `accept_incident` / `decline_incident` URLs and their required verified-proof fields are listed under Core 1 tools. Keep them disabled until that proof binding is supplied by the host.
+- **Shield tools:** none. **Core 1 tools:** `accept_incident`, `decline_incident` (URLs and exact body fields under Core 1 tools). Enabled: the server proves the call; the agent only passes the saved ids and the minutes.
 - **Post-call webhook:** set automatically per call by the server (same URL as above).
 - **Send back:** agent id → `SARVAM_AGENT_ID_RESPONDER`.
 
@@ -170,8 +183,17 @@ Each prompt file's "Tools" table lists the same set with one line on when to cal
 - **Variables the Shield server sends:** `purpose` = `callback`, `introduction`, `family_id`, `parent_id`, and both `line` and `callback_line`: the exact Hindi result line to say (already masked, e.g. "Ye Rohit nahi the. Paise mat bhejiye.").
   - The prompt's `@callback_line` matches the variable now sent; `@line` remains available for older prompts.
   - `callback_reason` is `family_check_answer` for Shield result callbacks; `check_id` is sent by the scheduled family-check workflow. If a caller supplies a known missed-call count, the port sends `callback_reason: "missed_call"` and `missed_count` as a string. Unknown counts/ids are omitted rather than invented. Core 1 currently sends missed-call push nudges, not Sarvam callback calls.
+- **Keypad voice note, gentle news and care notices (`apps/api`, K-SARVAMCALL).** These calls to Maa's keypad now use this agent too. `agent_variables` sent:
+  - `purpose` = `voice_message` (voice note from Riya), `gentle_news` (calm news call), or `care_notice` (other family notices). `callback_reason` = `voice_message`, `gentle_news_maa_call` or the notice kind.
+  - `line` and `callback_line` = the exact line to say:
+    - voice note with a transcript: `Riya ka sandesh: <masked AI transcript> — ye AI ka likha transcript hai, Riya ki apni awaaz nahi.`
+    - voice note without a transcript (today's normal case): `Riya ne aapke liye awaaz bheji hai — app ya missed call par sunein`
+    - gentle news: the calm line (`Namaste Maa, main Sahaj AI sahayak Aasha Didi bol rahi hoon. ...`).
+  - `introduction`, `family_id`, `parent_id` (Maa), `call_id`, and `voice_post_id` / `incident_id` when they apply.
+  - The agent reads `@callback_line` once, then may answer questions. It never plays or imitates a family voice.
+  - **Heard proof:** a voice note counts as heard only from Sarvam's post-call event for that same call, with the call connected and at least 10 seconds long. No event, or a shorter call, means not heard.
 - **Shield tools:** `classify_scam`, `money_sent`. **Core 1 tool:** `raise_urgent` using its URL above.
-- **Post-call webhook:** set automatically per call by the server.
+- **Post-call webhook:** set automatically per call by the server. For calls placed by `apps/api` it is `<PUBLIC_URL>/api/sarvam/post-call/<SARVAM_HOOK_SECRET>` (env `SARVAM_OUTBOUND_WEBHOOK_URL`; the lab derives it from the tunnel URL).
 - **Send back:** agent id → `SARVAM_AGENT_ID_CALLBACK`.
 
 ## 6. Agent: experience drill (outbound practice scam call, opt-in)
@@ -212,7 +234,7 @@ Also useful: the inbound Madad agent id and number, the experience-drill agent i
 
 The lead then:
 
-1. Puts them in the env file with `SARVAM_WEBHOOK_URL=<PUBLIC_URL>/api/sarvam/webhook/<SARVAM_WEBHOOK_SECRET>` and `SARVAM_OUTBOUND_ENABLED=1`.
+1. Puts them in the env file with `SARVAM_WEBHOOK_URL=<PUBLIC_URL>/api/sarvam/webhook/<SARVAM_WEBHOOK_SECRET>` and `SARVAM_OUTBOUND_ENABLED=1`. `apps/api` also uses `CALL_PROVIDER=sarvam` (default; the lab sets it and drops `TWILIO_*` from apps/api) and `SARVAM_OUTBOUND_WEBHOOK_URL=<PUBLIC_URL>/api/sarvam/post-call/<SARVAM_HOOK_SECRET>` (the lab derives it from `SARVAM_WEBHOOK_URL`).
 2. Runs `node scripts/lab/sarvam-check.mjs`. This is a dry run that prints names, formats and the masked request only, and calls nobody.
 3. Only when everything shows ✓, places one test call to the team's own keypad phone with `node scripts/lab/sarvam-check.mjs --call-keypad`.
 
@@ -232,5 +254,5 @@ Remaining dashboard/host work:
 - Map the on-start response into the inbound agent variables; keep all tool calls scoped to the returned family/Maa ids. Caller-number lookup requires a previously registered active parent contact in the configured Sarvam account. A borrowed unknown phone is not authenticated by this hook.
 - Configure static family call forwarding and the optional `bridge_to` label (section 3). No address is disclosed without a consent-backed address source; none exists in the family-check workflow today.
 - Change the pasted responder danger condition to `"yes"` as described in section 4. The source prompt still documents `true` / `false`.
-- Core 1 urgent responder calls in `apps/api` use Twilio, not Sarvam. Their verified acceptance path is unchanged. Core 1 tools stay on `/api/core1/sarvam/*`; `accept_incident` / `decline_incident` still require saved call/assignment ids and normalized proof. A Shield check id or a spoken "haan" is not that proof.
+- Since K-SARVAMCALL every `apps/api` outbound call (urgent responder, keypad voice note, keypad care notice, gentle-news call) goes through Sarvam. `CALL_PROVIDER=sarvam` is the default; `CALL_PROVIDER=twilio` brings back the old Twilio TwiML path for a paid account (the free Twilio trial cannot run our TwiML). `accept_incident` / `decline_incident` are enabled and need only the saved ids the server sent; a Shield check id or a spoken "haan" is still not proof.
 - Other daily-check-in variables (`drill_story`, `drill_praise`, medicines, and workflow-specific context) still depend on the caller or the existing check-in-vars route. Do not infer verified identity or proof from empty dashboard defaults.

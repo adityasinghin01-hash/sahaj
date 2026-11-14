@@ -192,9 +192,15 @@ describe('production integrations without provider calls', () => {
     expect(work).not.toHaveBeenCalled();
   });
   it('requires normalized, call-bound evidence before responder acceptance', async () => {
-    const { deps, query } = fixture(); query.mockResolvedValue([]);
-    await expect(deps.responderCommand('accept_incident', ctx, { call_id: id, incident_id: id, assignment_id: id, responder_person_id: id, raw_event_id: id, promise_minutes: 4 }, 'turn-accept')).rejects.toThrow();
+    // K-SARVAMCALL: the decision goes to the urgent-help service, whose SQL refuses a call we did not place for this assignment.
+    const recordSarvamResponderDecision = vi.fn().mockRejectedValue(new Error('sarvam_decision_refused'));
+    const getIncident = vi.fn().mockResolvedValue({ id, familyId: ctx.familyId, subjectPersonId: ctx.parentId, state: 'offered', severity: 'urgent', ownerPersonId: null, promisedAt: null, createdAt: now().toISOString() });
+    const urgent = { store: { recordSarvamResponderDecision, getIncident } } as unknown as NonNullable<ProductionOverrides['urgent']>;
+    const { query, sql, db } = fixture();
+    const deps = createProductionSarvamDeps(env, { db, sql, now, urgent } as unknown as ProductionOverrides);
+    query.mockResolvedValue([]);
+    await expect(deps.responderCommand('accept_incident', ctx, { call_id: id, incident_id: id, assignment_id: id, responder_person_id: id, promise_minutes: 4 }, 'turn-accept')).rejects.toThrow('sarvam_decision_refused');
+    expect(recordSarvamResponderDecision).toHaveBeenCalledWith({ familyId: ctx.familyId, callId: id, incidentId: id, assignmentId: id, responderPersonId: id, decision: 'accept' });
     expect(executeCore1Command).not.toHaveBeenCalled();
-    expect(query.mock.calls[0][0]).toContain('e.normalized_proof');
   });
 });

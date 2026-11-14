@@ -22,6 +22,7 @@ import {
   type TimelineEnvelope,
 } from "@/lib/timeline";
 import { verifyTwilioFormSignature } from "@sahaj/adapters";
+import { callProvider } from "../core1/sarvam-calls";
 import {
   BADGE_UNCONFIRMED_HI,
   formatHeardBadge,
@@ -110,7 +111,9 @@ async function authorizeAndEnqueueOutbox(
     payload: Record<string, unknown>;
   },
 ): Promise<{ decision: "allow" | "ask" | "deny"; outboxId: string | null }> {
-  if (deps.core2.dispatch.authorizeAndSend && input.outboxKind === 'gentle_news.circle_offer') return deps.core2.dispatch.authorizeAndSend(input);
+  if (deps.core2.dispatch.authorizeAndSend && (input.outboxKind === 'gentle_news.circle_offer' || input.outboxKind === 'gentle_news.maa_call')) {
+    return deps.core2.dispatch.authorizeAndSend(input);
+  }
   const nowIso = nowOf(deps).toISOString();
   const gateInput = await deps.core2.repo.loadGateInput({
     familyId: input.familyId,
@@ -267,7 +270,23 @@ async function queueCalmMaaOutboundCall(
   const companionName = await resolveDisplayName(deps, row.family_id, row.circle_person_id);
 
   // Never include phone numbers or graphic details; AI must disclose its identity cleanly.
-  const dispatch = await authorizeAndEnqueueOutbox(deps, {
+  const calmLine = toShortCalmVersion(
+    `Namaste Maa, main Sahaj AI sahayak Aasha Didi bol rahi hoon. ${row.calm_summary}`,
+    260,
+  );
+  // K-SARVAMCALL: with CALL_PROVIDER=sarvam (default) and the durable care-send path available, the calm call is a real
+  // authorized keypad call through the Sarvam CALLBACK agent (line = the calm line). Otherwise the previous outbox stays.
+  const dispatch = callProvider(process.env) === 'sarvam' && deps.core2.dispatch.authorizeAndSend
+    ? await authorizeAndEnqueueOutbox(deps, {
+      familyId: row.family_id,
+      actorPersonId: row.marked_by_person_id,
+      action: "send_alert",
+      targetPersonId: row.parent_person_id,
+      outboxKind: "gentle_news.maa_call",
+      dedupeKey: `gentle_news:maa_call:${row.incident_id}`,
+      payload: { incident_id: row.incident_id, status_label: calmLine },
+    })
+    : await authorizeAndEnqueueOutbox(deps, {
     familyId: row.family_id,
     actorPersonId: row.marked_by_person_id,
     action: "check_in",
@@ -289,10 +308,7 @@ async function queueCalmMaaOutboundCall(
       voice_post_id: row.voice_post_id,
       ai_disclosed: true,
       ai_cloned_voice_used: false,
-      calm_script_hi: toShortCalmVersion(
-        `Namaste Maa, main Sahaj AI sahayak Aasha Didi bol rahi hoon. ${row.calm_summary}`,
-        260,
-      ),
+      calm_script_hi: calmLine,
     },
   });
 

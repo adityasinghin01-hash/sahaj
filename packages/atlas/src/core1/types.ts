@@ -230,8 +230,9 @@ export interface ResponderAcceptanceProof {
   accountId: string;
   dispatchKey?: string;
   normalizedProof: true;
-  verifiedBy: 'twilio_signature';
-  source: 'twilio';
+  /** Twilio: signed Gather press. Sarvam (K-SARVAMCALL): tool decision bound in SQL to a call we dispatched for this assignment. */
+  verifiedBy: 'twilio_signature' | 'sarvam_call_binding';
+  source: 'twilio' | 'sarvam';
 }
 
 export interface ResponderOfferIntent {

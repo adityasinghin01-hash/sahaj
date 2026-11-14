@@ -4,11 +4,14 @@
  * Flow:
  * 1. POST /api/core1/urgent-help or POST /api/core1/maa/urgent creates an incident and offers
  *    it to the top-ranked eligible circle member (consent_at != null, revoked_at == null, never subject).
- * 2. Places an outbound Twilio call through Phase 2 dispatchOutbound + createContactResolver
- *    pointing to GET/POST /api/core1/urgent-help/twilio/twiml (AI disclosure + DTMF Gather:
- *    "1 dabaiye — main ja raha hoon, 2 — nahi ja sakta").
- * 3. Press 1 -> Phase 2 /api/twilio/gather -> record_responder_acceptance + accept_assignment_verified ->
- *    trigger updates incidents.state = 'accepted', owner_person_id, promised_at (~4 min default).
+ * 2. Places an outbound call through Phase 2 dispatchOutbound. CALL_PROVIDER=sarvam (default): the Sarvam RESPONDER agent
+ *    (SARVAM_AGENT_ID_RESPONDER) with agent_variables purpose=urgent_help, names, masked summary and the saved
+ *    incident/assignment/responder/call ids. CALL_PROVIDER=twilio: the Twilio TwiML path
+ *    (GET/POST /api/core1/urgent-help/twilio/twiml, AI disclosure + DTMF Gather "1 dabaiye ...").
+ * 3. Sarvam: the agent's accept_incident / decline_incident tool -> record_sarvam_responder_decision (the call must be one
+ *    WE dispatched for exactly this assignment + responder, still offered) -> normalized proof -> the same
+ *    accept_responder_assignment_verified path. Twilio: press 1 -> /api/twilio/gather -> record_responder_acceptance.
+ *    Either way the trigger updates incidents.state = 'accepted', owner_person_id, promised_at.
  * 4. Press 2 / decline / call no-answer/busy / offer timeout (scaled by DEMO_TIMER_SCALE) ->
  *    advance_urgent_incident_offer marks declined/expired and offers next eligible ranked circle member,
  *    or escalates the incident when the circle is exhausted.
@@ -36,6 +39,16 @@ import {
   type DispatchOutcome,
 } from '../provider-dispatch';
 import { createContactResolver } from '../provider-dispatch/contacts';
+import {
+  SARVAM_AI_INTRODUCTION,
+  buildSarvamAgentVariables,
+  callProvider,
+  createSarvamCallRuntime,
+  sarvamBridgeLabel,
+  withSarvamAgentTransport,
+  type CallProvider,
+} from './sarvam-calls';
+import { formatParentAddressForm } from './check-in-service';
 import { dispatchStore } from '../provider-dispatch/supabase-store';
 import { encryptWebhook } from '../webhook-security';
 import { canonicalJson } from '../timeline';
@@ -209,7 +222,22 @@ export interface UrgentHelpStore {
     dedupeKey: string;
     payloadCiphertext: string;
     payloadHash: string;
+    /** Call provider bound into the outbox/calls row. Omitted = 'twilio' (the SQL default). */
+    provider?: CallProvider;
   }): Promise<PrepareUrgentDispatchResult>;
+  /**
+   * Sarvam responder tool decision (record_sarvam_responder_decision). Throws when the call is not one we dispatched for
+   * exactly this incident/assignment/responder, or the assignment is no longer offered.
+   */
+  recordSarvamResponderDecision?(params: {
+    familyId: string;
+    callId: string;
+    incidentId: string;
+    assignmentId: string;
+    responderPersonId: string;
+    decision: 'accept' | 'decline';
+    providerCallRef?: string;
+  }): Promise<{ proofEventId?: string; eventId: string; assignmentId: string; replayed: boolean }>;
   claimOutboxForDirectDispatch(outboxId: string, workerId: string): Promise<{ leaseToken: string; attempt: number } | null>;
   finishOutboxDispatch(outboxId: string, leaseToken: string, success: boolean, errorCode?: string | null): Promise<void>;
   advanceUrgentOffer(params: {
@@ -280,8 +308,16 @@ export interface UrgentHelpStore {
 
 export interface UrgentDispatchRuntime {
   deps: DispatchDeps;
+  /** Omitted = 'twilio' (existing runtime shape). */
+  provider?: CallProvider;
+  /** Twilio only. */
   twimlUrl: string;
+  /** Twilio only. */
   gatherCallbackUrl: string;
+  /** Sarvam only: the RESPONDER agent placed for the call. */
+  sarvamAgentId?: string;
+  /** Sarvam only: nonnumeric transfer label for @bridge_to. */
+  bridgeLabel?: string;
   dispatchFn?: typeof dispatchOutbound;
 }
 
@@ -290,6 +326,8 @@ export interface UrgentHelpServiceDeps {
   store: UrgentHelpStore;
   timeline: Core1TimelinePort;
   dispatch?: UrgentDispatchRuntime | null;
+  /** Provider bound into new responder offers even when its runtime is not configured. Default: dispatch.provider ?? 'twilio'. */
+  callProvider?: CallProvider;
   pushFetch?: PushFetch;
   encryptionKeyHex?: string;
   now?: () => Date;
@@ -342,7 +380,19 @@ async function notifyRiyaPush(
   });
 }
 
-async function dispatchTwilioForOffer(
+function offerProvider(deps: UrgentHelpServiceDeps): CallProvider {
+  return deps.callProvider ?? deps.dispatch?.provider ?? 'twilio';
+}
+
+/** Short, masked card for the responder agent. Never a number, OTP, address or medical detail. */
+export function urgentIncidentSummary(subjectAddress: string, severity: 'routine' | 'urgent' | 'critical'): string {
+  const who = sanitizeNoDigitsRun(subjectAddress, 40);
+  return severity === 'critical'
+    ? `${who} ne Sahaj se turant madad maangi hai.`
+    : `${who} ne Sahaj se madad maangi hai.`;
+}
+
+async function dispatchResponderCallForOffer(
   deps: UrgentHelpServiceDeps,
   params: {
     familyId: string;
@@ -379,6 +429,7 @@ async function dispatchTwilioForOffer(
     `outbox:${params.familyId}:${dedupeKey}`,
   );
 
+  const provider = offerProvider(deps);
   const prepared = await deps.store.prepareUrgentResponderDispatch({
     familyId: params.familyId,
     incidentId: params.incidentId,
@@ -388,14 +439,19 @@ async function dispatchTwilioForOffer(
     dedupeKey,
     payloadCiphertext,
     payloadHash,
+    ...(provider === 'sarvam' ? { provider } : {}),
   });
 
   if (prepared.status === 'denied' || !prepared.outboxId) {
     return { prepared, callSkippedReason: prepared.reason ?? 'prepare_denied' };
   }
 
-  if (!deps.dispatch || !deps.dispatch.deps.providers.twilio) {
-    return { prepared, callSkippedReason: 'twilio_not_configured' };
+  const runtimeProvider = deps.dispatch?.provider ?? 'twilio';
+  if (!deps.dispatch || runtimeProvider !== provider || !deps.dispatch.deps.providers[provider]) {
+    return { prepared, callSkippedReason: `${provider}_not_configured` };
+  }
+  if (provider === 'sarvam' && !prepared.callId) {
+    return { prepared, callSkippedReason: 'call_binding_missing' };
   }
 
   const workerId = `urgent-worker-${randomUUID().slice(0, 8)}`;
@@ -405,19 +461,64 @@ async function dispatchTwilioForOffer(
   }
 
   const dispatchFn = deps.dispatch.dispatchFn ?? dispatchOutbound;
-  const outcome = await dispatchFn(deps.dispatch.deps, {
-    familyId: params.familyId,
-    personId: params.responderPersonId,
-    outboxId: prepared.outboxId,
-    outboxLease: claimed.leaseToken,
-    attempt: claimed.attempt,
-    callId: prepared.callId,
-    aiDisclosureAttested: true,
-    payload: {
-      action: 'twilio.create_call',
-      twimlUrl: deps.dispatch.twimlUrl,
-    },
-  });
+  let outcome: DispatchOutcome;
+  if (provider === 'sarvam') {
+    const [subjectName, responderName] = await Promise.all([
+      deps.store.getPersonDisplayName(params.familyId, params.subjectPersonId),
+      deps.store.getPersonDisplayName(params.familyId, params.responderPersonId),
+    ]);
+    const subjectAddress = formatParentAddressForm(subjectName);
+    const variables = buildSarvamAgentVariables({
+      purpose: 'urgent_help',
+      introduction: SARVAM_AI_INTRODUCTION,
+      responder_name: responderName,
+      subject_name: subjectAddress,
+      incident_summary: urgentIncidentSummary(subjectAddress, params.severity),
+      address_line: '',
+      is_danger: params.severity === 'critical' ? 'yes' : 'no',
+      bridge_to: deps.dispatch.bridgeLabel ?? '',
+      family_id: params.familyId,
+      parent_id: params.subjectPersonId,
+      incident_id: params.incidentId,
+      assignment_id: params.assignmentId,
+      responder_person_id: params.responderPersonId,
+      person_id: params.responderPersonId,
+      call_id: prepared.callId,
+    });
+    outcome = await dispatchFn(
+      {
+        ...deps.dispatch.deps,
+        transport: withSarvamAgentTransport(deps.dispatch.deps.transport, { agentId: deps.dispatch.sarvamAgentId, variables }),
+      },
+      {
+        familyId: params.familyId,
+        personId: params.responderPersonId,
+        outboxId: prepared.outboxId,
+        outboxLease: claimed.leaseToken,
+        attempt: claimed.attempt,
+        callId: prepared.callId,
+        payload: {
+          action: 'sarvam.outbound_call',
+          language: 'Hindi',
+          openingMessage: `Namaste ${sanitizeNoDigitsRun(responderName, 60)}. ${subjectAddress} ke liye ek zaroori madad chahiye.`,
+        },
+      },
+    );
+  } else {
+    outcome = await dispatchFn(deps.dispatch.deps, {
+      familyId: params.familyId,
+      personId: params.responderPersonId,
+      outboxId: prepared.outboxId,
+      outboxLease: claimed.leaseToken,
+      attempt: claimed.attempt,
+      callId: prepared.callId,
+      aiDisclosureAttested: true,
+      payload: {
+        action: 'twilio.create_call',
+        twimlUrl: deps.dispatch.twimlUrl,
+      },
+    });
+  }
 
   if (outcome.status === 'dispatched') {
     await deps.store.finishOutboxDispatch(prepared.outboxId, claimed.leaseToken, true, null);
@@ -507,7 +608,7 @@ export async function dispatchUrgentCallAndPushForIncident(
     occurredAt: now.toISOString(),
   });
 
-  const dispatchRes = await dispatchTwilioForOffer(deps, {
+  const dispatchRes = await dispatchResponderCallForOffer(deps, {
     familyId: params.familyId,
     incidentId: params.incidentId,
     assignmentId: params.assignmentId,
@@ -522,12 +623,14 @@ export async function dispatchUrgentCallAndPushForIncident(
       eventType: 'urgent.responder_called',
       entityId: params.incidentId,
       dedupeKey: `urgent_call:${params.incidentId}:${params.assignmentId}`,
-      humanLine: sanitizeNoDigitsRun(`Placed Twilio urgent responder call to ${responderName}.`),
+      humanLine: sanitizeNoDigitsRun(`Placed ${offerProvider(deps) === 'sarvam' ? 'Sarvam' : 'Twilio'} urgent responder call to ${responderName}.`),
       payload: {
         incidentId: params.incidentId,
         assignmentId: params.assignmentId,
         responderPersonId: params.responderPersonId,
         outboxId: dispatchRes.prepared.outboxId,
+        callId: dispatchRes.prepared.callId ?? null,
+        provider: offerProvider(deps),
         providerRef: dispatchRes.outcome.providerRef,
       },
       occurredAt: getNow(deps).toISOString(),
@@ -657,6 +760,190 @@ export async function advanceAndDispatchNextResponder(
     callOutcome: nextDispatch.callOutcome,
     pushResult: nextDispatch.pushResult,
   };
+}
+
+/**
+ * Verified acceptance shared by POST /api/core1/urgent-help (accept) and the Sarvam responder tool: load the normalized
+ * proof, check it with the Atlas domain rule, persist through accept_responder_assignment_verified, then the signed
+ * timeline line and Riya's push.
+ */
+async function acceptAssignmentWithProof(
+  deps: UrgentHelpServiceDeps,
+  params: {
+    familyId: string;
+    incident: UrgentIncidentRow;
+    assignment: UrgentAssignmentRow;
+    rawEventId: string;
+    promiseMinutes: number;
+    now: Date;
+  },
+): Promise<{ updated: UrgentIncidentRow; calmLine: string; pushResult: { sent: boolean; tokenCount: number; reason?: string } }> {
+  const { incident, assignment, now } = params;
+  const proof = await deps.store.loadAcceptanceProof(params.familyId, params.rawEventId);
+  if (!proof) {
+    throw new Core1CommandError('invalid_acceptance_proof', 403);
+  }
+
+  const circle = await deps.store.listCircleMembers(params.familyId);
+  const domainRes = handleResponderResponse({
+    incident: {
+      id: incident.id,
+      familyId: incident.familyId,
+      personId: incident.subjectPersonId,
+      state: incident.state,
+      severity: incident.severity,
+      ownerPersonId: incident.ownerPersonId ?? undefined,
+      promisedAt: incident.promisedAt ?? undefined,
+      createdAt: incident.createdAt,
+    },
+    currentAssignment: {
+      id: assignment.id,
+      familyId: assignment.familyId,
+      incidentId: assignment.incidentId,
+      personId: assignment.personId,
+      status: assignment.status,
+      offeredAt: assignment.offeredAt,
+      expiresAt: assignment.expiresAt,
+    },
+    circle: circle.map((c) => ({
+      personId: c.personId,
+      rank: c.rank,
+      active: c.active,
+      consentAt: c.consentAt ?? undefined,
+      revokedAt: c.revokedAt ?? undefined,
+    })),
+    response: {
+      responderPersonId: assignment.personId,
+      responseType: 'accept',
+      acceptanceProof: proof,
+      promiseMinutes: params.promiseMinutes,
+    },
+    clock: clockAt(now),
+  });
+
+  if (domainRes.transitionStatus !== 'success') {
+    throw new Core1CommandError(domainRes.transitionStatus, 409);
+  }
+
+  const updated = await deps.store.acceptAssignmentVerified({
+    familyId: params.familyId,
+    incidentId: incident.id,
+    assignmentId: assignment.id,
+    responderPersonId: assignment.personId,
+    rawEventId: params.rawEventId,
+    promiseMinutes: params.promiseMinutes,
+  });
+  if (!updated) throw new Core1CommandError('acceptance_persistence_failed', 409);
+
+  const responderName = await deps.store.getPersonDisplayName(params.familyId, assignment.personId);
+  const etaMinutes = computeEtaMinutes(updated.promisedAt, now);
+  const calmLine = formatUrgentAcceptedCalmLine(responderName, etaMinutes);
+
+  await deps.timeline.append({
+    familyId: params.familyId,
+    eventType: 'urgent.accepted',
+    entityId: incident.id,
+    dedupeKey: `urgent_accepted:${incident.id}:${assignment.id}`,
+    humanLine: calmLine,
+    payload: {
+      incidentId: incident.id,
+      assignmentId: assignment.id,
+      responderPersonId: assignment.personId,
+      proofEventId: params.rawEventId,
+      etaMinutes,
+    },
+    occurredAt: now.toISOString(),
+  });
+
+  const pushResult = await notifyRiyaPush(deps, {
+    familyId: params.familyId,
+    title: `${responderName} accepted urgent help`,
+    body: calmLine,
+    incidentId: incident.id,
+    assignmentId: assignment.id,
+    stage: 'accepted',
+  });
+  return { updated, calmLine, pushResult };
+}
+
+export interface SarvamResponderDecisionInput {
+  familyId: string;
+  /** Maa (the incident subject) from the verified tool context. */
+  parentId: string;
+  /** OUR calls.id sent to the agent as @call_id. */
+  callId: string;
+  incidentId: string;
+  assignmentId: string;
+  responderPersonId: string;
+  decision: 'accept' | 'decline';
+  promiseMinutes?: number;
+  /** Optional Sarvam attempt id; must equal the stored provider reference when given. */
+  providerCallRef?: string;
+}
+
+/**
+ * Sarvam responder agent accept_incident / decline_incident. The AI's words are never trusted alone: SQL proves the call is
+ * one we placed for exactly this assignment and responder while it is still offered, and writes the proof. Accept then runs
+ * the same verified-accept flow as Twilio (timeline + Riya push); decline offers the next circle member.
+ * Replays of the same call's decision are idempotent and send nothing twice.
+ */
+export async function applySarvamResponderDecision(
+  deps: UrgentHelpServiceDeps,
+  input: SarvamResponderDecisionInput,
+): Promise<{ status: 'accepted' | 'offered' | 'escalated' | 'declined'; replayed: boolean; nextResponderPersonId?: string }> {
+  if (!deps.store.recordSarvamResponderDecision) throw new Core1CommandError('sarvam_decisions_unavailable', 503);
+  for (const id of [input.familyId, input.parentId, input.callId, input.incidentId, input.assignmentId, input.responderPersonId]) {
+    if (!isValidUuid(id)) throw new Core1CommandError('invalid_reference', 400);
+  }
+  const incident = await deps.store.getIncident(input.familyId, input.incidentId);
+  if (!incident || incident.subjectPersonId !== input.parentId) throw new Core1CommandError('incident_not_found', 404);
+  const recorded = await deps.store.recordSarvamResponderDecision({
+    familyId: input.familyId,
+    callId: input.callId,
+    incidentId: input.incidentId,
+    assignmentId: input.assignmentId,
+    responderPersonId: input.responderPersonId,
+    decision: input.decision,
+    ...(input.providerCallRef ? { providerCallRef: input.providerCallRef } : {}),
+  });
+  const assignment = await deps.store.getAssignment(input.familyId, input.incidentId, input.assignmentId);
+  if (!assignment || assignment.personId !== input.responderPersonId) throw new Core1CommandError('assignment_not_found', 404);
+  const now = getNow(deps);
+
+  if (input.decision === 'accept') {
+    if (!recorded.proofEventId) throw new Core1CommandError('invalid_acceptance_proof', 403);
+    if (assignment.status === 'accepted') {
+      if (assignment.verifiedByProviderEvent === recorded.proofEventId) return { status: 'accepted', replayed: true };
+      throw new Core1CommandError('assignment_not_offered', 409);
+    }
+    await acceptAssignmentWithProof(deps, {
+      familyId: input.familyId,
+      incident,
+      assignment,
+      rawEventId: recorded.proofEventId,
+      promiseMinutes: input.promiseMinutes ?? 4,
+      now,
+    });
+    return { status: 'accepted', replayed: recorded.replayed };
+  }
+
+  if (assignment.status !== 'offered') {
+    if (recorded.replayed) return { status: 'declined', replayed: true };
+    throw new Core1CommandError('assignment_not_offered', 409);
+  }
+  const advanced = await advanceAndDispatchNextResponder(deps, {
+    familyId: input.familyId,
+    incidentId: incident.id,
+    assignmentId: assignment.id,
+    subjectPersonId: incident.subjectPersonId,
+    severity: incident.severity,
+    reason: 'declined',
+  });
+  if (advanced.status === 'escalated') return { status: 'escalated', replayed: recorded.replayed };
+  if (advanced.status === 'offered') {
+    return { status: 'offered', replayed: recorded.replayed, nextResponderPersonId: advanced.nextResponderPersonId };
+  }
+  return { status: 'declined', replayed: recorded.replayed };
 }
 
 /**
@@ -821,89 +1108,13 @@ export async function executeUrgentHelpCommand(
     if (!payload.rawEventId || !isValidUuid(payload.rawEventId)) {
       throw new Core1CommandError('missing_acceptance_proof_event', 400);
     }
-    const proof = await deps.store.loadAcceptanceProof(actor.familyId, payload.rawEventId);
-    if (!proof) {
-      throw new Core1CommandError('invalid_acceptance_proof', 403);
-    }
-
-    const circle = await deps.store.listCircleMembers(actor.familyId);
-    const domainRes = handleResponderResponse({
-      incident: {
-        id: incident.id,
-        familyId: incident.familyId,
-        personId: incident.subjectPersonId,
-        state: incident.state,
-        severity: incident.severity,
-        ownerPersonId: incident.ownerPersonId ?? undefined,
-        promisedAt: incident.promisedAt ?? undefined,
-        createdAt: incident.createdAt,
-      },
-      currentAssignment: {
-        id: assignment.id,
-        familyId: assignment.familyId,
-        incidentId: assignment.incidentId,
-        personId: assignment.personId,
-        status: assignment.status,
-        offeredAt: assignment.offeredAt,
-        expiresAt: assignment.expiresAt,
-      },
-      circle: circle.map((c) => ({
-        personId: c.personId,
-        rank: c.rank,
-        active: c.active,
-        consentAt: c.consentAt ?? undefined,
-        revokedAt: c.revokedAt ?? undefined,
-      })),
-      response: {
-        responderPersonId: assignment.personId,
-        responseType: 'accept',
-        acceptanceProof: proof,
-        promiseMinutes: payload.promiseMinutes ?? 4,
-      },
-      clock: clockAt(now),
-    });
-
-    if (domainRes.transitionStatus !== 'success') {
-      throw new Core1CommandError(domainRes.transitionStatus, 409);
-    }
-
-    const updated = await deps.store.acceptAssignmentVerified({
+    const { updated, calmLine, pushResult } = await acceptAssignmentWithProof(deps, {
       familyId: actor.familyId,
-      incidentId: incident.id,
-      assignmentId: assignment.id,
-      responderPersonId: assignment.personId,
+      incident,
+      assignment,
       rawEventId: payload.rawEventId,
       promiseMinutes: payload.promiseMinutes ?? 4,
-    });
-    if (!updated) throw new Core1CommandError('acceptance_persistence_failed', 409);
-
-    const responderName = await deps.store.getPersonDisplayName(actor.familyId, assignment.personId);
-    const etaMinutes = computeEtaMinutes(updated.promisedAt, now);
-    const calmLine = formatUrgentAcceptedCalmLine(responderName, etaMinutes);
-
-    await deps.timeline.append({
-      familyId: actor.familyId,
-      eventType: 'urgent.accepted',
-      entityId: incident.id,
-      dedupeKey: `urgent_accepted:${incident.id}:${assignment.id}`,
-      humanLine: calmLine,
-      payload: {
-        incidentId: incident.id,
-        assignmentId: assignment.id,
-        responderPersonId: assignment.personId,
-        proofEventId: payload.rawEventId,
-        etaMinutes,
-      },
-      occurredAt: now.toISOString(),
-    });
-
-    const pushResult = await notifyRiyaPush(deps, {
-      familyId: actor.familyId,
-      title: `${responderName} accepted urgent help`,
-      body: calmLine,
-      incidentId: incident.id,
-      assignmentId: assignment.id,
-      stage: 'accepted',
+      now,
     });
 
     await deps.store.saveCommandDedupe({
@@ -1216,6 +1427,8 @@ export function createSupabaseUrgentHelpStore(db: SupabaseClientLike): UrgentHel
         p_dedupe_key: params.dedupeKey,
         p_payload_ciphertext: params.payloadCiphertext,
         p_payload_hash: params.payloadHash,
+        // Only sent for Sarvam, so a Twilio call stays byte-identical to the pre-K-SARVAMCALL request.
+        ...(params.provider === 'sarvam' ? { p_provider: 'sarvam' } : {}),
       });
       if (error || !data) {
         return { status: 'denied', reason: 'prepare_dispatch_failed' };
@@ -1227,6 +1440,28 @@ export function createSupabaseUrgentHelpStore(db: SupabaseClientLike): UrgentHel
         callId: typeof d.call_id === 'string' ? d.call_id : undefined,
         actionRequestId: typeof d.action_request_id === 'string' ? d.action_request_id : undefined,
         reason: typeof d.reason === 'string' ? d.reason : undefined,
+      };
+    },
+
+    async recordSarvamResponderDecision(params) {
+      const { data, error } = await db.rpc('record_sarvam_responder_decision', {
+        p_family_id: params.familyId,
+        p_call_id: params.callId,
+        p_incident_id: params.incidentId,
+        p_assignment_id: params.assignmentId,
+        p_responder_person_id: params.responderPersonId,
+        p_decision: params.decision,
+        p_provider_call_ref: params.providerCallRef ?? null,
+      });
+      // SQL error codes only (call_not_ours, call_assignment_mismatch, assignment_not_offered, ...). Never a body.
+      if (error || !data) throw new Core1CommandError('sarvam_decision_refused', 403);
+      const d = data as Record<string, unknown>;
+      if (typeof d.event_id !== 'string' || typeof d.assignment_id !== 'string') throw new Core1CommandError('sarvam_decision_refused', 403);
+      return {
+        eventId: d.event_id,
+        assignmentId: d.assignment_id,
+        proofEventId: typeof d.proof_event_id === 'string' ? d.proof_event_id : undefined,
+        replayed: d.replayed === true,
       };
     },
 
@@ -1282,7 +1517,8 @@ export function createSupabaseUrgentHelpStore(db: SupabaseClientLike): UrgentHel
     async loadAcceptanceProof(familyId, rawEventId) {
       const { data } = await db
         .from('raw_events')
-        .select('id,family_id,source,event_type,status,normalized_proof,verified_by,metadata,received_at')
+        // raw_events has no verified_by column (it lives in metadata); selecting it made PostgREST fail every proof load.
+        .select('id,family_id,source,event_type,status,normalized_proof,metadata,received_at')
         .eq('id', rawEventId)
         .eq('family_id', familyId)
         .maybeSingle();
@@ -1291,14 +1527,16 @@ export function createSupabaseUrgentHelpStore(db: SupabaseClientLike): UrgentHel
       if (
         r.status !== 'processed' ||
         r.normalized_proof !== true ||
-        r.source !== 'twilio' ||
+        (r.source !== 'twilio' && r.source !== 'sarvam') ||
         r.event_type !== 'responder.accepted'
       ) {
         return null;
       }
       const meta = (r.metadata ?? {}) as Record<string, unknown>;
+      const sarvam = r.source === 'sarvam';
       if (
-        meta.verified_by !== 'twilio_signature' ||
+        meta.verified_by !== (sarvam ? 'sarvam_call_binding' : 'twilio_signature') ||
+        (sarvam && meta.provider_action !== 'sarvam.outbound_call') ||
         meta.action !== 'urgent_responder' ||
         typeof meta.incident_id !== 'string' ||
         typeof meta.assignment_id !== 'string' ||
@@ -1324,8 +1562,9 @@ export function createSupabaseUrgentHelpStore(db: SupabaseClientLike): UrgentHel
         accountId: meta.account_id,
         dispatchKey: typeof meta.dispatch_key === 'string' ? meta.dispatch_key : undefined,
         normalizedProof: true,
-        verifiedBy: 'twilio_signature',
-        source: 'twilio',
+        ...(sarvam
+          ? { verifiedBy: 'sarvam_call_binding' as const, source: 'sarvam' as const }
+          : { verifiedBy: 'twilio_signature' as const, source: 'twilio' as const }),
       };
     },
 
@@ -1490,6 +1729,18 @@ export function createSupabaseUrgentDispatchRuntime(
   env: Record<string, string | undefined> = process.env,
   transport: FetchTransport = globalThis.fetch as FetchTransport,
 ): UrgentDispatchRuntime | null {
+  if (callProvider(env) === 'sarvam') {
+    const sarvam = createSarvamCallRuntime(db, env, 'RESPONDER', transport);
+    if (!sarvam) return null;
+    return {
+      provider: 'sarvam',
+      deps: sarvam.deps,
+      sarvamAgentId: sarvam.agentId,
+      bridgeLabel: sarvamBridgeLabel(env),
+      twimlUrl: '',
+      gatherCallbackUrl: '',
+    };
+  }
   const {
     TWILIO_ACCOUNT_SID: accountSid,
     TWILIO_AUTH_TOKEN: authToken,
@@ -1545,6 +1796,7 @@ export function createSupabaseUrgentDispatchRuntime(
   const authorize = createSupabaseDispatchAuthorizer(db);
 
   return {
+    provider: 'twilio',
     twimlUrl: renderer.url,
     gatherCallbackUrl: gatherUrl,
     deps: {
@@ -1580,6 +1832,7 @@ export function createProductionUrgentHelpDeps(
       env.TIMELINE_SIGNING_KEY_ID ?? env.SIGNING_KEY_ID ?? 'core1-default',
     ),
     dispatch: createSupabaseUrgentDispatchRuntime(db, env),
+    callProvider: callProvider(env),
     encryptionKeyHex,
     env,
   };
