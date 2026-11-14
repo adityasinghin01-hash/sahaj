@@ -13,6 +13,7 @@
 ---
 
 ## Checkpoint 1: Core 1 Domain Logic & Domain Tests
+- **Commit SHA:** `20770d0`
 - **Status:** Completed & Tested
 - **Changes:**
   - `packages/atlas/src/core1/types.ts`: Pure domain types, clock injection, deterministic ID derivation (`deriveDeterministicId`), strict responder acceptance proof types, voice post types, medicine dose types, missed-call types, family report types.
@@ -33,3 +34,22 @@
 - **Commands & Evidence:**
   - `pnpm --filter @sahaj/atlas typecheck`: 0 errors
   - `pnpm --filter @sahaj/atlas test`: 8 test files passed, 62 tests passed.
+
+---
+
+## Checkpoint 2: Database Migration & Rollback SQL Suite
+- **Status:** Completed
+- **Changes:**
+  - `infra/supabase/migrations/20261114220000_phase4_core1.sql`:
+    - `sahaj_private.is_family_member_with_role(uuid, text[])`: Secure helper for role verification.
+    - `public.create_urgent_incident_offer(uuid, uuid, text, integer)`: Atomic incident creation, ranked circle dispatching (excluding the emergency subject), and automatic circle-exhaustion escalation.
+    - `public.accept_responder_assignment_verified(uuid, uuid, uuid, uuid, uuid, integer)`: Strict responder acceptance verification against processed normalized provider proof with twilio signature binding.
+    - `public.record_medicine_dose(uuid, uuid, uuid, text, integer)`: Dose recording with inventory tracking, non-prescriptive missed-dose handling, and bounded integer remaining counts.
+    - `public.create_family_voice_post(uuid, uuid, uuid, text, uuid, uuid, integer)`: Two-way family voice posts with strict `voice_share` consent and path traversal guards.
+    - Explicit security definer execution grants for authenticated and service roles.
+  - `infra/supabase/tests/phase4_core1.sql`:
+    - Full transaction rollback acceptance test suite.
+    - Tests incident offer dispatch and escalation.
+    - Tests acceptance proof verification and rejection of wrong responders or unverified events.
+    - Tests dose recording inventory decrement and missed dose preservation.
+    - Tests voice post creation with path traversal rejection and self-message guards.
