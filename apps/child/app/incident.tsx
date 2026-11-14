@@ -1,6 +1,17 @@
 import { Icon } from '@/components/ui/icon';
-import { Btn, Card, ClipPlayer, Face, LevelPill, LiveDot, Pop, Screen, T, TopBar } from '@/components/sahaj/ui';
-import { incident, type ChainState } from '@/lib/demo';
+import {
+  Btn,
+  Card,
+  ClipPlayer,
+  Face,
+  LevelPill,
+  LiveDot,
+  Pop,
+  Screen,
+  T,
+  TopBar,
+} from '@/components/sahaj/ui';
+import { demoCall, incident, showToast, type ChainState } from '@/lib/demo';
 import { cn } from '@/lib/utils';
 import { Check, Clock3, Phone, PhoneMissed, Radio } from 'lucide-react-native';
 import { View } from 'react-native';
@@ -20,12 +31,20 @@ export default function Incident() {
       <Pop>
         <Card tone="danger">
           <LevelPill level="red" label="Open · someone is on it" />
-          <T v="title" className="mt-3">{incident.title}</T>
-          <T v="small" className="mt-1 text-ink-2">{incident.startedAt} · {incident.how}</T>
+          <T v="title" className="mt-3">
+            {incident.title}
+          </T>
+          <T v="small" className="mt-1 text-ink-2">
+            {incident.startedAt} · {incident.how}
+          </T>
           <View className="mt-5">
-            <T v="label" className="mb-2 text-danger-ink">Maa’s own words</T>
+            <T v="label" className="mb-2 text-danger-ink">
+              Maa’s own words
+            </T>
             <ClipPlayer seconds={incident.words.seconds} seed={3} tone="danger" />
-            <T v="body" className="mt-2 italic text-ink">{incident.words.quote}</T>
+            <T v="body" className="mt-2 italic text-ink">
+              {incident.words.quote}
+            </T>
             <T v="small">{incident.words.translation}</T>
           </View>
         </Card>
@@ -35,17 +54,25 @@ export default function Incident() {
         <Card className="mt-4 flex-row items-center">
           <View className="flex-1">
             <T v="num">{incident.acceptedIn}</T>
-            <T v="small" className="mt-1">until someone said “I’m going”</T>
+            <T v="small" className="mt-1">
+              until someone said “I’m going”
+            </T>
           </View>
           <View className="h-12 w-px bg-sand-line" />
           <View className="ml-5 flex-1">
-            <T v="num" className="text-ok-ink">1</T>
-            <T v="small" className="mt-1">person on the way</T>
+            <T v="num" className="text-ok-ink">
+              1
+            </T>
+            <T v="small" className="mt-1">
+              person on the way
+            </T>
           </View>
         </Card>
       </Pop>
 
-      <T v="label" className="mb-3 mt-7">Who Sahaj asked, in order</T>
+      <T v="label" className="mb-3 mt-7">
+        Who Sahaj asked, in order
+      </T>
       <Card className="py-1">
         {incident.chain.map((c, i) => {
           const s = stateStyle[c.state];
@@ -62,12 +89,25 @@ export default function Incident() {
                 <View className="flex-row items-center justify-between">
                   <View className="flex-row items-center">
                     <Face name={c.who} size={28} />
-                    <T v="h3" className="ml-2.5">{c.who}</T>
+                    <T v="h3" className="ml-2.5">
+                      {c.who}
+                    </T>
                   </View>
-                  <T v="small" className="font-jk-semibold">{c.time}</T>
+                  <T v="small" className="font-jk-semibold">
+                    {c.time}
+                  </T>
                 </View>
-                <T v="small" className="mt-1">{c.role}</T>
-                <T v="body" className={cn('mt-1.5', c.state === 'done' ? 'font-jk-semibold text-ok-ink' : 'text-ink-2')}>{c.note}</T>
+                <T v="small" className="mt-1">
+                  {c.role}
+                </T>
+                <T
+                  v="body"
+                  className={cn(
+                    'mt-1.5',
+                    c.state === 'done' ? 'font-jk-semibold text-ok-ink' : 'text-ink-2'
+                  )}>
+                  {c.note}
+                </T>
               </View>
             </View>
           );
@@ -76,14 +116,25 @@ export default function Incident() {
 
       <Card tone="teal" className="mt-4 flex-row items-center">
         <LiveDot color="bg-teal" />
-        <T v="body" className="ml-3 flex-1 text-teal-deep">{incident.next}</T>
+        <T v="body" className="ml-3 flex-1 text-teal-deep">
+          {incident.next}
+        </T>
       </Card>
 
       <View className="mt-6 flex-row">
-        <Btn label="Call Maa" icon={Phone} className="mr-2 flex-1" size="lg" />
-        <Btn label="Call uncle" icon={Phone} kind="dark" className="flex-1" size="lg" />
+        <Btn label="Call Maa" onPress={demoCall} icon={Phone} className="mr-2 flex-1" size="lg" />
+        <Btn
+          label="Call uncle"
+          onPress={() => showToast('Demo call · Sharma uncle is on his way.')}
+          icon={Phone}
+          kind="dark"
+          className="flex-1"
+          size="lg"
+        />
       </View>
-      <T v="small" className="mt-3 text-center">If it gets worse, call 112</T>
+      <T v="small" className="mt-3 text-center">
+        If it gets worse, call 112
+      </T>
     </Screen>
   );
 }
