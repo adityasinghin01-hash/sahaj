@@ -103,6 +103,7 @@ export SMS_GATEWAY_SECRET="e2e-sms-gateway-secret-at-least-32-chars"
 export DEV_ADMIN_TOKEN="e2e-dev-admin-token"
 export CRON_SECRET="e2e-cron-secret"
 export SARVAM_TOOL_TOKEN="e2e-sarvam-token"
+export SUPABASE_JWT_SECRET="e2e-only-jwt-signing-secret-at-least-32-chars"
 export ALLOW_ANY_TOOL_IP="1"
 export DEMO_TIMER_SCALE="120"
 

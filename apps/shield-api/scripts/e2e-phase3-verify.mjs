@@ -226,9 +226,30 @@ async function run() {
   // ------------------------------------------------------------------
   // 3. Experience drill + consent + switch + experience_turn + cron shield.drill.experience
   // ------------------------------------------------------------------
-  const shieldIndexSrc = readFileSync(new URL("../../../packages/shield/src/index.ts", import.meta.url), "utf8");
-  const hasSetExperienceDrills = shieldIndexSrc.includes("setExperienceDrills");
-  const hasStartExperienceDrill = shieldIndexSrc.includes("startExperienceDrill");
+  // Real behaviour, not a source grep: no consent → refused; consent + Riya's switch → scheduled
+  // (or refused only for quiet hours, which is correct at night IST).
+  const startDrill = () => postJson(BASE_URL, "/api/dev/shield/experience-drill",
+    { family_id: FAMILY_ID, parent_id: PARENT_ID }, { "x-dev-admin-token": DEV_TOKEN });
+  const beforeConsent = await startDrill();
+  const consentRes = await postJson(BASE_URL, "/api/sarvam/experience-consent",
+    { family_id: FAMILY_ID, parent_id: PARENT_ID, clip_ref: "e2e/consent/maa-haan.wav" },
+    { authorization: `Bearer ${SARVAM_TOKEN}` });
+  const consentNoAuth = await postJson(BASE_URL, "/api/sarvam/experience-consent",
+    { family_id: FAMILY_ID, parent_id: PARENT_ID, clip_ref: "x" }, { authorization: "Bearer wrong" });
+  const beforeSwitch = await startDrill();
+  // Riya turns the switch on through her real app route with a lab login token.
+  const { execFileSync } = await import("node:child_process");
+  const riyaToken = execFileSync(process.execPath, [new URL("./mint-lab-token.mjs", import.meta.url).pathname, USER_ID],
+    { env: process.env, encoding: "utf8" }).trim();
+  const switchRes = await postJson(BASE_URL, "/api/app/shield/experience-drills",
+    { parent_id: PARENT_ID, enabled: true }, { authorization: `Bearer ${riyaToken}` });
+  const afterSwitch = await startDrill();
+  const istHour = new Date(Date.now() + 330 * 60_000).getUTCHours();
+  const drillFlowOk =
+    beforeConsent.status === 200 && beforeConsent.body?.ok === false && beforeConsent.body?.reason === "no_consent" &&
+    consentRes.status === 200 && consentRes.body?.ok === true && consentNoAuth.status === 401 &&
+    beforeSwitch.body?.ok === false && beforeSwitch.body?.reason === "disabled" && switchRes.status === 200 &&
+    (afterSwitch.body?.ok === true || afterSwitch.body?.reason === "quiet_hours");
 
   const expTurnRes = await postJson(
     BASE_URL,
@@ -256,10 +277,9 @@ async function run() {
   assert.equal(drillAnsRes.status, 200);
 
   results.scenario3_drills = {
-    consent_and_start_drill:
-      hasSetExperienceDrills && hasStartExperienceDrill
-        ? "PASS"
-        : "SKIPPED: setExperienceDrills/recordDrillConsent/startExperienceDrill missing in runtime base",
+    consent_and_start_drill: drillFlowOk
+      ? (afterSwitch.body?.ok ? "PASS" : `PASS (refused for quiet hours at IST hour ${istHour}, as designed)`)
+      : `FAIL: ${JSON.stringify({ beforeConsent: beforeConsent.body, consent: consentRes.status, beforeSwitch: beforeSwitch.body, switch: [switchRes.status, switchRes.body], afterSwitch: afterSwitch.body })}`,
     experience_turn_otp_stop:
       expTurnRes.status === 501 && expTurnRes.body?.error === "tool_not_registered"
         ? "SKIPPED: experience_turn missing in runtime shieldTools base"
