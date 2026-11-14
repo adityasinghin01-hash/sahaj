@@ -1,3 +1,5 @@
+// rdap.org refuses Node's default User-Agent ("node") with 403; a named client is accepted.
+export const LINK_INTEL_USER_AGENT = "sahaj-shield/0.1 (+https://github.com/adityasinghin01-hash/sahaj)";
 import { hostOf, isShortener, lookAlikeDetail, registrableDomain } from "../rules/links.js";
 import { withDeadline } from "../brain/deadline.js";
 import type { LinkResult } from "../brain/types.js";
@@ -61,7 +63,7 @@ export async function lookupRegistration(domain: string, deps: LinkIntelDeps): P
     registeredAt = await withDeadline(RDAP_TIMEOUT_MS, async signal => {
       // Only the validated registrable domain is sent; never a path, query or anything else from the message.
       const response = await deps.linkIntelFetch!(`${RDAP_BASE}${domain}`, {
-        method: "GET", redirect: "follow", signal, headers: { Accept: "application/rdap+json" },
+        method: "GET", redirect: "follow", signal, headers: { Accept: "application/rdap+json", "User-Agent": LINK_INTEL_USER_AGENT },
       });
       if (!response.ok) return null;
       return registrationDate(await response.json());

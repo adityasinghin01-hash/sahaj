@@ -1,3 +1,4 @@
+import { LINK_INTEL_USER_AGENT } from "./rdap.js";
 import { hostOf, isShortener, lookAlikeDetail } from "../rules/links.js";
 import { withDeadline } from "../brain/deadline.js";
 import type { LinkIntelDeps } from "./types.js";
@@ -70,7 +71,7 @@ async function download(deps: LinkIntelDeps): Promise<{ urls: string[]; hosts: s
   const fetcher = deps.linkIntelFetch!;
   return withDeadline(OPENPHISH_TIMEOUT_MS, async signal => {
     // Fixed URL, no query, no body: nothing from any message is ever sent to OpenPhish.
-    const response = await fetcher(OPENPHISH_FEED_URL, { method: "GET", redirect: "follow", signal, headers: { Accept: "text/plain" } });
+    const response = await fetcher(OPENPHISH_FEED_URL, { method: "GET", redirect: "follow", signal, headers: { Accept: "text/plain", "User-Agent": LINK_INTEL_USER_AGENT } });
     if (!response.ok) throw new Error("OpenPhish feed unavailable");
     const text = await response.text();
     if (text.length > MAX_BODY_CHARS) throw new Error("OpenPhish feed too large");

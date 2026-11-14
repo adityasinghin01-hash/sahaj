@@ -111,19 +111,17 @@ export async function runLiveChecks({
         await createDefaultRouter({ env: {}, onTrace }).understand(request);
       }
       await tracer.flush();
-      for (let attempt = 0; attempt < 5; attempt++) {
-        const url = langfuseUrl("/api/public/traces");
-        url.searchParams.set("limit", "1");
-        url.searchParams.set("name", "llm.attempt");
-        url.searchParams.set("fromTimestamp", startedAt);
-        const traces = await (await http(url, { headers: basicAuth() })).json();
-        const trace = traces.data?.[0];
-        if (trace?.id) {
-          const detail = await (await http(langfuseUrl(`/api/public/traces/${encodeURIComponent(trace.id)}`), { headers: basicAuth() })).json();
-          // A pre-existing or unrelated trace must not prove this run succeeded.
-          if (detail.metadata?.task === task || detail.observations?.some((o) => o.metadata?.task === task)) return;
-        }
-        if (attempt < 4) await sleep(1000);
+      // Langfuse retired GET /api/public/traces (410); read v2 observations from this run's start.
+      for (let attempt = 0; attempt < 8; attempt++) {
+        const url = langfuseUrl("/api/public/v2/observations");
+        url.searchParams.set("fromStartTime", startedAt);
+        url.searchParams.set("toStartTime", new Date(Date.now() + 60_000).toISOString());
+        url.searchParams.set("limit", "50");
+        url.searchParams.set("fields", "core,basic,metadata"); // v2 omits metadata unless asked
+        const page = await (await http(url, { headers: basicAuth() })).json();
+        // A pre-existing or unrelated trace must not prove this run succeeded.
+        if (page.data?.some((o) => o.metadata?.task === task || JSON.stringify(o.metadata ?? {}).includes(task))) return;
+        if (attempt < 7) await sleep(1500);
       }
       throw new CheckFailure("fresh_run_trace_not_visible");
     });
@@ -132,7 +130,7 @@ export async function runLiveChecks({
       requireCheck(feed.split(/\r?\n/).some((line) => /^https?:\/\/\S+$/.test(line.trim())), "empty_or_invalid_feed");
     });
     await check("RDAP", [], async () => {
-      const record = await (await http("https://rdap.org/domain/google.com", { redirect: "follow", headers: { Accept: "application/rdap+json" } })).json();
+      const record = await (await http("https://rdap.org/domain/google.com", { redirect: "follow", headers: { Accept: "application/rdap+json", "User-Agent": "sahaj-shield/0.1 (+https://github.com/adityasinghin01-hash/sahaj)" } })).json();
       requireCheck(record.ldhName?.toLowerCase() === "google.com", "unexpected_rdap_domain");
     });
     await check("WhatsApp token", ["WHATSAPP_TOKEN", "WHATSAPP_PHONE_NUMBER_ID"], async () => {
