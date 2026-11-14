@@ -7,6 +7,7 @@ import type { AtlasLike, ClaimedJob, RunnerDeps } from "./runner";
 import { acquireThreadLock, type PgPoolLike } from "./thread-lock";
 import { createTimelineWriter, supabaseTimelineStore, type TimelineReadDb } from "./timeline-writer";
 import type { StructuredUnderstandingPort } from "./understanding";
+import type { ProviderBridge } from "./bridge";
 
 export interface AtlasRuntimeOptions {
   db: TimelineReadDb;
@@ -14,6 +15,7 @@ export interface AtlasRuntimeOptions {
   config: AtlasConfig;
   /** Model/provider understanding. Absent means every non-exact input pauses for durable review. */
   understanding?: StructuredUnderstandingPort;
+  bridge?: ProviderBridge;
   now?: () => Date;
 }
 
@@ -29,7 +31,7 @@ export function createAtlasRuntime(options: AtlasRuntimeOptions): { deps: Runner
     keyId: config.keyId, now: options.now ?? (() => new Date()) });
   return {
     deps: {
-      db, workerId: options.workerId,
+      db, workerId: options.workerId, bridge: options.bridge,
       heartbeat: job => startLeaseHeartbeat(db, { familyId: job.family_id, jobId: job.id, token: job.lease_token }),
       lockThread: job => acquireThreadLock(pool, atlasThreadId({ familyId: job.family_id, jobId: job.id })),
       atlasFor(job: ClaimedJob, guard): AtlasLike {

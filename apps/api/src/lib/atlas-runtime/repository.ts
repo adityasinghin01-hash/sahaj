@@ -165,7 +165,7 @@ export function createAtlasPorts(deps: AtlasRepositoryDeps): AtlasPorts {
       const out = await call<{ status?: string; outbox_id?: string } | null>(db, "enqueue_authorized_command", {
         p_family_id: command.familyId, p_job_id: command.jobId, p_lease_token: lease.token, p_action_request_id: job.requestId,
         p_action: command.action, p_dedupe_key: command.idempotencyKey, p_payload_ciphertext: payload,
-        p_payload_hash: createHash("sha256").update(plaintext).digest("hex"), p_revision: s.revision, p_incident_id: null,
+        p_payload_hash: createHash("sha256").update(plaintext).digest("hex"), p_revision: s.revision, p_incident_id: null, p_assignment_id: null,
       }, "outbox_write_failed");
       if (out?.status === "enqueued" && typeof out.outbox_id === "string") return { status: "enqueued", outboxId: out.outbox_id };
       return { status: out?.status === "review" ? "review" : "denied" };
