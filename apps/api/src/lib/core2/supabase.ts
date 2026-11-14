@@ -17,6 +17,7 @@ import { supabaseAuth } from "@/lib/media/supabase";
 import { canonicalJson, signTimelineEvent } from "@/lib/timeline";
 import {
   Core2Error,
+  type AcceptIncidentResult,
   type Core2AuthPort,
   type Core2ConsentRecord,
   type Core2Deps,
@@ -27,11 +28,15 @@ import {
   type Core2Repository,
   type Core2TimelinePort,
   type Core2VoicePostRecord,
+  type DeclineIncidentResult,
+  type DueIncidentEscalation,
+  type OfferNextContactResult,
   type ReassuranceRow,
   type SharingPreferencesRow,
   type SosRow,
   type TrustedContactRow,
   type TrustedContactScope,
+  type TruthLineStateSnapshot,
   type WatchRow,
 } from "./contracts";
 import { createWebhookCryptoPort, sha256Hex } from "./security";
@@ -173,6 +178,15 @@ function mapRpcError(error: { code?: string; message?: string }): never {
   }
   if (error.code === "40901" || msg.includes("watch_cancelled")) {
     throw new Core2Error("watch_cancelled", 409, "Watch was already cancelled.");
+  }
+  if (error.code === "40902" || msg.includes("incident_closed")) {
+    throw new Core2Error("incident_closed", 409, "Incident is already resolved or closed.");
+  }
+  if (error.code === "40903" || msg.includes("incident_already_accepted")) {
+    throw new Core2Error("incident_already_accepted", 409, "Incident already accepted by another responder.");
+  }
+  if (error.code === "40904" || msg.includes("assignment_expired")) {
+    throw new Core2Error("assignment_expired", 409, "Escalation offer has already expired.");
   }
   if (error.code === "23505") {
     throw new Core2Error("conflict", 409, "Duplicate conflicting Core 2 record.");
@@ -692,8 +706,8 @@ export function createSupabaseCore2Repository(db: SupabaseClient): Core2Reposito
         throw new Core2Error("stale_version", 409, "Watch version conflict.");
       }
       const baseMs = Math.max(Date.parse(w.deadlineAt), Date.parse(input.nowIso));
-      const newDeadline = new Date(baseMs + input.addMinutes * 60_000);
-      const newGrace = new Date(newDeadline.getTime() + w.graceMinutes * 60_000);
+      const newDeadline = new Date(baseMs + (input.addMs ?? input.addMinutes * 60_000));
+      const newGrace = new Date(newDeadline.getTime() + (input.graceMs ?? w.graceMinutes * 60_000));
       const { data, error } = await db
         .from("core2_watches")
         .update({
@@ -971,6 +985,182 @@ export function createSupabaseCore2Repository(db: SupabaseClient): Core2Reposito
           .eq("status", "pending")
           .is("lease_token", null);
       }
+    },
+
+    async listDueEscalations(nowIso, limit): Promise<DueIncidentEscalation[]> {
+      const { data, error } = await db
+        .from("core2_incident_escalations")
+        .select("incident_id,family_id,subject_person_id,watch_id,sos_id,offer_expires_at")
+        .is("exhausted_at", null)
+        .not("offer_expires_at", "is", null)
+        .lte("offer_expires_at", nowIso)
+        .order("offer_expires_at", { ascending: true })
+        .limit(limit);
+      if (error || !Array.isArray(data)) {
+        throw new Core2Error("unavailable", 503, "Due escalation lookup failed.");
+      }
+      return (data as Row[]).map((r) => ({
+        incidentId: str(r.incident_id),
+        familyId: str(r.family_id),
+        subjectPersonId: str(r.subject_person_id),
+        watchId: optStr(r.watch_id),
+        sosId: optStr(r.sos_id),
+        offerExpiresAt: str(r.offer_expires_at),
+      }));
+    },
+
+    async offerNextTrustedContact(input): Promise<OfferNextContactResult> {
+      const { data, error } = await db.rpc("core2_offer_next_trusted_contact", {
+        p_family_id: input.familyId,
+        p_incident_id: input.incidentId,
+        p_scope: input.scope,
+        p_offer_expires_at: input.offerExpiresAt,
+        p_now: input.nowIso,
+      });
+      if (error) mapRpcError(error);
+      const r = Array.isArray(data) ? ((data[0] as Row | undefined) ?? null) : ((data as Row | null) ?? null);
+      if (!r) {
+        return {
+          assignmentId: null,
+          trustedContactId: null,
+          contactPersonId: null,
+          rank: null,
+          offeredAt: null,
+          expiresAt: null,
+          newlyCreated: false,
+          exhausted: false,
+        };
+      }
+      return {
+        assignmentId: optStr(r.assignment_id),
+        trustedContactId: optStr(r.trusted_contact_id),
+        contactPersonId: optStr(r.contact_person_id),
+        rank: r.rank === null || r.rank === undefined ? null : num(r.rank),
+        offeredAt: optStr(r.offered_at),
+        expiresAt: optStr(r.expires_at),
+        newlyCreated: r.newly_created === true,
+        exhausted: r.exhausted === true,
+      };
+    },
+
+    async acceptIncidentAssignment(input): Promise<AcceptIncidentResult> {
+      const { data, error } = await db.rpc("core2_accept_incident_assignment", {
+        p_family_id: input.familyId,
+        p_incident_id: input.incidentId,
+        p_actor_person_id: input.actorPersonId,
+        p_raw_event_id: input.rawEventId,
+        p_now: input.nowIso,
+      });
+      if (error) mapRpcError(error);
+      const r = Array.isArray(data) ? ((data[0] as Row | undefined) ?? null) : ((data as Row | null) ?? null);
+      if (!r) throw new Core2Error("unavailable", 503, "Incident accept RPC returned empty.");
+      return {
+        assignmentId: str(r.assignment_id),
+        incidentId: str(r.incident_id),
+        subjectPersonId: str(r.subject_person_id),
+        responderPersonId: str(r.responder_person_id),
+        offeredAt: str(r.offered_at),
+        acceptedAt: str(r.accepted_at),
+        alreadyAccepted: r.already_accepted === true,
+      };
+    },
+
+    async declineIncidentAssignment(input): Promise<DeclineIncidentResult> {
+      const { data, error } = await db.rpc("core2_decline_incident_assignment", {
+        p_family_id: input.familyId,
+        p_incident_id: input.incidentId,
+        p_actor_person_id: input.actorPersonId,
+        p_now: input.nowIso,
+      });
+      if (error) mapRpcError(error);
+      const r = Array.isArray(data) ? ((data[0] as Row | undefined) ?? null) : ((data as Row | null) ?? null);
+      if (!r) throw new Core2Error("unavailable", 503, "Incident decline RPC returned empty.");
+      return {
+        assignmentId: str(r.assignment_id),
+        incidentId: str(r.incident_id),
+        subjectPersonId: str(r.subject_person_id),
+        alreadyDeclined: r.already_declined === true,
+      };
+    },
+
+    async loadTruthLineSnapshot(input): Promise<TruthLineStateSnapshot> {
+      let child: Core2Person | null = null;
+      if (input.subjectPersonId) {
+        const candidate = await this.getPerson(input.familyId, input.subjectPersonId);
+        if (!candidate || candidate.role !== "child") {
+          throw new Core2Error("not_found", 404, "Subject child person not found in family.");
+        }
+        child = candidate;
+      } else {
+        const children = await this.listPeopleByRole(input.familyId, "child");
+        child = children[0] ?? null;
+        if (!child) {
+          throw new Core2Error("not_found", 404, "No child member found in family.");
+        }
+      }
+
+      const preferences = await this.getSharingPreferences(input.familyId, child.id);
+      if (!preferences.shareStatusWithParent) {
+        return {
+          child,
+          preferences,
+          latestWatch: null,
+          activeIncidentOwnerName: null,
+          latestSos: null,
+          latestReassurance: null,
+        };
+      }
+
+      const [watches, sosList, reassurances] = await Promise.all([
+        this.listWatches(input.familyId, child.id, 1),
+        this.listSosEvents(input.familyId, child.id, 1),
+        this.listReassuranceUpdates(input.familyId, child.id, 1),
+      ]);
+      const latestWatch = watches[0] ?? null;
+      const latestSos = sosList[0] ?? null;
+      const latestReassurance = reassurances[0] ?? null;
+
+      const activeIncidentIds: string[] = [];
+      if (
+        latestWatch?.incidentId &&
+        (latestWatch.state === "active" ||
+          latestWatch.state === "checking_in" ||
+          latestWatch.state === "escalated")
+      ) {
+        activeIncidentIds.push(latestWatch.incidentId);
+      }
+      if (latestSos && latestSos.status !== "safe" && latestSos.status !== "cancelled") {
+        activeIncidentIds.push(latestSos.incidentId);
+      }
+
+      let activeIncidentOwnerName: string | null = null;
+      if (activeIncidentIds.length > 0) {
+        const { data: acceptedInc, error: incErr } = await db
+          .from("incidents")
+          .select("owner_person_id")
+          .eq("family_id", input.familyId)
+          .in("id", activeIncidentIds)
+          .not("owner_person_id", "is", null)
+          .limit(1)
+          .maybeSingle();
+        if (incErr) {
+          throw new Core2Error("unavailable", 503, "Incident owner lookup failed.");
+        }
+        const ownerId = acceptedInc ? optStr((acceptedInc as Row).owner_person_id) : null;
+        if (ownerId) {
+          const owner = await this.getPerson(input.familyId, ownerId);
+          activeIncidentOwnerName = owner?.displayName ?? null;
+        }
+      }
+
+      return {
+        child,
+        preferences,
+        latestWatch,
+        activeIncidentOwnerName,
+        latestSos,
+        latestReassurance,
+      };
     },
   };
 }

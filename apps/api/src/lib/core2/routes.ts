@@ -1,8 +1,10 @@
 import {
   errorResponse,
   extractAuthContext,
+  extractBearer,
   jsonResponse,
   readBoundedJson,
+  readOptionalJson,
 } from "./http";
 import type { createCore2Service } from "./service";
 
@@ -152,6 +154,47 @@ export function createCore2RouteHandlers(getService: () => Core2Service) {
         const svc = getService();
         const body = await readBoundedJson(request);
         return svc.updateSharingPreferences(extractAuthContext(request), body);
+      });
+    },
+    async cronOverduePost(request: Request): Promise<Response> {
+      return wrapJson(async () => {
+        const svc = getService();
+        const rawBody = await readOptionalJson(request);
+        const queryLimit = new URL(request.url).searchParams.get("limit");
+        const bodyObj =
+          typeof rawBody === "object" && rawBody !== null && !Array.isArray(rawBody)
+            ? (rawBody as Record<string, unknown>)
+            : {};
+        const limitArg =
+          bodyObj.limit !== undefined
+            ? bodyObj.limit
+            : queryLimit !== null && queryLimit !== "" && /^\d+$/.test(queryLimit)
+              ? Number(queryLimit)
+              : queryLimit !== null && queryLimit !== ""
+                ? queryLimit
+                : undefined;
+        return svc.runOverdueCron(request.headers.get("x-cron-secret"), limitArg);
+      });
+    },
+    async incidentAcceptPost(request: Request, incidentId: string): Promise<Response> {
+      return wrapJson(async () => {
+        const svc = getService();
+        const body = await readOptionalJson(request);
+        return svc.acceptIncident(extractAuthContext(request), incidentId, body);
+      });
+    },
+    async incidentDeclinePost(request: Request, incidentId: string): Promise<Response> {
+      return wrapJson(async () => {
+        const svc = getService();
+        const body = await readOptionalJson(request);
+        return svc.declineIncident(extractAuthContext(request), incidentId, body);
+      });
+    },
+    async truthLinePost(request: Request): Promise<Response> {
+      return wrapJson(async () => {
+        const svc = getService();
+        const body = await readBoundedJson(request);
+        return svc.querySarvamTruthLine(extractBearer(request), body);
       });
     },
   };

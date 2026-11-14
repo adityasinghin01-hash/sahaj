@@ -1,6 +1,8 @@
 import { bearerToken as extractBearer } from "@/lib/media/handler";
 import { Core2Error } from "./contracts";
 
+export { extractBearer };
+
 const SECURITY_HEADERS = {
   "cache-control": "no-store",
   "content-type": "application/json",
@@ -55,6 +57,25 @@ export async function readBoundedJson(request: Request, maxBytes = 65_536): Prom
   }
   if (!raw.trim()) {
     throw new Core2Error("invalid_request", 400, "Expected non-empty JSON body.");
+  }
+  try {
+    return JSON.parse(raw) as unknown;
+  } catch {
+    throw new Core2Error("invalid_request", 400, "Malformed JSON body.");
+  }
+}
+
+export async function readOptionalJson(request: Request, maxBytes = 65_536): Promise<unknown> {
+  const contentLength = request.headers.get("content-length");
+  if (contentLength && (!/^\d+$/.test(contentLength) || Number(contentLength) > maxBytes)) {
+    throw new Core2Error("invalid_request", 400, "Request body exceeds size limit.");
+  }
+  const raw = await request.text();
+  if (Buffer.byteLength(raw, "utf8") > maxBytes) {
+    throw new Core2Error("invalid_request", 400, "Request body exceeds size limit.");
+  }
+  if (!raw.trim()) {
+    return {};
   }
   try {
     return JSON.parse(raw) as unknown;

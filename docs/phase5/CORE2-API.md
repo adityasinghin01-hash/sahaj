@@ -246,5 +246,102 @@ Canonical invariant: **Same-family membership (`family_memberships` / `circle`) 
 
 ## 4. Proposed Cron / Worker Hook
 
-Core 2 does NOT start a second ad-hoc interval loop inside route handlers or duplicate Kiro's lease tables. Overdue watch checks and escalations run via an idempotent server processor (`tickCore2Watches(port, now)`) suitable for invocation from [`apps/api/src/app/api/cron/tick/route.ts`](../../apps/api/src/app/api/cron/tick/route.ts) or Kiro's worker after integration review (documented in [`INTEGRATION-CORE2.md`](./INTEGRATION-CORE2.md)).
+Core 2 does NOT start a second ad-hoc interval loop inside route handlers or duplicate Kiro's lease tables. Overdue watch checks and escalations run via an idempotent server processor (`tickDueWatches` / `runOverdueCron`) suitable for scheduled invocation or explicit cron execution.
+
+---
+
+## 5. Core 2 Escalation, Incident Ownership, and Sarvam Truth Line (AGY-C2X)
+
+### 5.1 Overdue Late-Watch Cron — `POST /api/core2/cron/overdue`
+* **Auth:** `x-cron-secret: $CRON_SECRET` (`401` on mismatch/missing, `503` if unset).
+* **Timer acceleration:** Optional env `DEMO_TIMER_SCALE` (integer/float > 0; unset or invalid defaults to `1`) divides watch ETA, grace, extend, SOS countdown, and escalation offer windows (minimum `1000` ms). Default escalation offer timeout is `120000` ms (`2` minutes).
+* **Request body (optional JSON):** `{ "limit": 25 }` (or `?limit=25`).
+* **Behavior:**
+  1. Transitions due watches `active → checking_in` (enqueues `core2.watch_checkin` with `channel: "push"`) and `checking_in → escalated`.
+  2. For newly escalated watches, calls `core2_offer_next_trusted_contact` to offer **only the highest-ranked** active `watch_escalation` contact (enqueues `core2.watch_escalation` with `channel: "call"`, `fallback_channel: "push"`, zero WhatsApp).
+  3. Idempotent before `offer_expires_at`: re-running inside the active offer window queues zero duplicate alerts.
+  4. Once `offer_expires_at <= now`, expires the unaccepted offer and rotates sequentially to the next ranked contact, or marks the incident exhausted when no candidates remain.
+* **Response `200`:**
+```json
+{
+  "ok": true,
+  "timer_scale": 1,
+  "processed": 1,
+  "checking_in": 0,
+  "escalated": 1,
+  "rotated_offers": 0,
+  "exhausted": 0,
+  "dispatches_queued": 1
+}
+```
+
+### 5.2 Accept Incident Responsibility — `POST /api/core2/incidents/:id/accept`
+* **Auth:** Bearer token (+ optional `Idempotency-Key`, `x-sahaj-family-id`). Caller must be an active trusted contact (`sos` or `watch_escalation`) with a live, non-expired `offered` assignment for `:id`.
+* **Request body (optional JSON):** `{}` (or `{ "note": "..." }`).
+* **Behavior (DB-atomic single owner via `core2_accept_incident_assignment`):**
+  * Verifies contact is active & unrevoked (`403` otherwise), assignment is offered & unexpired (`409 assignment_expired` if expired), and incident is open (`409 incident_closed` if closed/safe).
+  * First responder atomically sets `incidents.owner_person_id`, `incidents.state = 'accepted'`, updates linked SOS `responder_accepted = true`, fences other dispatches, and records signed `core2.incident.accepted`.
+  * Idempotent replay by the winning responder returns `200` with `already_accepted: true`.
+  * Any second responder gets `409 { "error": "incident_already_accepted" }`.
+* **Response `200`:**
+```json
+{
+  "accepted": true,
+  "already_accepted": false,
+  "assignment_id": "uuid",
+  "incident_id": "uuid",
+  "subject_person_id": "uuid",
+  "responder_person_id": "uuid",
+  "offered_at": "2026-11-14T18:21:00.000Z",
+  "accepted_at": "2026-11-14T18:21:30.000Z"
+}
+```
+
+### 5.3 Decline Incident Responsibility — `POST /api/core2/incidents/:id/decline`
+* **Auth:** Bearer token (+ optional `Idempotency-Key`, `x-sahaj-family-id`) for the offered trusted contact.
+* **Request body (optional JSON):** `{}` (or `{ "reason": "..." }`).
+* **Behavior:** Marks the caller's `offered` assignment `declined` via `core2_decline_incident_assignment`, appends `core2.incident.declined`, and immediately rotates to the next ranked active contact (`offerNextTrustedContact`).
+* **Response `200`:**
+```json
+{
+  "declined": true,
+  "already_declined": false,
+  "assignment_id": "uuid",
+  "incident_id": "uuid",
+  "next_assignment_id": "uuid | null",
+  "next_contact_person_id": "uuid | null",
+  "exhausted": false
+}
+```
+
+### 5.4 Maa's Keypad Sarvam Truth Line — `POST /api/core2/truth-line`
+* **Auth:** `Authorization: Bearer <SARVAM_TOOL_TOKEN>` (falls back to `SARVAM_TOOL_BEARER`; `401` on invalid/missing, `503` if unset).
+* **Request JSON:**
+```json
+{
+  "family_id": "uuid",
+  "parent_id": "uuid",
+  "subject_person_id": "uuid (optional)"
+}
+```
+* **Behavior:** Validates `parent_id` belongs to `family_id` with `role = 'parent'` (`403` otherwise). Respects `core2_sharing_preferences.share_status_with_parent`: when disabled, leaks zero ETA/watch/responder/SOS state (`status: "private"`). Never calls an AI model and never exposes `from_label`, `to_label`, `cab_note`, GPS, or alarming language. Returns deterministic calm Hindi/Hinglish text:
+  * Active responder accepted: `"<ResponderFirst> <ChildFirst> ko dekhne ja rahi hai"`
+  * Active watch before deadline: `"<ChildFirst> raste mein hai, <N> minute mein pahunchegi"`
+  * Overdue check-in: `"<ChildFirst> raste mein hai, thodi der mein pahunch jayegi"`
+  * Escalated pending contact accept: `"<ChildFirst> ke trusted parivar sadasya se sampark kiya gaya hai, sab theek hai"`
+  * Safe / `im_safe` / `reached_home`: `"<ChildFirst> ghar pahunch gayi hai"`
+  * Default: `"<ChildFirst> bilkul theek hai"`
+* **Response `200`:**
+```json
+{
+  "ok": true,
+  "family_id": "uuid",
+  "parent_id": "uuid",
+  "subject_person_id": "uuid",
+  "status": "responder_accepted",
+  "message": "Priya Riya ko dekhne ja rahi hai",
+  "spoken_text": "Priya Riya ko dekhne ja rahi hai",
+  "privacy_restricted": false
+}
+```
 

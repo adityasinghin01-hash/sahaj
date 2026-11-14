@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { safeTokenEquals } from "@/lib/secrets";
 import { canonicalJson } from "@/lib/timeline";
 import { encryptWebhook, payloadHash } from "@/lib/webhook-security";
 import {
@@ -233,5 +234,49 @@ export function assertPaginationLimit(raw: string | null | undefined, fallback =
     throw new Core2Error("invalid_request", 400, "limit must be between 1 and 50.");
   }
   return n;
+}
+
+/** DEMO_TIMER_SCALE divides Core 2 overdue timers cleanly; missing, invalid, or <= 0 counts as 1. */
+export function getDemoTimerScale(env: Record<string, string | undefined> = process.env): number {
+  const raw = env.DEMO_TIMER_SCALE;
+  if (!raw) return 1;
+  const parsed = Number(raw);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : 1;
+}
+
+export function scaleDurationMs(
+  baseMs: number,
+  env: Record<string, string | undefined> = process.env,
+  minMs = 1_000,
+): number {
+  const scale = getDemoTimerScale(env);
+  if (scale === 1) return baseMs;
+  return Math.max(minMs, Math.round(baseMs / scale));
+}
+
+export function assertCronSecret(
+  cronHeader: string | null | undefined,
+  env: Record<string, string | undefined> = process.env,
+): void {
+  const secret = env.CRON_SECRET;
+  if (!secret) {
+    throw new Core2Error("unavailable", 503, "Cron authentication is not configured.");
+  }
+  if (!safeTokenEquals(cronHeader ?? null, secret)) {
+    throw new Core2Error("unauthenticated", 401, "Invalid or missing cron secret.");
+  }
+}
+
+export function assertSarvamToolToken(
+  bearerToken: string | null | undefined,
+  env: Record<string, string | undefined> = process.env,
+): void {
+  const secret = env.SARVAM_TOOL_TOKEN || env.SARVAM_TOOL_BEARER;
+  if (!secret) {
+    throw new Core2Error("unavailable", 503, "Sarvam tool authentication is not configured.");
+  }
+  if (!safeTokenEquals(bearerToken ?? null, secret)) {
+    throw new Core2Error("unauthenticated", 401, "Invalid or missing Sarvam tool bearer token.");
+  }
 }
 

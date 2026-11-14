@@ -16,26 +16,123 @@ import {
   type SosRow,
   type TrustedContactRow,
   type TrustedContactScope,
+  type TruthLineStateSnapshot,
   type WatchRow,
 } from "./contracts";
 import {
   assertBoolean,
   assertBoundedInt,
+  assertCronSecret,
   assertIanaTimezone,
   assertIsoTimestamp,
   assertOptionalUuid,
   assertPaginationLimit,
   assertPlainObject,
   assertSafeString,
+  assertSarvamToolToken,
   assertValidUuid,
   authenticateCore2Actor,
+  getDemoTimerScale,
   hashCanonicalRequest,
   parseIdempotencyKey,
+  scaleDurationMs,
   sha256Hex,
 } from "./security";
 
 const VALID_SCOPES: readonly TrustedContactScope[] = ["sos", "watch_escalation", "reassurance"];
 const WATCH_EXTEND_MAX_MINUTES = 120;
+const DEFAULT_OFFER_EXPIRY_MS = 120_000;
+
+function firstNameOf(displayName: string): string {
+  const cleaned = displayName.trim();
+  if (!cleaned) return "Parivar sadasya";
+  return cleaned.split(/\s+/)[0] ?? cleaned;
+}
+
+/** Deterministic calm Hindi/Hinglish status line for Maa's keypad Sarvam truth line; never exposes location or alarming language. */
+export function formatCalmTruthLine(
+  snapshot: TruthLineStateSnapshot,
+  now: Date,
+): { status: string; spoke: string } {
+  const childFirst = firstNameOf(snapshot.child.displayName);
+
+  if (!snapshot.preferences.shareStatusWithParent) {
+    return {
+      status: "private",
+      spoke: `${childFirst} ne abhi status sharing band rakhi hai, zaroorat ho toh sidha call kar lijiye`,
+    };
+  }
+
+  if (snapshot.activeIncidentOwnerName) {
+    const responderFirst = firstNameOf(snapshot.activeIncidentOwnerName);
+    return {
+      status: "responder_accepted",
+      spoke: `${responderFirst} ${childFirst} ko dekhne ja rahi hai`,
+    };
+  }
+
+  const w = snapshot.latestWatch;
+  if (w) {
+    if (w.state === "active") {
+      const deadlineMs = Date.parse(w.deadlineAt);
+      if (deadlineMs > now.getTime()) {
+        const remainingMins = Math.max(1, Math.ceil((deadlineMs - now.getTime()) / 60_000));
+        return {
+          status: "en_route",
+          spoke: `${childFirst} raste mein hai, ${remainingMins} minute mein pahunchegi`,
+        };
+      }
+      return {
+        status: "checking_in",
+        spoke: `${childFirst} raste mein hai, thodi der mein pahunch jayegi`,
+      };
+    }
+    if (w.state === "checking_in") {
+      return {
+        status: "checking_in",
+        spoke: `${childFirst} raste mein hai, thodi der mein pahunch jayegi`,
+      };
+    }
+    if (w.state === "escalated") {
+      return {
+        status: "family_checking",
+        spoke: `${childFirst} ke trusted parivar sadasya se sampark kiya gaya hai, sab theek hai`,
+      };
+    }
+  }
+
+  const sos = snapshot.latestSos;
+  if (
+    sos &&
+    (sos.status === "countdown" ||
+      sos.status === "pending_contacts" ||
+      sos.status === "queued" ||
+      sos.status === "awaiting_approval")
+  ) {
+    return {
+      status: "family_checking",
+      spoke: `${childFirst} ke trusted parivar sadasya se sampark kiya gaya hai, sab theek hai`,
+    };
+  }
+
+  const latestRea = snapshot.latestReassurance;
+  if (
+    w?.state === "safe" ||
+    sos?.status === "safe" ||
+    latestRea?.kind === "im_safe" ||
+    latestRea?.kind === "reached_home"
+  ) {
+    return {
+      status: "safe",
+      spoke: `${childFirst} ghar pahunch gayi hai`,
+    };
+  }
+
+  return {
+    status: "ok",
+    spoke: `${childFirst} bilkul theek hai`,
+  };
+}
 
 function toPublicWatch(row: WatchRow): PublicWatchDto {
   return {
@@ -184,6 +281,7 @@ function checkVoiceShareConsent(
 export function createCore2Service(deps: Core2Deps) {
   const getNow = deps.now ?? (() => new Date());
   const nextUuid = deps.uuid ?? (() => randomUUID());
+  const env = deps.env ?? process.env;
 
   async function requireActor(auth: { bearerToken: string | null; familyIdHeader: string | null }): Promise<Core2Actor> {
     return authenticateCore2Actor(deps.auth, deps.repo, auth.bearerToken, auth.familyIdHeader);
@@ -331,6 +429,263 @@ export function createCore2Service(deps: Core2Deps) {
     }
   }
 
+  async function offerNextAndNotify(input: {
+    familyId: string;
+    incidentId: string;
+    subjectPersonId: string;
+    requestId: string | null;
+    scope: "sos" | "watch_escalation";
+    watchId?: string | null;
+    sosId?: string | null;
+    now: Date;
+  }): Promise<{
+    offered: boolean;
+    newlyCreated: boolean;
+    dispatched: boolean;
+    exhausted: boolean;
+    assignmentId: string | null;
+    contactPersonId: string | null;
+    rank: number | null;
+    expiresAt: string | null;
+  }> {
+    const nowIso = input.now.toISOString();
+    const offerExpiresAt = new Date(
+      input.now.getTime() + scaleDurationMs(DEFAULT_OFFER_EXPIRY_MS, env),
+    ).toISOString();
+
+    const offer = await deps.repo.offerNextTrustedContact({
+      familyId: input.familyId,
+      incidentId: input.incidentId,
+      scope: input.scope,
+      offerExpiresAt,
+      nowIso,
+    });
+
+    if (offer.exhausted) {
+      await appendTimeline({
+        familyId: input.familyId,
+        dedupeKey: `core2:incident:exhausted:${input.incidentId}`,
+        eventType: "core2.incident.exhausted",
+        entityId: input.incidentId,
+        humanLine: "No trusted family contact available to accept incident.",
+        payload: {
+          incident_id: input.incidentId,
+          watch_id: input.watchId ?? null,
+          sos_id: input.sosId ?? null,
+        },
+      });
+      return {
+        offered: false,
+        newlyCreated: false,
+        dispatched: false,
+        exhausted: true,
+        assignmentId: null,
+        contactPersonId: null,
+        rank: null,
+        expiresAt: null,
+      };
+    }
+
+    if (!offer.assignmentId || !offer.contactPersonId) {
+      return {
+        offered: false,
+        newlyCreated: false,
+        dispatched: false,
+        exhausted: false,
+        assignmentId: null,
+        contactPersonId: null,
+        rank: null,
+        expiresAt: null,
+      };
+    }
+
+    if (!offer.newlyCreated) {
+      return {
+        offered: true,
+        newlyCreated: false,
+        dispatched: false,
+        exhausted: false,
+        assignmentId: offer.assignmentId,
+        contactPersonId: offer.contactPersonId,
+        rank: offer.rank,
+        expiresAt: offer.expiresAt,
+      };
+    }
+
+    await appendTimeline({
+      familyId: input.familyId,
+      dedupeKey: `core2:incident:offered:${offer.assignmentId}`,
+      eventType: "core2.incident.offered",
+      entityId: input.incidentId,
+      humanLine: `Escalation offered to trusted contact (rank ${offer.rank ?? 1}).`,
+      payload: {
+        incident_id: input.incidentId,
+        assignment_id: offer.assignmentId,
+        trusted_contact_id: offer.trustedContactId,
+        contact_person_id: offer.contactPersonId,
+        rank: offer.rank,
+        expires_at: offer.expiresAt,
+      },
+    });
+
+    let dispatched = false;
+    if (input.requestId) {
+      const outboxKind = input.scope === "sos" ? "core2.sos_alert" : "core2.watch_escalation";
+      const prefix = input.scope === "sos" ? "sos" : "watch";
+      const gateRes = await authorizeAndDispatch({
+        familyId: input.familyId,
+        actorPersonId: input.subjectPersonId,
+        requestId: input.requestId,
+        action: "urgent_responder",
+        targetPersonId: offer.contactPersonId,
+        outboxKind,
+        dedupeKey: `core2:${prefix}:offer:${offer.assignmentId}`,
+        payload: {
+          kind: outboxKind,
+          channel: "call",
+          fallback_channel: "push",
+          incident_id: input.incidentId,
+          assignment_id: offer.assignmentId,
+          watch_id: input.watchId ?? null,
+          sos_id: input.sosId ?? null,
+          contact_person_id: offer.contactPersonId,
+          rank: offer.rank,
+          offer_expires_at: offer.expiresAt,
+        },
+        trustedContactId: offer.trustedContactId,
+        watchId: input.watchId ?? null,
+        sosId: input.sosId ?? null,
+      });
+      dispatched = gateRes.decision === "allow";
+    }
+
+    return {
+      offered: true,
+      newlyCreated: true,
+      dispatched,
+      exhausted: false,
+      assignmentId: offer.assignmentId,
+      contactPersonId: offer.contactPersonId,
+      rank: offer.rank,
+      expiresAt: offer.expiresAt,
+    };
+  }
+
+  async function tickDueWatchesInternal(limit = 25): Promise<{
+    processed: number;
+    checking_in: number;
+    escalated: number;
+    rotated_offers: number;
+    exhausted: number;
+    dispatches_queued: number;
+  }> {
+    const now = getNow();
+    const nowIso = now.toISOString();
+    const updated = await deps.repo.tickDueWatches(nowIso, limit);
+    let checkingIn = 0;
+    let escalated = 0;
+    let rotatedOffers = 0;
+    let exhaustedCount = 0;
+    let dispatchesQueued = 0;
+    const escalatedWatchIds = new Set<string>();
+
+    for (const watch of updated) {
+      if (watch.state === "checking_in") {
+        checkingIn += 1;
+        if (watch.requestId) {
+          const gateRes = await authorizeAndDispatch({
+            familyId: watch.familyId,
+            actorPersonId: watch.subjectPersonId,
+            requestId: watch.requestId,
+            action: "check_in",
+            targetPersonId: watch.subjectPersonId,
+            outboxKind: "core2.watch_checkin",
+            dedupeKey: `core2:watch:checkin:${watch.id}:v${watch.version}`,
+            payload: { kind: "core2.watch_checkin", channel: "push", watch_id: watch.id },
+            watchId: watch.id,
+          });
+          if (gateRes.decision === "allow") dispatchesQueued += 1;
+        }
+        await appendTimeline({
+          familyId: watch.familyId,
+          dedupeKey: `core2:watch:checking_in:${watch.id}:v${watch.version}`,
+          eventType: "core2.watch.checking_in",
+          entityId: watch.id,
+          humanLine: "Watch deadline reached; check-in requested.",
+          payload: { watch_id: watch.id, version: watch.version },
+        });
+      } else if (watch.state === "escalated") {
+        escalated += 1;
+        escalatedWatchIds.add(watch.id);
+        let offeredContacts = 0;
+        if (watch.incidentId) {
+          const offerRes = await offerNextAndNotify({
+            familyId: watch.familyId,
+            incidentId: watch.incidentId,
+            subjectPersonId: watch.subjectPersonId,
+            requestId: watch.requestId,
+            scope: "watch_escalation",
+            watchId: watch.id,
+            now,
+          });
+          if (offerRes.dispatched) dispatchesQueued += 1;
+          if (offerRes.exhausted) exhaustedCount += 1;
+          if (offerRes.offered) offeredContacts = 1;
+        }
+        await appendTimeline({
+          familyId: watch.familyId,
+          dedupeKey: `core2:watch:escalated:${watch.id}:v${watch.version}`,
+          eventType: "core2.watch.escalated",
+          entityId: watch.id,
+          humanLine: "Watch grace expired; escalation recorded.",
+          payload: { watch_id: watch.id, version: watch.version, contacts_count: offeredContacts },
+        });
+      }
+    }
+
+    const dueEscalations = await deps.repo.listDueEscalations(nowIso, limit);
+    for (const esc of dueEscalations) {
+      if (esc.watchId && escalatedWatchIds.has(esc.watchId)) continue;
+      let requestId: string | null = null;
+      let scope: "sos" | "watch_escalation" | null = null;
+      if (esc.watchId) {
+        const w = await deps.repo.getWatch(esc.familyId, esc.watchId);
+        if (!w || w.state === "safe" || w.state === "cancelled") continue;
+        requestId = w.requestId;
+        scope = "watch_escalation";
+      } else if (esc.sosId) {
+        const s = await deps.repo.getSosEvent(esc.familyId, esc.sosId);
+        if (!s || s.status === "safe" || s.status === "cancelled") continue;
+        requestId = s.requestId;
+        scope = "sos";
+      }
+      if (!scope) continue;
+
+      const offerRes = await offerNextAndNotify({
+        familyId: esc.familyId,
+        incidentId: esc.incidentId,
+        subjectPersonId: esc.subjectPersonId,
+        requestId,
+        scope,
+        watchId: esc.watchId,
+        sosId: esc.sosId,
+        now,
+      });
+      if (offerRes.newlyCreated) rotatedOffers += 1;
+      if (offerRes.dispatched) dispatchesQueued += 1;
+      if (offerRes.exhausted) exhaustedCount += 1;
+    }
+
+    return {
+      processed: updated.length,
+      checking_in: checkingIn,
+      escalated,
+      rotated_offers: rotatedOffers,
+      exhausted: exhaustedCount,
+      dispatches_queued: dispatchesQueued,
+    };
+  }
+
   return {
     // ------------------------------------------------------------------
     // Task 1: SOS
@@ -402,7 +757,9 @@ export function createCore2Service(deps: Core2Deps) {
           );
 
           const countdownUntil =
-            countdownSeconds > 0 ? new Date(now.getTime() + countdownSeconds * 1000).toISOString() : null;
+            countdownSeconds > 0
+              ? new Date(now.getTime() + scaleDurationMs(countdownSeconds * 1000, env)).toISOString()
+              : null;
 
           let status: SosRow["status"] = "pending_contacts";
           let deliveryStatus: SosRow["deliveryStatus"] = "none";
@@ -446,6 +803,8 @@ export function createCore2Service(deps: Core2Deps) {
                 dedupeKey: `core2:sos:${sos.id}:${contact.id}`,
                 payload: {
                   kind: "core2.sos_alert",
+                  channel: "call",
+                  fallback_channel: "push",
                   sos_id: sos.id,
                   incident_id: incidentId,
                   subject_person_id: subjectPersonId,
@@ -699,8 +1058,8 @@ export function createCore2Service(deps: Core2Deps) {
         { etaMinutes, graceMinutes, timezone, fromLabel, toLabel, cabNote: cabNote ?? null },
         async (keyHash) => {
           const now = getNow();
-          const deadline = new Date(now.getTime() + etaMinutes * 60_000);
-          const graceUntil = new Date(deadline.getTime() + graceMinutes * 60_000);
+          const deadline = new Date(now.getTime() + scaleDurationMs(etaMinutes * 60_000, env));
+          const graceUntil = new Date(deadline.getTime() + scaleDurationMs(graceMinutes * 60_000, env));
 
           const rawEventId = await ingestEncryptedEvent({
             familyId: actor.familyId,
@@ -784,6 +1143,8 @@ export function createCore2Service(deps: Core2Deps) {
             subjectPersonId: actor.personId,
             expectedVersion,
             addMinutes,
+            addMs: scaleDurationMs(addMinutes * 60_000, env),
+            graceMs: scaleDurationMs(existing.graceMinutes * 60_000, env),
             nowIso: getNow().toISOString(),
           });
 
@@ -1011,97 +1372,24 @@ export function createCore2Service(deps: Core2Deps) {
       return { watch: toPublicWatch(watch) };
     },
 
-    async tickDueWatches(limit = 25): Promise<{
-      processed: number;
-      checking_in: number;
-      escalated: number;
-      dispatches_queued: number;
-    }> {
-      const nowIso = getNow().toISOString();
-      const updated = await deps.repo.tickDueWatches(nowIso, limit);
-      let checkingIn = 0;
-      let escalated = 0;
-      let dispatchesQueued = 0;
+    async tickDueWatches(limit = 25) {
+      return tickDueWatchesInternal(limit);
+    },
 
-      for (const watch of updated) {
-        if (watch.state === "checking_in") {
-          checkingIn += 1;
-          if (watch.requestId) {
-            const gateRes = await authorizeAndDispatch({
-              familyId: watch.familyId,
-              actorPersonId: watch.subjectPersonId,
-              requestId: watch.requestId,
-              action: "check_in",
-              targetPersonId: watch.subjectPersonId,
-              outboxKind: "core2.watch_checkin",
-              dedupeKey: `core2:watch:checkin:${watch.id}:v${watch.version}`,
-              payload: { kind: "core2.watch_checkin", watch_id: watch.id },
-              watchId: watch.id,
-            });
-            if (gateRes.decision === "allow") dispatchesQueued += 1;
-          }
-          await appendTimeline({
-            familyId: watch.familyId,
-            dedupeKey: `core2:watch:checking_in:${watch.id}:v${watch.version}`,
-            eventType: "core2.watch.checking_in",
-            entityId: watch.id,
-            humanLine: "Watch deadline reached; check-in requested.",
-            payload: { watch_id: watch.id, version: watch.version },
-          });
-        } else if (watch.state === "escalated") {
-          escalated += 1;
-          const contacts = await deps.repo.listActiveTrustedContacts(
-            watch.familyId,
-            watch.subjectPersonId,
-            "watch_escalation",
-            nowIso,
-          );
-          for (const contact of contacts) {
-            if (watch.requestId) {
-              const gateRes = await authorizeAndDispatch({
-                familyId: watch.familyId,
-                actorPersonId: watch.subjectPersonId,
-                requestId: watch.requestId,
-                action: "urgent_responder",
-                targetPersonId: contact.contactPersonId,
-                outboxKind: "core2.watch_escalation",
-                dedupeKey: `core2:watch:esc:${watch.id}:v${watch.version}:${contact.id}`,
-                payload: {
-                  kind: "core2.watch_escalation",
-                  watch_id: watch.id,
-                  incident_id: watch.incidentId,
-                  contact_person_id: contact.contactPersonId,
-                },
-                trustedContactId: contact.id,
-                watchId: watch.id,
-              });
-              if (gateRes.decision === "allow") dispatchesQueued += 1;
-            }
-            if (watch.incidentId) {
-              await deps.repo.createAssignment({
-                familyId: watch.familyId,
-                incidentId: watch.incidentId,
-                personId: contact.contactPersonId,
-                expiresAt: new Date(getNow().getTime() + 15 * 60_000).toISOString(),
-              });
-            }
-          }
-          await appendTimeline({
-            familyId: watch.familyId,
-            dedupeKey: `core2:watch:escalated:${watch.id}:v${watch.version}`,
-            eventType: "core2.watch.escalated",
-            entityId: watch.id,
-            humanLine: "Watch grace expired; escalation recorded.",
-            payload: { watch_id: watch.id, version: watch.version, contacts_count: contacts.length },
-          });
-        }
-      }
-
+    async runOverdueCron(cronSecretHeader: string | null, limitRaw?: unknown) {
+      assertCronSecret(cronSecretHeader, env);
+      const limit =
+        limitRaw === undefined || limitRaw === null
+          ? 25
+          : assertBoundedInt(limitRaw, "limit", 1, 100);
+      const tick = await tickDueWatchesInternal(limit);
       return {
-        processed: updated.length,
-        checking_in: checkingIn,
-        escalated,
-        dispatches_queued: dispatchesQueued,
+        status: 200,
+        body: {
+          ok: true,
+          timer_scale: getDemoTimerScale(env),
+          ...tick,
+        },
       };
     },
 
@@ -1560,6 +1848,7 @@ export function createCore2Service(deps: Core2Deps) {
               // Never invent facts, never expose unconsented location, health or narrative.
               payload: {
                 kind: "core2.reassurance",
+                channel: "push",
                 status_label: statusLabel,
                 voice_post_id: voicePostId,
                 location_included: false,
@@ -1665,6 +1954,222 @@ export function createCore2Service(deps: Core2Deps) {
       }
 
       return { items };
+    },
+
+    // ------------------------------------------------------------------
+    // Core 2 Extension: Single-Owner Incident Accept/Decline & Sarvam Truth Line
+    // ------------------------------------------------------------------
+    async acceptIncident(
+      auth: { bearerToken: string | null; familyIdHeader: string | null; idempotencyKeyHeader: string | null },
+      incidentIdRaw: string,
+      rawBody: unknown = {},
+    ) {
+      const actor = await requireActor(auth);
+      const incidentId = assertValidUuid(incidentIdRaw, "incidentId");
+      assertPlainObject(rawBody ?? {}, ["note"]);
+
+      const execute = async (keyHash: string) => {
+        const nowIso = getNow().toISOString();
+        const rawEventId = await ingestEncryptedEvent({
+          familyId: actor.familyId,
+          actorPersonId: actor.personId,
+          eventType: "core2.incident.accepted",
+          providerEventId: `inc-accept:${actor.familyId}:${incidentId}:${actor.personId}:${keyHash}`,
+          payload: { incident_id: incidentId, responder_person_id: actor.personId },
+        });
+
+        const accepted = await deps.repo.acceptIncidentAssignment({
+          familyId: actor.familyId,
+          incidentId,
+          actorPersonId: actor.personId,
+          rawEventId,
+          nowIso,
+        });
+
+        if (!accepted.alreadyAccepted) {
+          await appendTimeline({
+            familyId: actor.familyId,
+            dedupeKey: `core2:incident:accepted:${incidentId}:${accepted.assignmentId}`,
+            eventType: "core2.incident.accepted",
+            entityId: incidentId,
+            humanLine: "Trusted family contact accepted responsibility.",
+            payload: {
+              incident_id: incidentId,
+              assignment_id: accepted.assignmentId,
+              responder_person_id: accepted.responderPersonId,
+              accepted_at: accepted.acceptedAt,
+            },
+          });
+        }
+
+        return {
+          status: 200,
+          body: {
+            accepted: true,
+            already_accepted: accepted.alreadyAccepted,
+            assignment_id: accepted.assignmentId,
+            incident_id: accepted.incidentId,
+            subject_person_id: accepted.subjectPersonId,
+            responder_person_id: accepted.responderPersonId,
+            offered_at: accepted.offeredAt,
+            accepted_at: accepted.acceptedAt,
+          },
+        };
+      };
+
+      if (auth.idempotencyKeyHeader && auth.idempotencyKeyHeader.trim().length > 0) {
+        return runIdempotent(
+          actor,
+          `core2.incident.accept:${incidentId}`,
+          auth.idempotencyKeyHeader,
+          { incidentId },
+          execute,
+        );
+      }
+
+      const fallbackHash = sha256Hex(`accept:${actor.familyId}:${incidentId}:${actor.personId}`);
+      return execute(fallbackHash);
+    },
+
+    async declineIncident(
+      auth: { bearerToken: string | null; familyIdHeader: string | null; idempotencyKeyHeader: string | null },
+      incidentIdRaw: string,
+      rawBody: unknown = {},
+    ) {
+      const actor = await requireActor(auth);
+      const incidentId = assertValidUuid(incidentIdRaw, "incidentId");
+      assertPlainObject(rawBody ?? {}, ["reason"]);
+
+      const execute = async () => {
+        const now = getNow();
+        const nowIso = now.toISOString();
+        const declined = await deps.repo.declineIncidentAssignment({
+          familyId: actor.familyId,
+          incidentId,
+          actorPersonId: actor.personId,
+          nowIso,
+        });
+
+        let rotatedNextContactId: string | null = null;
+        let rotatedAssignmentId: string | null = null;
+        let exhausted = false;
+
+        if (!declined.alreadyDeclined) {
+          await appendTimeline({
+            familyId: actor.familyId,
+            dedupeKey: `core2:incident:declined:${incidentId}:${declined.assignmentId}`,
+            eventType: "core2.incident.declined",
+            entityId: incidentId,
+            humanLine: "Trusted contact declined; checking next family contact.",
+            payload: {
+              incident_id: incidentId,
+              assignment_id: declined.assignmentId,
+              declined_by: actor.personId,
+            },
+          });
+
+          const [watches, sosList] = await Promise.all([
+            deps.repo.listWatches(actor.familyId, declined.subjectPersonId, 50),
+            deps.repo.listSosEvents(actor.familyId, declined.subjectPersonId, 50),
+          ]);
+          const linkedWatch = watches.find((w) => w.incidentId === incidentId) ?? null;
+          const linkedSos = sosList.find((s) => s.incidentId === incidentId) ?? null;
+
+          if (linkedWatch || linkedSos) {
+            const scope: "sos" | "watch_escalation" = linkedSos ? "sos" : "watch_escalation";
+            const offerRes = await offerNextAndNotify({
+              familyId: actor.familyId,
+              incidentId,
+              subjectPersonId: declined.subjectPersonId,
+              requestId: linkedSos?.requestId ?? linkedWatch?.requestId ?? null,
+              scope,
+              watchId: linkedWatch?.id ?? null,
+              sosId: linkedSos?.id ?? null,
+              now,
+            });
+            rotatedNextContactId = offerRes.contactPersonId;
+            rotatedAssignmentId = offerRes.assignmentId;
+            exhausted = offerRes.exhausted;
+          }
+        }
+
+        return {
+          status: 200,
+          body: {
+            declined: true,
+            already_declined: declined.alreadyDeclined,
+            assignment_id: declined.assignmentId,
+            incident_id: declined.incidentId,
+            next_assignment_id: rotatedAssignmentId,
+            next_contact_person_id: rotatedNextContactId,
+            exhausted,
+          },
+        };
+      };
+
+      if (auth.idempotencyKeyHeader && auth.idempotencyKeyHeader.trim().length > 0) {
+        return runIdempotent(
+          actor,
+          `core2.incident.decline:${incidentId}`,
+          auth.idempotencyKeyHeader,
+          { incidentId },
+          execute,
+        );
+      }
+
+      return execute();
+    },
+
+    async querySarvamTruthLine(bearerToken: string | null, rawBody: unknown) {
+      assertSarvamToolToken(bearerToken, env);
+      const body = assertPlainObject(rawBody, ["family_id", "parent_id", "subject_person_id"]);
+      const familyId = assertValidUuid(body.family_id, "family_id");
+      const parentId = assertValidUuid(body.parent_id, "parent_id");
+      const subjectPersonId = assertOptionalUuid(body.subject_person_id, "subject_person_id");
+
+      const parent = await deps.repo.getPerson(familyId, parentId);
+      if (!parent) {
+        throw new Core2Error("not_found", 404, "Parent person not found in family.");
+      }
+      if (parent.role !== "parent") {
+        throw new Core2Error("forbidden", 403, "Truth-line caller must be an active parent.");
+      }
+
+      const now = getNow();
+      const snapshot = await deps.repo.loadTruthLineSnapshot({
+        familyId,
+        parentPersonId: parentId,
+        subjectPersonId,
+      });
+      const formatted = formatCalmTruthLine(snapshot, now);
+
+      await appendTimeline({
+        familyId,
+        dedupeKey: `core2:truth_line:${nextUuid()}`,
+        eventType: "core2.truth_line.checked",
+        entityId: snapshot.child.id,
+        humanLine: "Parent checked calm status line.",
+        payload: {
+          parent_person_id: parentId,
+          subject_person_id: snapshot.child.id,
+          status: formatted.status,
+          privacy_restricted: !snapshot.preferences.shareStatusWithParent,
+        },
+      });
+
+      return {
+        status: 200,
+        body: {
+          ok: true,
+          family_id: familyId,
+          parent_id: parentId,
+          subject_person_id: snapshot.child.id,
+          status: formatted.status,
+          message: formatted.spoke,
+          spoken_text: formatted.spoke,
+          privacy_restricted: !snapshot.preferences.shareStatusWithParent,
+        },
+      };
     },
   };
 }

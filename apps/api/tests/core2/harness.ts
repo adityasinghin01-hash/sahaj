@@ -5,6 +5,7 @@ import {
   createCore2RouteHandlers,
   createCore2Service,
   createWebhookCryptoPort,
+  type AcceptIncidentResult,
   type Core2ConsentRecord,
   type Core2Deps,
   type Core2IdempotencyRecord,
@@ -13,11 +14,15 @@ import {
   type Core2Repository,
   type Core2TimelineAppendInput,
   type Core2VoicePostRecord,
+  type DeclineIncidentResult,
+  type DueIncidentEscalation,
+  type OfferNextContactResult,
   type ReassuranceRow,
   type SharingPreferencesRow,
   type SosRow,
   type TrustedContactRow,
   type TrustedContactScope,
+  type TruthLineStateSnapshot,
   type WatchRow,
 } from "../../src/lib/core2";
 import { canonicalJson, signTimelineEvent, type SignedTimelineEvent } from "../../src/lib/timeline";
@@ -39,9 +44,14 @@ export const SYNTH_IDS = {
   personOtherFamily: "c5000000-0000-4000-8000-000000000005",
 } as const;
 
-export function createCore2TestHarness() {
+export function createCore2TestHarness(options?: { env?: Record<string, string | undefined> }) {
   let currentNow = new Date("2026-11-14T18:00:00.000Z");
   const keyPair = generateKeyPairSync("ed25519");
+  const testEnv: Record<string, string | undefined> = {
+    CRON_SECRET: "test-cron-secret",
+    SARVAM_TOOL_TOKEN: "test-sarvam-token",
+    ...(options?.env ?? {}),
+  };
 
   const tokens = new Map<string, string>([
     ["tok-riya", SYNTH_IDS.userRiya],
@@ -114,8 +124,35 @@ export function createCore2TestHarness() {
   const voicePosts: Core2VoicePostRecord[] = [];
   const preferences = new Map<string, SharingPreferencesRow>();
   const reassuranceUpdates: ReassuranceRow[] = [];
-  const incidents = new Map<string, { id: string; familyId: string; state: string }>();
-  const assignments: Array<{ id: string; incidentId: string; personId: string; status: string }> = [];
+  const incidents = new Map<
+    string,
+    { id: string; familyId: string; personId: string; state: string; ownerPersonId: string | null }
+  >();
+  const assignments: Array<{
+    id: string;
+    familyId: string;
+    incidentId: string;
+    personId: string;
+    status: string;
+    offeredAt: string;
+    expiresAt: string;
+    acceptedAt: string | null;
+    verifiedByProviderEvent: string | null;
+  }> = [];
+  const incidentEscalations = new Map<
+    string,
+    {
+      incidentId: string;
+      familyId: string;
+      subjectPersonId: string;
+      watchId: string | null;
+      sosId: string | null;
+      currentAssignmentId: string | null;
+      currentContactId: string | null;
+      offerExpiresAt: string | null;
+      exhaustedAt: string | null;
+    }
+  >();
   const outbox: Array<{
     id: string;
     familyId: string;
@@ -293,12 +330,28 @@ export function createCore2TestHarness() {
     async createRequestAndIncident(input) {
       const requestId = randomUUID();
       const incidentId = randomUUID();
-      incidents.set(incidentId, { id: incidentId, familyId: input.familyId, state: input.incidentState });
+      incidents.set(incidentId, {
+        id: incidentId,
+        familyId: input.familyId,
+        personId: input.personId,
+        state: input.incidentState,
+        ownerPersonId: null,
+      });
       return { requestId, incidentId };
     },
     async createAssignment(input) {
       const assignmentId = randomUUID();
-      assignments.push({ id: assignmentId, incidentId: input.incidentId, personId: input.personId, status: "offered" });
+      assignments.push({
+        id: assignmentId,
+        familyId: input.familyId,
+        incidentId: input.incidentId,
+        personId: input.personId,
+        status: "offered",
+        offeredAt: currentNow.toISOString(),
+        expiresAt: input.expiresAt,
+        acceptedAt: null,
+        verifiedByProviderEvent: null,
+      });
       return { assignmentId };
     },
     async listActiveTrustedContacts(familyId, subjectPersonId, scope, nowIso) {
@@ -496,8 +549,8 @@ export function createCore2TestHarness() {
       }
       if (row.version !== input.expectedVersion) throw new Core2Error("stale_version", 409, "Version conflict");
       const baseMs = Math.max(Date.parse(row.deadlineAt), Date.parse(input.nowIso));
-      const newDeadline = new Date(baseMs + input.addMinutes * 60_000);
-      const newGrace = new Date(newDeadline.getTime() + row.graceMinutes * 60_000);
+      const newDeadline = new Date(baseMs + (input.addMs ?? input.addMinutes * 60_000));
+      const newGrace = new Date(newDeadline.getTime() + (input.graceMs ?? row.graceMinutes * 60_000));
       row.state = "active";
       row.deadlineAt = newDeadline.toISOString();
       row.graceUntil = newGrace.toISOString();
@@ -570,7 +623,13 @@ export function createCore2TestHarness() {
         } else if (nowMs >= Date.parse(w.graceUntil)) {
           if (!w.incidentId) {
             const incId = randomUUID();
-            incidents.set(incId, { id: incId, familyId: w.familyId, state: "open" });
+            incidents.set(incId, {
+              id: incId,
+              familyId: w.familyId,
+              personId: w.subjectPersonId,
+              state: "open",
+              ownerPersonId: null,
+            });
             w.incidentId = incId;
           }
           w.state = "escalated";
@@ -662,6 +721,401 @@ export function createCore2TestHarness() {
         }
       }
     },
+    async listDueEscalations(nowIso, limit): Promise<DueIncidentEscalation[]> {
+      const nowMs = Date.parse(nowIso);
+      return [...incidentEscalations.values()]
+        .filter((e) => e.exhaustedAt === null && e.offerExpiresAt !== null && Date.parse(e.offerExpiresAt) <= nowMs)
+        .sort((a, b) => Date.parse(a.offerExpiresAt!) - Date.parse(b.offerExpiresAt!))
+        .slice(0, limit)
+        .map((e) => ({
+          incidentId: e.incidentId,
+          familyId: e.familyId,
+          subjectPersonId: e.subjectPersonId,
+          watchId: e.watchId,
+          sosId: e.sosId,
+          offerExpiresAt: e.offerExpiresAt!,
+        }));
+    },
+    async offerNextTrustedContact(input): Promise<OfferNextContactResult> {
+      const inc = incidents.get(input.incidentId);
+      if (!inc || inc.familyId !== input.familyId) {
+        throw new Core2Error("not_found", 404, "Incident not found.");
+      }
+      if (["accepted", "done", "closed", "heard"].includes(inc.state) || inc.ownerPersonId !== null) {
+        return {
+          assignmentId: null,
+          trustedContactId: null,
+          contactPersonId: null,
+          rank: null,
+          offeredAt: null,
+          expiresAt: null,
+          newlyCreated: false,
+          exhausted: false,
+        };
+      }
+      const linkedWatch = watches.find((w) => w.familyId === input.familyId && w.incidentId === input.incidentId) ?? null;
+      if (linkedWatch && (linkedWatch.state === "safe" || linkedWatch.state === "cancelled")) {
+        return {
+          assignmentId: null,
+          trustedContactId: null,
+          contactPersonId: null,
+          rank: null,
+          offeredAt: null,
+          expiresAt: null,
+          newlyCreated: false,
+          exhausted: false,
+        };
+      }
+      const linkedSos = sosEvents.find((s) => s.familyId === input.familyId && s.incidentId === input.incidentId) ?? null;
+      const nowMs = Date.parse(input.nowIso);
+
+      const isContactActive = (contactPersonId: string) =>
+        contacts.find(
+          (c) =>
+            c.familyId === input.familyId &&
+            c.subjectPersonId === inc.personId &&
+            c.contactPersonId === contactPersonId &&
+            c.state === "active" &&
+            c.revokedAt === null &&
+            c.scopes.includes(input.scope) &&
+            Date.parse(c.effectiveFrom) <= nowMs &&
+            (c.effectiveUntil === null || Date.parse(c.effectiveUntil) > nowMs),
+        ) ?? null;
+
+      const existingOffered = assignments
+        .filter((a) => a.familyId === input.familyId && a.incidentId === input.incidentId && a.status === "offered")
+        .sort((a, b) => Date.parse(b.offeredAt) - Date.parse(a.offeredAt))[0];
+
+      if (existingOffered) {
+        const activeTc = isContactActive(existingOffered.personId);
+        if (activeTc && Date.parse(existingOffered.expiresAt) > nowMs) {
+          return {
+            assignmentId: existingOffered.id,
+            trustedContactId: activeTc.id,
+            contactPersonId: existingOffered.personId,
+            rank: activeTc.rank,
+            offeredAt: existingOffered.offeredAt,
+            expiresAt: existingOffered.expiresAt,
+            newlyCreated: false,
+            exhausted: false,
+          };
+        }
+        existingOffered.status = "expired";
+      }
+
+      const triedPeople = new Set(
+        assignments
+          .filter((a) => a.familyId === input.familyId && a.incidentId === input.incidentId)
+          .map((a) => a.personId),
+      );
+      const nextTc = contacts
+        .filter(
+          (c) =>
+            c.familyId === input.familyId &&
+            c.subjectPersonId === inc.personId &&
+            c.state === "active" &&
+            c.revokedAt === null &&
+            c.scopes.includes(input.scope) &&
+            Date.parse(c.effectiveFrom) <= nowMs &&
+            (c.effectiveUntil === null || Date.parse(c.effectiveUntil) > nowMs) &&
+            !triedPeople.has(c.contactPersonId),
+        )
+        .sort((a, b) => a.rank - b.rank || a.id.localeCompare(b.id))[0];
+
+      if (!nextTc) {
+        incidentEscalations.set(input.incidentId, {
+          incidentId: input.incidentId,
+          familyId: input.familyId,
+          subjectPersonId: inc.personId,
+          watchId: linkedWatch?.id ?? null,
+          sosId: linkedSos?.id ?? null,
+          currentAssignmentId: null,
+          currentContactId: null,
+          offerExpiresAt: null,
+          exhaustedAt: input.nowIso,
+        });
+        if (inc.state === "open" || inc.state === "offered") inc.state = "escalated";
+        return {
+          assignmentId: null,
+          trustedContactId: null,
+          contactPersonId: null,
+          rank: null,
+          offeredAt: null,
+          expiresAt: null,
+          newlyCreated: false,
+          exhausted: true,
+        };
+      }
+
+      const newAsg = {
+        id: randomUUID(),
+        familyId: input.familyId,
+        incidentId: input.incidentId,
+        personId: nextTc.contactPersonId,
+        status: "offered",
+        offeredAt: input.nowIso,
+        expiresAt: input.offerExpiresAt,
+        acceptedAt: null,
+        verifiedByProviderEvent: null,
+      };
+      assignments.push(newAsg);
+      if (inc.state === "open" || inc.state === "escalated" || inc.state === "offered") {
+        inc.state = "offered";
+      }
+      incidentEscalations.set(input.incidentId, {
+        incidentId: input.incidentId,
+        familyId: input.familyId,
+        subjectPersonId: inc.personId,
+        watchId: linkedWatch?.id ?? null,
+        sosId: linkedSos?.id ?? null,
+        currentAssignmentId: newAsg.id,
+        currentContactId: nextTc.id,
+        offerExpiresAt: input.offerExpiresAt,
+        exhaustedAt: null,
+      });
+
+      return {
+        assignmentId: newAsg.id,
+        trustedContactId: nextTc.id,
+        contactPersonId: nextTc.contactPersonId,
+        rank: nextTc.rank,
+        offeredAt: newAsg.offeredAt,
+        expiresAt: newAsg.expiresAt,
+        newlyCreated: true,
+        exhausted: false,
+      };
+    },
+    async acceptIncidentAssignment(input): Promise<AcceptIncidentResult> {
+      const inc = incidents.get(input.incidentId);
+      if (!inc || inc.familyId !== input.familyId) {
+        throw new Core2Error("not_found", 404, "Incident not found.");
+      }
+      if (inc.state === "done" || inc.state === "closed") {
+        throw new Core2Error("incident_closed", 409, "Incident is already resolved or closed.");
+      }
+      const linkedWatch = watches.find((w) => w.familyId === input.familyId && w.incidentId === input.incidentId);
+      if (linkedWatch && (linkedWatch.state === "safe" || linkedWatch.state === "cancelled")) {
+        throw new Core2Error("incident_closed", 409, "Incident is already resolved or closed.");
+      }
+
+      const nowMs = Date.parse(input.nowIso);
+      const tc = contacts.find(
+        (c) =>
+          c.familyId === input.familyId &&
+          c.subjectPersonId === inc.personId &&
+          c.contactPersonId === input.actorPersonId &&
+          c.state === "active" &&
+          c.revokedAt === null &&
+          Date.parse(c.effectiveFrom) <= nowMs &&
+          (c.effectiveUntil === null || Date.parse(c.effectiveUntil) > nowMs) &&
+          (c.scopes.includes("sos") || c.scopes.includes("watch_escalation")),
+      );
+      if (!tc) {
+        for (const a of assignments) {
+          if (
+            a.familyId === input.familyId &&
+            a.incidentId === input.incidentId &&
+            a.personId === input.actorPersonId &&
+            a.status === "offered"
+          ) {
+            a.status = "expired";
+          }
+        }
+        throw new Core2Error("forbidden", 403, "Forbidden for requested subject.");
+      }
+
+      if (inc.ownerPersonId !== null && inc.ownerPersonId !== input.actorPersonId) {
+        throw new Core2Error("incident_already_accepted", 409, "Incident already accepted by another responder.");
+      }
+
+      const alreadyAsg = assignments.find(
+        (a) =>
+          a.familyId === input.familyId &&
+          a.incidentId === input.incidentId &&
+          a.personId === input.actorPersonId &&
+          a.status === "accepted",
+      );
+      if (alreadyAsg && inc.ownerPersonId === input.actorPersonId) {
+        return {
+          assignmentId: alreadyAsg.id,
+          incidentId: input.incidentId,
+          subjectPersonId: inc.personId,
+          responderPersonId: input.actorPersonId,
+          offeredAt: alreadyAsg.offeredAt,
+          acceptedAt: alreadyAsg.acceptedAt!,
+          alreadyAccepted: true,
+        };
+      }
+
+      const offeredAsg = assignments
+        .filter(
+          (a) =>
+            a.familyId === input.familyId &&
+            a.incidentId === input.incidentId &&
+            a.personId === input.actorPersonId &&
+            a.status === "offered",
+        )
+        .sort((a, b) => Date.parse(b.offeredAt) - Date.parse(a.offeredAt))[0];
+      if (!offeredAsg) {
+        throw new Core2Error("forbidden", 403, "No active escalation offer for caller.");
+      }
+      if (Date.parse(offeredAsg.expiresAt) <= nowMs) {
+        offeredAsg.status = "expired";
+        throw new Core2Error("assignment_expired", 409, "Escalation offer has already expired.");
+      }
+
+      offeredAsg.status = "accepted";
+      offeredAsg.acceptedAt = input.nowIso;
+      offeredAsg.verifiedByProviderEvent = input.rawEventId;
+      for (const a of assignments) {
+        if (
+          a.familyId === input.familyId &&
+          a.incidentId === input.incidentId &&
+          a.id !== offeredAsg.id &&
+          a.status === "offered"
+        ) {
+          a.status = "expired";
+        }
+      }
+      inc.state = "accepted";
+      inc.ownerPersonId = input.actorPersonId;
+
+      for (const s of sosEvents) {
+        if (s.familyId === input.familyId && s.incidentId === input.incidentId && s.status !== "safe" && s.status !== "cancelled") {
+          s.status = "verified_accepted";
+          s.responderAccepted = true;
+          s.acceptedAssignmentId = offeredAsg.id;
+          s.acceptedRawEventId = input.rawEventId;
+          s.version += 1;
+          s.updatedAt = input.nowIso;
+        }
+      }
+
+      const esc = incidentEscalations.get(input.incidentId);
+      if (esc) esc.offerExpiresAt = null;
+
+      if (linkedWatch) {
+        for (const o of outbox) {
+          if (o.familyId === input.familyId && o.watchId === linkedWatch.id && o.trustedContactId !== tc.id && o.status === "pending") {
+            o.status = "failed";
+          }
+        }
+      }
+
+      return {
+        assignmentId: offeredAsg.id,
+        incidentId: input.incidentId,
+        subjectPersonId: inc.personId,
+        responderPersonId: input.actorPersonId,
+        offeredAt: offeredAsg.offeredAt,
+        acceptedAt: offeredAsg.acceptedAt,
+        alreadyAccepted: false,
+      };
+    },
+    async declineIncidentAssignment(input): Promise<DeclineIncidentResult> {
+      const inc = incidents.get(input.incidentId);
+      if (!inc || inc.familyId !== input.familyId) {
+        throw new Core2Error("not_found", 404, "Incident not found.");
+      }
+      if (inc.state === "done" || inc.state === "closed") {
+        throw new Core2Error("incident_closed", 409, "Incident is already resolved or closed.");
+      }
+      if (inc.ownerPersonId !== null) {
+        throw new Core2Error("incident_already_accepted", 409, "Incident already accepted by another responder.");
+      }
+      const already = assignments.find(
+        (a) =>
+          a.familyId === input.familyId &&
+          a.incidentId === input.incidentId &&
+          a.personId === input.actorPersonId &&
+          a.status === "declined",
+      );
+      if (already) {
+        return {
+          assignmentId: already.id,
+          incidentId: input.incidentId,
+          subjectPersonId: inc.personId,
+          alreadyDeclined: true,
+        };
+      }
+      const offeredAsg = assignments.find(
+        (a) =>
+          a.familyId === input.familyId &&
+          a.incidentId === input.incidentId &&
+          a.personId === input.actorPersonId &&
+          a.status === "offered",
+      );
+      if (!offeredAsg) {
+        throw new Core2Error("forbidden", 403, "No active escalation offer for caller.");
+      }
+      offeredAsg.status = "declined";
+      const esc = incidentEscalations.get(input.incidentId);
+      if (esc && esc.currentAssignmentId === offeredAsg.id) {
+        esc.offerExpiresAt = input.nowIso;
+      }
+      return {
+        assignmentId: offeredAsg.id,
+        incidentId: input.incidentId,
+        subjectPersonId: inc.personId,
+        alreadyDeclined: false,
+      };
+    },
+    async loadTruthLineSnapshot(input): Promise<TruthLineStateSnapshot> {
+      const child = input.subjectPersonId
+        ? people.find((p) => p.familyId === input.familyId && p.id === input.subjectPersonId && p.role === "child") ?? null
+        : people.find((p) => p.familyId === input.familyId && p.role === "child") ?? null;
+      if (!child) {
+        throw new Core2Error("not_found", 404, "Subject child person not found in family.");
+      }
+      const prefs = await this.getSharingPreferences(input.familyId, child.id);
+      if (!prefs.shareStatusWithParent) {
+        return {
+          child,
+          preferences: prefs,
+          latestWatch: null,
+          activeIncidentOwnerName: null,
+          latestSos: null,
+          latestReassurance: null,
+        };
+      }
+      const latestWatch = (await this.listWatches(input.familyId, child.id, 1))[0] ?? null;
+      const latestSos = (await this.listSosEvents(input.familyId, child.id, 1))[0] ?? null;
+      const latestReassurance = (await this.listReassuranceUpdates(input.familyId, child.id, 1))[0] ?? null;
+
+      const activeIncidentIds = new Set<string>();
+      if (
+        latestWatch?.incidentId &&
+        (latestWatch.state === "active" ||
+          latestWatch.state === "checking_in" ||
+          latestWatch.state === "escalated")
+      ) {
+        activeIncidentIds.add(latestWatch.incidentId);
+      }
+      if (latestSos && latestSos.status !== "safe" && latestSos.status !== "cancelled") {
+        activeIncidentIds.add(latestSos.incidentId);
+      }
+
+      let activeIncidentOwnerName: string | null = null;
+      for (const incId of activeIncidentIds) {
+        const inc = incidents.get(incId);
+        if (inc && inc.familyId === input.familyId && inc.ownerPersonId) {
+          const owner = people.find((p) => p.familyId === input.familyId && p.id === inc.ownerPersonId);
+          if (owner) {
+            activeIncidentOwnerName = owner.displayName;
+            break;
+          }
+        }
+      }
+
+      return {
+        child,
+        preferences: prefs,
+        latestWatch,
+        activeIncidentOwnerName,
+        latestSos,
+        latestReassurance,
+      };
+    },
   };
 
   const deps: Core2Deps = {
@@ -728,6 +1182,7 @@ export function createCore2TestHarness() {
     },
     crypto: createWebhookCryptoPort(TEST_ENC_KEY),
     now: () => currentNow,
+    env: testEnv,
   };
 
   const service = createCore2Service(deps);
@@ -736,8 +1191,12 @@ export function createCore2TestHarness() {
   return {
     service,
     handlers,
+    env: testEnv,
     setNow(iso: string) {
       currentNow = new Date(iso);
+    },
+    advanceSeconds(sec: number) {
+      currentNow = new Date(currentNow.getTime() + sec * 1_000);
     },
     advanceMinutes(min: number) {
       currentNow = new Date(currentNow.getTime() + min * 60_000);
@@ -747,6 +1206,32 @@ export function createCore2TestHarness() {
     },
     addMembership(m: Core2Membership) {
       memberships.push(m);
+    },
+    addTrustedActor(input: {
+      userId: string;
+      personId: string;
+      displayName: string;
+      token: string;
+      familyId?: string;
+      role?: Core2Membership["role"];
+    }) {
+      const fam = input.familyId ?? SYNTH_IDS.familyA;
+      const role = input.role ?? "circle";
+      tokens.set(input.token, input.userId);
+      people.push({
+        id: input.personId,
+        familyId: fam,
+        displayName: input.displayName,
+        role,
+        timezone: "Asia/Kolkata",
+      });
+      memberships.push({
+        familyId: fam,
+        userId: input.userId,
+        personId: input.personId,
+        role,
+        revokedAt: null,
+      });
     },
     revokeMembership(userId: string, familyId: string) {
       const m = memberships.find((x) => x.userId === userId && x.familyId === familyId);
@@ -772,8 +1257,35 @@ export function createCore2TestHarness() {
       outbox,
       timelineEvents,
       reassuranceUpdates,
+      incidents,
       assignments,
+      incidentEscalations,
       publicKey: keyPair.publicKey,
+    },
+    async approveTrustedContactFor(input: {
+      contactPersonId: string;
+      approverToken: string;
+      rank: number;
+      scopes?: TrustedContactScope[];
+      effectiveUntil?: string | null;
+      subjectToken?: string;
+    }) {
+      const inv = await service.inviteTrustedContact(
+        { bearerToken: input.subjectToken ?? "tok-riya", familyIdHeader: null, idempotencyKeyHeader: `inv-${randomUUID()}` },
+        {
+          contact_person_id: input.contactPersonId,
+          rank: input.rank,
+          scopes: input.scopes ?? ["sos", "watch_escalation", "reassurance"],
+          effective_until: input.effectiveUntil ?? null,
+        },
+      );
+      const id = (inv.body.contact as { id: string }).id;
+      await service.approveTrustedContact(
+        { bearerToken: input.approverToken, familyIdHeader: null, idempotencyKeyHeader: `app-${randomUUID()}` },
+        id,
+        {},
+      );
+      return id;
     },
     async approveNehaAsTrustedContact(scopes: TrustedContactScope[] = ["sos", "watch_escalation", "reassurance"], effectiveUntil: string | null = null) {
       const inv = await service.inviteTrustedContact(

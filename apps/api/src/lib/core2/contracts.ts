@@ -11,6 +11,9 @@ export type Core2ErrorCode =
   | "conflict"
   | "stale_version"
   | "watch_cancelled"
+  | "incident_closed"
+  | "incident_already_accepted"
+  | "assignment_expired"
   | "consent_required"
   | "approval_required"
   | "storage_unavailable"
@@ -394,6 +397,8 @@ export interface Core2Repository {
     subjectPersonId: string;
     expectedVersion: number;
     addMinutes: number;
+    addMs?: number;
+    graceMs?: number;
     nowIso: string;
   }): Promise<WatchRow>;
 
@@ -456,6 +461,83 @@ export interface Core2Repository {
   ): Promise<ReassuranceRow[]>;
 
   fencePendingSosDispatches(familyId: string, sosId: string, reason: string): Promise<void>;
+
+  listDueEscalations(nowIso: string, limit: number): Promise<DueIncidentEscalation[]>;
+
+  offerNextTrustedContact(input: {
+    familyId: string;
+    incidentId: string;
+    scope: "sos" | "watch_escalation";
+    offerExpiresAt: string;
+    nowIso: string;
+  }): Promise<OfferNextContactResult>;
+
+  acceptIncidentAssignment(input: {
+    familyId: string;
+    incidentId: string;
+    actorPersonId: string;
+    rawEventId: string;
+    nowIso: string;
+  }): Promise<AcceptIncidentResult>;
+
+  declineIncidentAssignment(input: {
+    familyId: string;
+    incidentId: string;
+    actorPersonId: string;
+    nowIso: string;
+  }): Promise<DeclineIncidentResult>;
+
+  loadTruthLineSnapshot(input: {
+    familyId: string;
+    parentPersonId: string;
+    subjectPersonId?: string;
+  }): Promise<TruthLineStateSnapshot>;
+}
+
+export interface DueIncidentEscalation {
+  incidentId: string;
+  familyId: string;
+  subjectPersonId: string;
+  watchId: string | null;
+  sosId: string | null;
+  offerExpiresAt: string;
+}
+
+export interface OfferNextContactResult {
+  assignmentId: string | null;
+  trustedContactId: string | null;
+  contactPersonId: string | null;
+  rank: number | null;
+  offeredAt: string | null;
+  expiresAt: string | null;
+  newlyCreated: boolean;
+  exhausted: boolean;
+}
+
+export interface AcceptIncidentResult {
+  assignmentId: string;
+  incidentId: string;
+  subjectPersonId: string;
+  responderPersonId: string;
+  offeredAt: string;
+  acceptedAt: string;
+  alreadyAccepted: boolean;
+}
+
+export interface DeclineIncidentResult {
+  assignmentId: string;
+  incidentId: string;
+  subjectPersonId: string;
+  alreadyDeclined: boolean;
+}
+
+export interface TruthLineStateSnapshot {
+  child: Core2Person;
+  preferences: SharingPreferencesRow;
+  latestWatch: WatchRow | null;
+  activeIncidentOwnerName: string | null;
+  latestSos: SosRow | null;
+  latestReassurance: ReassuranceRow | null;
 }
 
 export interface Core2Deps {
@@ -467,6 +549,7 @@ export interface Core2Deps {
   crypto: Core2CryptoPort;
   now?: () => Date;
   uuid?: () => string;
+  env?: Record<string, string | undefined>;
 }
 
 // Public safe API DTOs (snake_case matching docs/phase5/CORE2-API.md)
