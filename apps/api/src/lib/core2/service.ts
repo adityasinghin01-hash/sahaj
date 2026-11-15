@@ -181,7 +181,7 @@ function toPublicContact(row: TrustedContactRow): PublicTrustedContactDto {
     family_id: row.familyId,
     subject_person_id: row.subjectPersonId,
     contact_person_id: row.contactPersonId,
-    display_name: row.contactDisplayName ?? null,
+    display_name: row.contactDisplayName ?? "Trusted contact",
     rank: row.rank,
     scopes: row.scopes,
     state: row.state,

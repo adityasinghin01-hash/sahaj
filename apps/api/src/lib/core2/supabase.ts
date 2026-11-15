@@ -496,7 +496,15 @@ export function createSupabaseCore2Repository(db: SupabaseClient): Core2Reposito
       }
       const { data, error } = await q;
       if (error || !Array.isArray(data)) throw new Core2Error("unavailable", 503, "Trusted contacts list failed.");
-      return (data as Row[]).map(mapContact);
+      // Contact names come from the family's people rows (the list query does not embed them); the Riya app needs a name.
+      const rows = data as Row[];
+      const ids = [...new Set(rows.map((r) => str(r.contact_person_id)).filter(Boolean))];
+      if (ids.length > 0) {
+        const { data: people } = await db.from("people").select("id,display_name").eq("family_id", familyId).in("id", ids);
+        const names = new Map((Array.isArray(people) ? (people as Row[]) : []).map((p) => [str(p.id), p.display_name]));
+        for (const r of rows) if (!r.people) r.people = { display_name: names.get(str(r.contact_person_id)) } as Row;
+      }
+      return rows.map(mapContact);
     },
 
     async getTrustedContact(familyId, contactId) {
