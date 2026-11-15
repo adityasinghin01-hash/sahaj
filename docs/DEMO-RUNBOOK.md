@@ -3,6 +3,15 @@
 Written from the code at 66c705c. Every quoted label cites its file. Paths are repo-relative. `parent/` = `apps/parent/`, `child/` = `apps/child/`, `shield/` = `apps/parent/modules/sahaj-shield/android/src/main/java/app/sahaj/shield/` (Kotlin).
 Role names only; real numbers live in `LAB_PHONE_*` env vars (`docs/DEMO-FAMILY.md:15-22`).
 
+> **Update 15 Nov 06:15 IST — READ THIS FIRST (supersedes section 0, the Twilio rows and "Known limits" below).**
+> - **All phone calls go through Sarvam** (`CALL_PROVIDER=sarvam`, Twilio off). Agents (committed): check-in **v5**, responder **v2**, callback **v3**, Madad inbound **v6** (live on the Sahaj number). Each agent's version is `SARVAM_AGENT_VERSION_<ROLE>`. Real calls are ON (`SARVAM_OUTBOUND_ENABLED=1`). Transfers go to Riya.
+> - **P1 urgent help** works from Maa's SOS button **and from the keypad** (speed dial → "madad"): Aasha says "Main abhi Rohit ko bula rahi hoon", the server calls Rohit with the responder agent; Rohit says "haan, 10 minute" → accepted only if it is the call our server placed (proof bound to that call), Riya gets the push, timeline line "Rohit aa rahe hain". "nahi" → next person.
+> - **P2 voice note to the keypad**: Aasha calls Maa and reads an AI transcript of Riya's note ("Riya ka sandesh: … — ye AI ka likha transcript hai"). If transcription fails she says "Riya ne aapke liye awaaz bheji hai".
+> - **S6 family check** works without WhatsApp: Aasha calls Rohit, asks "Kya abhi aapne hi Meena ji ko call kiya tha?", his haan/nahi is recorded (`family_check_answer`). Maa hears the result on the same Madad call, or by callback within ~90 s.
+> - **Human-answer timers**: the lab still runs `DEMO_TIMER_SCALE=60`, but the urgent offer, the voice proof (C6) and the family-check callback never drop below `DEMO_HUMAN_WAIT_SECONDS` (default 90 s; proof stays 60 s), so real people have time to answer.
+> - **Lab restart** (keeps data): `cd ~/dev/sahaj-wt/live && bash scripts/lab/lab-down2.sh && LAB2_PROXY_PORT=3100 bash scripts/lab/lab-up2.sh` — **the port is required** (default 3200 is not the tunnel's).
+> - Not wired: TeleCMI missed-call number (P5 via `POST /api/core1/missed-call-nudge` only), WhatsApp (dropped).
+
 > **Update 15 Nov 03:16 IST:** the section 0 blockers are fixed. The lab now serves all three cores behind the same public URL (apps/api + shield-api via scripts/lab/proxy.mjs). C-15 + K-DELIVER make Core 2 / phone-dying / refill sends reach the outbox. The keypad Core 1 tools answer for real (commit 792208b).
 
 ## 0. Read this before 03:15: blockers found in code
