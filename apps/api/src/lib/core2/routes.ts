@@ -8,6 +8,16 @@ import {
 } from "./http";
 import type { createCore2Service } from "./service";
 
+
+/**
+ * The Riya app (apps/child/lib/core2.ts `page()`) reads each list under its resource name ({sos}, {watches},
+ * {contacts}, {reassurance}); the service returns {items}. Without this alias every Core 2 screen showed
+ * "Request failed (200: invalid_response)", including in the already-installed APK. Both keys carry the same array.
+ */
+export function withListAlias<T extends { items: unknown[] }>(body: T, name: string): T & Record<string, unknown> {
+  return { ...body, [name]: body.items };
+}
+
 export type Core2Service = ReturnType<typeof createCore2Service>;
 
 async function wrapJson(fn: () => Promise<{ status: number; body: unknown }>): Promise<Response> {
@@ -32,7 +42,7 @@ export function createCore2RouteHandlers(getService: () => Core2Service) {
       return wrapJson(async () => {
         const svc = getService();
         const limit = new URL(request.url).searchParams.get("limit");
-        return { status: 200, body: await svc.listSos(extractAuthContext(request), limit) };
+        return { status: 200, body: withListAlias(await svc.listSos(extractAuthContext(request), limit), "sos") };
       });
     },
     async sosDetailGet(request: Request, sosId: string): Promise<Response> {
@@ -59,7 +69,7 @@ export function createCore2RouteHandlers(getService: () => Core2Service) {
       return wrapJson(async () => {
         const svc = getService();
         const limit = new URL(request.url).searchParams.get("limit");
-        return { status: 200, body: await svc.listWatches(extractAuthContext(request), limit) };
+        return { status: 200, body: withListAlias(await svc.listWatches(extractAuthContext(request), limit), "watches") };
       });
     },
     async watchDetailGet(request: Request, watchId: string): Promise<Response> {
@@ -104,7 +114,7 @@ export function createCore2RouteHandlers(getService: () => Core2Service) {
         const limit = params.get("limit");
         return {
           status: 200,
-          body: await svc.listTrustedContacts(extractAuthContext(request), includeRevoked, limit),
+          body: withListAlias(await svc.listTrustedContacts(extractAuthContext(request), includeRevoked, limit), "contacts"),
         };
       });
     },
@@ -140,7 +150,7 @@ export function createCore2RouteHandlers(getService: () => Core2Service) {
       return wrapJson(async () => {
         const svc = getService();
         const limit = new URL(request.url).searchParams.get("limit");
-        return { status: 200, body: await svc.listReassurance(extractAuthContext(request), limit) };
+        return { status: 200, body: withListAlias(await svc.listReassurance(extractAuthContext(request), limit), "reassurance") };
       });
     },
     async preferencesGet(request: Request): Promise<Response> {
