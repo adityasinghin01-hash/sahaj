@@ -367,6 +367,37 @@ export function LiveAlert({ id }: { id: string }) {
     </Screen>
   );
 }
+const STEP_LABELS: Record<string, string> = {
+  'shield.drill.experience.refused': 'Practice call skipped: Maa has not said yes',
+  'shield.drill.helper.planned': 'Weekly practice planned',
+  'shield.gate.check': 'Safety gate checked an action',
+  'gate.action': 'Safety gate decision',
+  'tool.verdict': 'Scam check result',
+  'shield.voice.classify_scam': 'Aasha checked a suspicious call',
+  'shield.voice.money_sent': 'Maa said money went: 1930 line spoken',
+  'shield.voice.family_check.fallback': 'Family check: safe fallback line',
+  'shield.voice.check_message.fallback': 'Message check: safe fallback line',
+  'shield.voice.check_code_word.fallback': 'Code word check: safe fallback line',
+  'shield.family_check.answered': 'Family member answered the check',
+  'child_card_push': 'Alert sent to Riya',
+  'whatsapp_alert': 'Family alert queued',
+};
+/** Plain words for a signed step; the raw step id stays visible underneath for audit. */
+export function stepLabel(step: string): string {
+  if (STEP_LABELS[step]) return STEP_LABELS[step];
+  const words = step.replace(/^shield\./, '').replace(/[._]+/g, ' ').trim();
+  return words ? words.charAt(0).toUpperCase() + words.slice(1) : step;
+}
+/** Consecutive identical steps (e.g. a refused practice call at every restart) collapse into one row with a count. */
+export function collapseSteps<R extends { step: string }>(rows: R[]): { row: R; count: number }[] {
+  const out: { row: R; count: number }[] = [];
+  for (const row of rows) {
+    const last = out[out.length - 1];
+    if (last && last.row.step === row.step) last.count += 1;
+    else out.push({ row, count: 1 });
+  }
+  return out;
+}
 export function LiveTimeline() {
   const live = useLive(loadTimeline);
   return (
@@ -375,12 +406,15 @@ export function LiveTimeline() {
       <Status error={live.error} loading={!live.data} updated={live.updated} />
       <Btn label="Verify hash chain" onPress={() => router.push('/verify')} />
       <Section title="Signed Shield record">
-        {live.data?.rows.map((r) => (
+        {collapseSteps(live.data?.rows ?? []).map(({ row: r, count }) => (
           <Card className="mb-3" key={r.id}>
             <T v="small">{new Date(r.created_at).toLocaleString()}</T>
-            <T v="h3">{r.step}</T>
+            <T v="h3">
+              {stepLabel(r.step)}
+              {count > 1 ? ` ×${count}` : ''}
+            </T>
             <T v="small">
-              {r.status ?? 'recorded'} · step {r.seq}
+              {r.status ?? 'recorded'} · step {r.seq} · {r.step}
             </T>
           </Card>
         ))}

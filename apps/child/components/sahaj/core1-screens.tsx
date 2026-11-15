@@ -168,8 +168,21 @@ function useCore1Query<T>(
   return { data, loading, error, retry: setRev };
 }
 
-export function LangToggle() {
+export function LangToggle({ compact = false }: { compact?: boolean }) {
   const [lang, setLang] = useCore1Lang();
+  if (compact) {
+    // Header slot is a 44 px circle: show only the language a tap switches to.
+    return (
+      <Tap
+        accessibilityLabel={lang === 'en' ? 'Hindi mein dekhein' : 'Switch to English'}
+        onPress={() => setLang(lang === 'en' ? 'hi' : 'en')}
+        className="h-11 w-11 items-center justify-center rounded-full border border-sand-line bg-white">
+        <T v="small" numberOfLines={1} className="font-jk-bold text-ink">
+          {lang === 'en' ? 'हि' : 'EN'}
+        </T>
+      </Tap>
+    );
+  }
   return (
     <Tap
       accessibilityLabel="Switch language between English and Hindi"
@@ -429,7 +442,7 @@ export function LiveMaasDayScreen() {
 
   return (
     <Screen>
-      <TopBar title={s.maasDayTitle} right={<LangToggle />} />
+      <TopBar title={s.maasDayTitle} right={<LangToggle compact />} />
       {checkins.loading && !checkins.data ? (
         <Card>
           <T v="body">{s.loading}</T>
@@ -518,6 +531,8 @@ export function LiveVoiceScreen() {
   const s = CORE1_STRINGS[lang];
   const api = useCore1Api();
   const voice = useCore1Query<VoiceFeedResponse>(loadVoice);
+  // Maa is the default recipient even before any message exists (the check-in feed names her).
+  const checkins = useCore1Query<CheckInsFeedResponse>(loadCheckins);
   const recorder = useVoiceRecorder();
   const player = useVoicePlayer();
 
@@ -540,8 +555,14 @@ export function LiveVoiceScreen() {
       if (item.from_person_id !== callerId) return item.from_person_id;
       if (item.to_person_id !== callerId) return item.to_person_id;
     }
-    return '';
-  }, [recipientOverride, voice.data]);
+    return checkins.data?.next_checkin?.person_id ?? checkins.data?.items[0]?.person_id ?? '';
+  }, [recipientOverride, voice.data, checkins.data]);
+  const recipientName = React.useMemo(() => {
+    if (!inferredRecipientId) return '';
+    const c = checkins.data;
+    if (c?.next_checkin?.person_id === inferredRecipientId) return c.next_checkin.person_display_name;
+    return c?.items.find((i) => i.person_id === inferredRecipientId)?.person_display_name ?? '';
+  }, [inferredRecipientId, checkins.data]);
 
   const startRecording = async () => {
     setSendError(null);
@@ -631,7 +652,7 @@ export function LiveVoiceScreen() {
 
   return (
     <Screen>
-      <TopBar title={s.voiceTitle} right={<LangToggle />} />
+      <TopBar title={s.voiceTitle} right={<LangToggle compact />} />
       <T v="title">{s.voiceTitle}</T>
       <T v="body" className="mt-2">
         {s.voiceSub}
@@ -673,7 +694,7 @@ export function LiveVoiceScreen() {
             />
           ) : (
             <T v="small" className="mt-3">
-              Recipient ID: {inferredRecipientId}
+              To: {recipientName || 'Maa'}
             </T>
           )}
           <Field
@@ -797,7 +818,7 @@ export function LiveUrgentScreen() {
 
   return (
     <Screen>
-      <TopBar title={s.urgentTitle} right={<LangToggle />} />
+      <TopBar title={s.urgentTitle} right={<LangToggle compact />} />
       {incidents.loading && !incidents.data ? (
         <Card>
           <T v="body">{s.loading}</T>
@@ -973,7 +994,7 @@ export function LiveRefillsScreen() {
 
   return (
     <Screen>
-      <TopBar title={s.refillsTitle} right={<LangToggle />} />
+      <TopBar title={s.refillsTitle} right={<LangToggle compact />} />
       <T v="body" className="mb-4">
         {s.refillsSub}
       </T>

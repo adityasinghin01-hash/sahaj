@@ -25,7 +25,7 @@ function DemoMaasDay() {
   const s = CORE1_STRINGS[lang];
   return (
     <Screen>
-      <TopBar title={s.maasDayTitle} right={<LangToggle />} />
+      <TopBar title={s.maasDayTitle} right={<LangToggle compact />} />
       <View className="mb-4 flex-row items-center justify-between rounded-2xl bg-teal-soft px-4 py-2.5">
         <View className="flex-row items-center">
           <LiveDot color="bg-teal" size={7} />

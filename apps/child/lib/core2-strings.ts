@@ -42,6 +42,7 @@ export const core2Strings = {
     hi: 'परिवार ID (UUID; कई परिवार हों तो ज़रूरी)',
   },
   saveFamily: { en: 'Use this family', hi: 'यह परिवार चुनें' },
+  familySettings: { en: 'Family settings', hi: 'परिवार सेटिंग' },
   saved: { en: 'Server record saved.', hi: 'जानकारी सर्वर पर सुरक्षित है।' },
   empty: { en: 'No records yet.', hi: 'अभी कोई जानकारी नहीं है।' },
   more: { en: 'Load more', hi: 'और देखें' },
@@ -100,8 +101,8 @@ export const core2Strings = {
   reached_home: { en: 'Reached home', hi: 'घर पहुँच गए' },
   truth_line: { en: 'Truth line', hi: 'सच्ची जानकारी' },
   recipients: {
-    en: 'Recipient person IDs (comma-separated UUIDs)',
-    hi: 'पाने वालों की व्यक्ति IDs (UUID, कॉमा से अलग)',
+    en: 'Send only to (optional). Leave empty to use your sharing settings.',
+    hi: 'सिर्फ़ इन्हें भेजें (वैकल्पिक)। खाली छोड़ें तो आपकी शेयरिंग सेटिंग लागू होगी।',
   },
   voiceId: {
     en: 'Existing consented voice post ID (optional)',

@@ -44,6 +44,8 @@ export function Core2Gate({
   const t = useCore2Text();
   const [family, setFamily] = React.useState(session?.familyId ?? '');
   const [familyError, setFamilyError] = React.useState(false);
+  // Family choice matters only for accounts in several families; keep it out of the way unless asked for.
+  const [showFamily, setShowFamily] = React.useState(false);
   React.useEffect(() => {
     setFamily(session?.familyId ?? '');
     setFamilyError(false);
@@ -88,6 +90,9 @@ export function Core2Gate({
       ) : (
         <>
           <View key={`${session.url}|${session.token}|${session.familyId ?? ''}`}>{children}</View>
+          {!showFamily && !familyError ? (
+            <Btn label={t('familySettings')} kind="ghost" className="mt-6" onPress={() => setShowFamily(true)} />
+          ) : (
           <Card className="mt-6">
             <Field
               label={t('family')}
@@ -107,6 +112,7 @@ export function Core2Gate({
             />
             {familyError ? <Notice>{t('invalid')}</Notice> : null}
           </Card>
+          )}
         </>
       )}
     </Screen>
