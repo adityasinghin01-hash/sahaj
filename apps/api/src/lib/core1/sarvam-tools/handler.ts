@@ -147,9 +147,9 @@ function spoken(tool: ToolName, result: ToolResult): string {
     case 'mark_private': return 'Theek hai, is call ki niji baat Riya ke saath nahi baantungi.';
     case 'cancel_permission': return 'Theek hai, woh ijazat band kar di hai.';
     case 'medicine_count': return result.refill_proposed ? 'Goliyon ki ginti likh li. Dawa mangwane ki ijazat parivar se pooch rahi hoon.' : 'Theek hai, goliyon ki ginti likh li hai.';
-    case 'accept_incident': return 'Shukriya, aapka jawab Riya ko bhej diya hai.';
+    case 'accept_incident': return 'Shukriya. Maa aur parivar ko bata diya hai ki aap aa rahe hain.';
     case 'decline_incident': return result.status === 'escalated'
-      ? 'Koi baat nahi. Main Riya ko bata rahi hoon.'
+      ? 'Koi baat nahi. Main parivar ko bata rahi hoon.'
       : 'Koi baat nahi, agle vyakti se pooch rahi hoon.';
   }
 }
