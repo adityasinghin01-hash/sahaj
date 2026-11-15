@@ -20,7 +20,7 @@ function fixture(openIncident: boolean) {
     if (q.includes('display_name')) return [{ display_name: 'Rohit' }];
     return [{ id: 'x' }];
   });
-  const sql = Object.assign(async (parts: TemplateStringsArray, ...args: unknown[]) => query(parts.join('?'), args as never), { reserve: vi.fn(), begin: vi.fn(), release: vi.fn() });
+  const sql = Object.assign(async (parts: TemplateStringsArray, ...args: unknown[]) => query(parts.join("?")), { reserve: vi.fn(), begin: vi.fn(), release: vi.fn() });
   const db = { from: vi.fn(() => ({ select: () => ({ eq: () => ({ eq: () => ({ is: () => ({ single: async () => ({ data: { family_id: ctx.familyId, person_id: ctx.parentId, user_id: 'u', role: 'parent' } }) }) }) }) }) })) };
   const create = vi.fn(async () => ({ incidentId: 'inc-1', assignmentId: 'asg-1', responderPersonId: ROHIT, state: 'offered', expiresAt: '' }));
   const urgent = { store: { createUrgentIncidentOfferScaled: create } } as unknown as ProductionOverrides['urgent'];

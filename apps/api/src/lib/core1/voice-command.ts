@@ -12,6 +12,7 @@
  */
 
 import { NextResponse } from 'next/server';
+import { createSupabaseKeypadTranscriptDeps, keypadVoiceTranscript } from './voice-transcript';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { handleCore1ApiRoute } from './handler';
 import type { Core1ServicePorts } from './types';
@@ -49,6 +50,9 @@ export function createSupabaseVoiceCommandFinalizeDeps(
   db: SupabaseClient,
 ): VoiceCommandFinalizeDeps {
   const notifyDeps = createSupabaseVoiceNotifyDeps(db);
+  const transcriptDeps = createSupabaseKeypadTranscriptDeps(db, (f, p) => notifyDeps.repo.getPerson(f, p));
+  // voicePostId -> uploaded object, so the keypad call can read an AI transcript of the note.
+  const mediaByPost = new Map<string, string>();
   return {
     auth: createSupabaseVoiceAuthPorts(db),
     timeline: createSupabaseVoiceTimelinePort(db),
@@ -64,9 +68,16 @@ export function createSupabaseVoiceCommandFinalizeDeps(
       if (error || !data || typeof (data as { voice_post_id?: string }).voice_post_id !== 'string') {
         throw new Error('create_family_voice_post_failed');
       }
-      return { voicePostId: (data as { voice_post_id: string }).voice_post_id };
+      const voicePostId = (data as { voice_post_id: string }).voice_post_id;
+      mediaByPost.set(voicePostId, input.mediaObjectPath);
+      return { voicePostId };
     },
-    notify: (input) => notifyVoicePost(notifyDeps, input),
+    async notify(input) {
+      const objectPath = mediaByPost.get(input.voicePostId);
+      mediaByPost.delete(input.voicePostId);
+      const transcript = input.transcript ?? await keypadVoiceTranscript(transcriptDeps, { familyId: input.familyId, recipientId: input.recipientId, objectPath });
+      return notifyVoicePost(notifyDeps, { ...input, transcript });
+    },
   };
 }
 
