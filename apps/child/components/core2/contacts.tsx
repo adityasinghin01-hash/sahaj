@@ -74,7 +74,6 @@ function Contact({ contact, refresh }: { contact: TrustedContact; refresh: () =>
     <Card className="mt-4">
       <T v="h2">{contact.display_name}</T>
       <T>{t(current.state === 'active' ? 'contactActive' : stateKey(current.state))}</T>
-      <T selectable>{contact.contact_person_id}</T>
       {current.state !== 'revoked' ? (
         <>
           <Field

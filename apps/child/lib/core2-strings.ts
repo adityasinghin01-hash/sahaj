@@ -143,7 +143,7 @@ export const core2Strings = {
   approve: { en: 'I am this contact · approve and consent', hi: 'मैं यह व्यक्ति हूँ · अनुमति और सहमति दें' },
   revoke: { en: 'Revoke contact', hi: 'व्यक्ति की अनुमति वापस लें' },
   saveContact: { en: 'Save order and scopes', hi: 'क्रम और अनुमति सुरक्षित करें' },
-  until: { en: 'Valid until (optional ISO date/time)', hi: 'कब तक मान्य (वैकल्पिक ISO दिन और समय)' },
+  until: { en: 'Valid until (optional, e.g. 2026-12-31)', hi: 'कब तक मान्य (वैकल्पिक, जैसे 2026-12-31)' },
   preferences: { en: 'Sharing preferences', hi: 'जानकारी साझा करने की अनुमति' },
   share_status_with_parent: { en: 'Share safety status with Maa', hi: 'माँ को सुरक्षा की स्थिति बताएँ' },
   allow_location_share: { en: 'Allow location sharing', hi: 'स्थान साझा करने की अनुमति' },
