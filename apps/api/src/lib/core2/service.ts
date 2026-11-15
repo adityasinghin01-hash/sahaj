@@ -1059,7 +1059,8 @@ export function createCore2Service(deps: Core2Deps) {
         { etaMinutes, graceMinutes, timezone, fromLabel, toLabel, cabNote: cabNote ?? null },
         async (keyHash) => {
           const now = getNow();
-          const deadline = new Date(now.getTime() + scaleDurationMs(etaMinutes * 60_000, env));
+          // Riya picks the minutes herself: the Going-home deadline is real time, never shrunk by DEMO_TIMER_SCALE.
+          const deadline = new Date(now.getTime() + etaMinutes * 60_000);
           const graceUntil = new Date(deadline.getTime() + scaleDurationMs(graceMinutes * 60_000, env));
 
           const rawEventId = await ingestEncryptedEvent({
@@ -1144,7 +1145,7 @@ export function createCore2Service(deps: Core2Deps) {
             subjectPersonId: actor.personId,
             expectedVersion,
             addMinutes,
-            addMs: scaleDurationMs(addMinutes * 60_000, env),
+            addMs: addMinutes * 60_000,
             graceMs: scaleDurationMs(existing.graceMinutes * 60_000, env),
             nowIso: getNow().toISOString(),
           });
