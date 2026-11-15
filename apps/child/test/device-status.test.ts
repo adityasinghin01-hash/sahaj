@@ -75,3 +75,14 @@ describe('device reporting', () => {
     expect(core2Text('hi', 'phoneLow')).toContain('प्रिया और माँ');
   });
 });
+
+import { safeSubscribe } from '../lib/device-reporter';
+describe('battery listeners on web', () => {
+  it('a subscribe that throws (expo-battery on web) becomes a no-op instead of crashing the app', () => {
+    const sub = safeSubscribe(() => { throw new TypeError('u.default.addListener is not a function'); });
+    expect(() => sub.remove()).not.toThrow();
+    const remove = vi.fn();
+    safeSubscribe(() => ({ remove })).remove();
+    expect(remove).toHaveBeenCalledOnce();
+  });
+});

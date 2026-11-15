@@ -41,3 +41,9 @@ export function createDeviceReporter(send: (input: DeviceInput, key: string) => 
     stop() { stopped = true; latest = null; },
   };
 }
+
+/** Battery listeners are optional (unsupported on web): a failed subscribe becomes a no-op subscription. */
+export function safeSubscribe(subscribe: () => { remove(): void }): { remove(): void } {
+  try { const sub = subscribe(); return sub && typeof sub.remove === 'function' ? sub : { remove() {} }; }
+  catch { return { remove() {} }; }
+}

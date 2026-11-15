@@ -2,7 +2,7 @@ import * as React from 'react';
 import { AppState } from 'react-native';
 import * as Battery from 'expo-battery';
 import { createCore2 } from './core2';
-import { createDeviceReporter, normalizeBattery, type BatterySample } from './device-reporter';
+import { createDeviceReporter, normalizeBattery, safeSubscribe, type BatterySample } from './device-reporter';
 import { useSession, type Session } from './session';
 
 let snapshot: BatterySample = { battery_level: null, is_charging: null };
@@ -45,8 +45,9 @@ function SignedInDeviceStatus({ session }: { session: Session }) {
     void read();
     // Android battery events are sparse; sample as well to catch the 10% crossing.
     const timer = setInterval(() => { if (AppState.currentState === 'active') void read(); }, 15000);
-    const level = Battery.addBatteryLevelListener(() => { void read(); });
-    const charging = Battery.addBatteryStateListener(() => { void read(); });
+    // expo-battery has no event emitter on web: subscribing there threw and crashed the whole Riya web app after sign-in.
+    const level = safeSubscribe(() => Battery.addBatteryLevelListener(() => { void read(); }));
+    const charging = safeSubscribe(() => Battery.addBatteryStateListener(() => { void read(); }));
     const appState = AppState.addEventListener('change', (state) => { if (state === 'active') void read(); });
     return () => {
       disposed = true; reporter.stop(); clearInterval(timer); level.remove(); charging.remove(); appState.remove();
