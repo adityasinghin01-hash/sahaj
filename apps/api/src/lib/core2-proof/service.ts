@@ -12,6 +12,7 @@ import {
   assertSarvamToolToken,
   authenticateCore2Actor,
   scaleDurationMs,
+  humanWaitMs,
 } from "@/lib/core2/security";
 import { notifyVoicePost } from "@/lib/core1/voice-notify";
 import { verifyShieldCodeWord, rotateShieldCodeWordAfterUse, sha256Hex } from "./code-word";
@@ -243,7 +244,7 @@ export function createCore2ProofService(deps: Core2ProofDeps) {
     const subject = await resolveSubjectChild(input.familyId, input.subjectPersonId);
     const wordEntry = PROOF_WORD_BANK[pickIndex(PROOF_WORD_BANK.length)] ?? PROOF_WORD_BANK[0]!;
     const now = getNow();
-    const ttlMs = scaleDurationMs(PROOF_DEFAULT_TTL_MS, env);
+    const ttlMs = humanWaitMs(PROOF_DEFAULT_TTL_MS, env);
     const ttlSeconds = Math.max(1, Math.round(ttlMs / 1000));
     const expiresAt = new Date(now.getTime() + ttlMs).toISOString();
 

@@ -140,7 +140,8 @@ describe("DEMO_TIMER_SCALE", () => {
     await scheduledShieldTools.family_check_result.run(deps, ctx, { check_id: out.check_id! });
     expect(queued.map((q) => [q.job, q.ms])).toEqual([
       [SHIELD_JOBS.escalate, 6_000],
-      [SHIELD_JOBS.callback, 12_000],
+      // The callback waits for a person to answer a real call: human floor (90 s, capped at the 120 s base).
+      [SHIELD_JOBS.callback, 90_000],
     ]);
   });
 });
@@ -214,5 +215,15 @@ describe("scheduledShieldTools (tool flow)", () => {
     expect(scheduledShieldTools.money_sent).toBe(shieldTools.money_sent);
     expect(scheduledShieldTools.family_check.name).toBe("family_check");
     expect(scheduledShieldTools.family_check_result.input).toBe(shieldTools.family_check_result.input);
+  });
+});
+
+import { humanDelay } from "../../src/jobs/family_check_jobs";
+describe("humanDelay (waits for a person to answer a real call)", () => {
+  it("never shrinks the family-check callback below 90 s under the demo scale", () => {
+    expect(humanDelay(CALLBACK_AFTER_MS, { DEMO_TIMER_SCALE: "60" })).toBe(90_000);
+    expect(humanDelay(CALLBACK_AFTER_MS, { DEMO_TIMER_SCALE: "60", DEMO_HUMAN_WAIT_SECONDS: "30" })).toBe(30_000);
+    expect(humanDelay(CALLBACK_AFTER_MS, {})).toBe(CALLBACK_AFTER_MS);
+    expect(humanDelay(60_000, { DEMO_TIMER_SCALE: "60" })).toBe(60_000);
   });
 });

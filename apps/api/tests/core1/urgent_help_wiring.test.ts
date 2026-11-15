@@ -506,7 +506,8 @@ describe('Core 1 Urgent Help End-to-End Wiring', () => {
 
     // 3m / 60 = 3s scaled timeout!
     const offeredExpiry = Date.parse(String(initRes.body.expiresAt));
-    expect(offeredExpiry - Date.parse('2026-11-15T06:00:00.000Z')).toBe(3000);
+    // 3 min / 60 = 3 s would expire before a real phone is answered: human floor 90 s.
+    expect(offeredExpiry - Date.parse('2026-11-15T06:00:00.000Z')).toBe(90_000);
 
     // Verify Twilio outbound call used resolved phone number + TwiML URL, NEVER WhatsApp
     expect(h.twilioHttpCalls).toHaveLength(1);
@@ -536,8 +537,8 @@ describe('Core 1 Urgent Help End-to-End Wiring', () => {
     expect(h.twilioHttpCalls).toHaveLength(2);
     expect(decodeURIComponent(h.twilioHttpCalls[1].body)).toContain(`To=${PHONE_VERMA}`);
 
-    // Advance clock past scaled 3s expiry -> cron tick escalates when circle is exhausted
-    h.advanceClockMs(4000);
+    // Advance clock past the 90 s human-floor expiry -> cron tick escalates when circle is exhausted
+    h.advanceClockMs(91_000);
     const tick = await processUrgentEscalationTick(h.deps);
     expect(tick.timeoutsAdvanced).toBe(1);
     expect(h.incidents.get(incId)?.state).toBe('escalated');

@@ -187,7 +187,7 @@ describe(`joined Shield runtime (${process.env.DATABASE_URL ? "Postgres" : "memo
     expect(f.ports.calls.startResponderCall).toHaveBeenCalledOnce();
     for (let i = 0; i < 2; i++) await f.runtime.shieldTools.run("family_check_result", f.ctx, { check_id: check.check_id! });
     const callback = f.jobs.find(job => job.name === "shield.family_check.callback")!;
-    expect(callback.delay).toBe(2000);
+    expect(callback.delay).toBe(90_000); // human floor: waits for a person on a real call
     expect(await f.runtime.handleScheduledJob(callback.name, callback.payload)).toMatchObject({ outcome: "callback_no_answer" });
     expect(await f.runtime.handleScheduledJob(callback.name, callback.payload)).toMatchObject({ outcome: "duplicate" });
     expect(f.ports.calls.startCallback).toHaveBeenCalledOnce();

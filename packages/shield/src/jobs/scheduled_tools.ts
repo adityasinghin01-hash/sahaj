@@ -19,6 +19,7 @@ import {
   SHIELD_JOBS,
   familyCheckJobPayload,
   scaleDelay,
+  humanDelay,
   type Env,
   type JobLedger,
   type Scheduler,
@@ -108,7 +109,7 @@ const familyCheckResult: FamilyCheckResultTool = {
       if (firstPending) return;
       const firstQueue = await jobs.claim(`shield.family_check.callback_queued:${checkId}`);
       if (!firstQueue) return;
-      await scheduler.after(scaleDelay(CALLBACK_AFTER_MS, deps.env), SHIELD_JOBS.callback, familyCheckJobPayload(checkId, ctx));
+      await scheduler.after(humanDelay(CALLBACK_AFTER_MS, deps.env), SHIELD_JOBS.callback, familyCheckJobPayload(checkId, ctx));
     });
     return out;
   },

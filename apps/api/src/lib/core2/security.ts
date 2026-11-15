@@ -244,6 +244,19 @@ export function getDemoTimerScale(env: Record<string, string | undefined> = proc
   return Number.isFinite(parsed) && parsed > 0 ? parsed : 1;
 }
 
+/**
+ * Waits for a PERSON to answer a phone call or the app (urgent offer, voice proof, family-check callback) are never
+ * shrunk below DEMO_HUMAN_WAIT_SECONDS (default 90 s) by DEMO_TIMER_SCALE: a real phone takes ~10 s to ring and ~15 s
+ * to answer. Scale 1 (production) keeps the full base duration; the floor never exceeds the base.
+ */
+export function humanWaitMs(baseMs: number, env: Record<string, string | undefined> = process.env): number {
+  const scale = getDemoTimerScale(env);
+  if (scale <= 1) return baseMs;
+  const raw = Number(env.DEMO_HUMAN_WAIT_SECONDS ?? '90');
+  const floorMs = (Number.isFinite(raw) && raw >= 0 ? raw : 90) * 1000;
+  return Math.max(Math.round(baseMs / scale), Math.min(baseMs, floorMs));
+}
+
 export function scaleDurationMs(
   baseMs: number,
   env: Record<string, string | undefined> = process.env,

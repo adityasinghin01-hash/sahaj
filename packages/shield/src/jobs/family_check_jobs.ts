@@ -80,6 +80,18 @@ export function scaleDelay(ms: number, env: Env = defaultEnv()): number {
   return Math.max(0, Math.round(ms / timerScale(env)));
 }
 
+/**
+ * Waits for a PERSON to answer a real phone call are never shrunk below DEMO_HUMAN_WAIT_SECONDS (default 90 s) by the
+ * demo scale; never longer than the base. Scale 1 keeps the base.
+ */
+export function humanDelay(ms: number, env: Env = defaultEnv()): number {
+  const scaled = scaleDelay(ms, env);
+  if (scaled >= ms) return ms;
+  const raw = Number(env.DEMO_HUMAN_WAIT_SECONDS ?? "90");
+  const floor = (Number.isFinite(raw) && raw >= 0 ? raw : 90) * 1000;
+  return Math.max(scaled, Math.min(ms, floor));
+}
+
 /* ------------------------------------------------------------------ payload */
 
 export const FamilyCheckJobPayload = z.object({

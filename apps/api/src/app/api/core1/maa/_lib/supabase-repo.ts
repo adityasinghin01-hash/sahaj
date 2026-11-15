@@ -1,5 +1,5 @@
 import { createSupabaseCore1Repository } from '@/lib/core1/repository';
-import { parseDemoTimerScale, scaleDurationSeconds } from '@/lib/core1/push-notify';
+import { humanWaitSeconds, parseDemoTimerScale } from '@/lib/core1/push-notify';
 import { serviceDatabase } from '@/lib/database';
 import { cedarMediaAuthorizer } from '@/lib/media/cedar-authorizer';
 import { voiceShareConsentPurpose, type ConsentRow, type MediaAuthorizationContext, type VoiceContentRow } from '@/lib/media/contracts';
@@ -306,7 +306,7 @@ export function createSupabaseMaaRepo(client: ServiceDbClient = serviceDatabase(
     async createUrgentIncidentOffer(params) {
       const scale = parseDemoTimerScale(process.env);
       if (scale !== 1) {
-        const scaledSeconds = scaleDurationSeconds(params.offerTimeoutMinutes ?? 3, scale);
+        const scaledSeconds = humanWaitSeconds(params.offerTimeoutMinutes ?? 3, scale);
         const { data, error } = await client.rpc('create_urgent_incident_offer_scaled', {
           p_family_id: params.familyId,
           p_subject_person_id: params.subjectPersonId,

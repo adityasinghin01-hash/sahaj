@@ -82,6 +82,7 @@ import {
   parseDemoTimerScale,
   sanitizeNoDigitsRun,
   scaleDurationSeconds,
+  humanWaitSeconds,
   sendAppPushTokens,
   type PushFetch,
 } from './push-notify';
@@ -672,7 +673,7 @@ export async function advanceAndDispatchNextResponder(
   pushResult?: { sent: boolean; tokenCount: number; reason?: string };
 }> {
   const scale = parseDemoTimerScale(deps.env ?? process.env);
-  const timeoutSeconds = scaleDurationSeconds(DEFAULT_OFFER_TIMEOUT_MINUTES, scale);
+  const timeoutSeconds = humanWaitSeconds(DEFAULT_OFFER_TIMEOUT_MINUTES, scale, deps.env ?? process.env);
   const advanced = await deps.store.advanceUrgentOffer({
     familyId: params.familyId,
     incidentId: params.incidentId,
@@ -1018,7 +1019,7 @@ export async function executeUrgentHelpCommand(
 
   if (payload.action === 'initiate') {
     const scale = parseDemoTimerScale(deps.env ?? process.env);
-    const timeoutSeconds = scaleDurationSeconds(DEFAULT_OFFER_TIMEOUT_MINUTES, scale);
+    const timeoutSeconds = humanWaitSeconds(DEFAULT_OFFER_TIMEOUT_MINUTES, scale, deps.env ?? process.env);
     const created = await deps.store.createUrgentIncidentOfferScaled({
       familyId: actor.familyId,
       subjectPersonId: payload.subjectPersonId,

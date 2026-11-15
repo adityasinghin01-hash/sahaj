@@ -59,6 +59,24 @@ export function scaleDurationSeconds(baseMinutes: number, scale: number): number
   return Math.max(1, Math.round((safeBase * 60) / safeScale));
 }
 
+/**
+ * Waits for a PERSON to answer a phone call or the app (urgent offer, voice proof, family-check callback) are never
+ * shrunk below DEMO_HUMAN_WAIT_SECONDS (default 90 s) by DEMO_TIMER_SCALE: a real phone takes ~10 s to ring and ~15 s
+ * to answer. Scale 1 (production) keeps the full base duration; the floor never exceeds the base.
+ */
+export function humanWaitSeconds(
+  baseMinutes: number,
+  scale: number,
+  env: Record<string, string | undefined> = process.env,
+): number {
+  const base = scaleDurationSeconds(baseMinutes, 1);
+  const scaled = scaleDurationSeconds(baseMinutes, scale);
+  if (scaled >= base) return base;
+  const raw = Number(env.DEMO_HUMAN_WAIT_SECONDS ?? '90');
+  const floor = Number.isFinite(raw) && raw >= 0 ? raw : 90;
+  return Math.max(scaled, Math.min(base, Math.round(floor)));
+}
+
 export function scaleDurationMs(baseMs: number, scale: number): number {
   const safeScale = Number.isFinite(scale) && scale > 0 ? scale : 1;
   return Math.max(1000, Math.round(baseMs / safeScale));

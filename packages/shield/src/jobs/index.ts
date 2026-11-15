@@ -2,6 +2,7 @@ export {
   handleShieldToolJob,
   isShieldJobName,
   timerScale,
+  humanDelay,
   scaleDelay,
   familyCheckJobPayload,
   jobKey,

@@ -230,10 +230,10 @@ describe("AGY-X1 I2: Fresh proof of life (word challenge, Saaras STT, freshness 
     const { challenge } = (await createRes.json()) as {
       challenge: { id: string; ttl_seconds: number };
     };
-    expect(challenge.ttl_seconds).toBe(10); // 60s scaled by DEMO_TIMER_SCALE=6
+    expect(challenge.ttl_seconds).toBe(60); // human floor: a person must answer, never shrunk below min(base, 90 s)
 
-    // Advance 11 seconds past scaled TTL with no answer from Riya
-    h.core2.advanceMs(11_000);
+    // Advance past the 60 s TTL (human floor) with no answer from Riya
+    h.core2.advanceMs(61_000);
 
     const maaGetReq = await buildSignedMaaRequest({
       url: "http://localhost/api/core2/maa-proof",
