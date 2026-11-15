@@ -69,7 +69,9 @@ export function createSarvamStartHandler(
     const supplied = callerKeys.filter(key => Object.hasOwn(body, key));
     let hash: string | null = null;
     if (supplied.length) {
-      const numbers = supplied.map(key => body[key]);
+      // Indian telephony often sends the caller as 0XXXXXXXXXX (seen live from the Lava keypad) or bare 10 digits;
+      // contacts are bound as E.164 (91XXXXXXXXXX), so normalise before validating and hashing.
+      const numbers = supplied.map(key => normaliseIndianCaller(body[key]));
       if (numbers.some(value => typeof value !== "string" || !/^\+?[1-9][0-9]{9,14}$/.test(value))) {
         return Response.json({ error: "invalid_request" }, { status: 400 });
       }
@@ -99,4 +101,13 @@ export function createSarvamStartHandler(
       }, { headers: { "Cache-Control": "no-store" } });
     } catch { return Response.json({ error: "context_unavailable" }, { status: 503 }); }
   };
+}
+
+/** "0XXXXXXXXXX" / "XXXXXXXXXX" (Indian mobile/landline, spaces or dashes allowed) -> "91XXXXXXXXXX"; anything else unchanged. */
+export function normaliseIndianCaller(value: unknown): unknown {
+  if (typeof value !== "string") return value;
+  const compact = value.trim().replace(/[\s()-]/g, "");
+  if (/^0[1-9][0-9]{9}$/.test(compact)) return `91${compact.slice(1)}`;
+  if (/^[6-9][0-9]{9}$/.test(compact)) return `91${compact}`;
+  return compact;
 }

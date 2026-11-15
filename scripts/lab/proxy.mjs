@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { appendFileSync } from "node:fs";
 // Zero-dependency path proxy for the joined lab (scripts/lab/lab-up2.sh). Node built-ins only.
 //
 //   door mode     owns the public port (3100 behind the cloudflared tunnel, 3200 when testing) and forwards by path:
@@ -235,7 +236,18 @@ export function createProxy({ rules, targets, fallback, webDir, log = () => {} }
       setHost: false,
     });
     upstream.setTimeout(120_000, () => upstream.destroy(new Error("upstream_timeout")));
+    // Lab-only tap (LAB_TAP_FILE): Sarvam hook/tool bodies + replies, long digit runs masked to the last 4.
+    const tapFile = process.env.LAB_TAP_FILE;
+    const tapOn = Boolean(tapFile) && /sarvam|truth-line/.test(pathname);
+    const tapMask = (t) => t.replace(/\d{6,}/g, (d) => "#".repeat(d.length - 4) + d.slice(-4)).slice(0, 4000);
+    const tapReq = [];
+    if (tapOn) req.on("data", (c) => tapReq.push(c));
     upstream.on("response", (up) => {
+      if (tapOn) {
+        const tapRes = [];
+        up.on("data", (c) => tapRes.push(c));
+        up.on("end", () => { try { appendFileSync(tapFile, `${new Date().toISOString()} ${req.method} ${pathname.replace(/[^/]{24,}/g, "<secret>")} -> ${up.statusCode}\n  req ${tapMask(Buffer.concat(tapReq).toString("utf8"))}\n  res ${tapMask(Buffer.concat(tapRes).toString("utf8"))}\n`); } catch {} });
+      }
       res.writeHead(up.statusCode ?? 502, up.statusMessage, responseHeaders(up.rawHeaders));
       up.pipe(res);
       up.on("end", () => done(up.statusCode, rule.to));
