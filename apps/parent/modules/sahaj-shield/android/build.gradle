@@ -40,6 +40,8 @@ android {
   defaultConfig {
     versionCode 1
     versionName "0.1.0"
+    // R8 keep rules for the app's release build (WorkManager's Room database + Shield classes).
+    consumerProguardFiles 'consumer-rules.pro'
   }
   sourceSets {
     main {
