@@ -102,6 +102,8 @@ export async function sendAppPushTokens(params: {
     const messages = uniqueTokens.map((to) => ({
       to,
       sound: 'default',
+      // Red pushes go to the Riya app's alarm channel (apps/child/lib/shield-alarm.ts RED_CHANNEL).
+      ...(params.message.data.level === 'red' ? { channelId: 'shield-red-v2', priority: 'high' } : {}),
       title,
       body,
       data: params.message.data,

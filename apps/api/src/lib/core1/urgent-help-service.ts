@@ -374,6 +374,8 @@ async function notifyRiyaPush(
       data: {
         kind: 'urgent_help',
         stage: params.stage,
+        // Maa still needs someone: ring Riya's loud red-alarm channel (shield-red-v2), not a normal notification.
+        ...(params.stage === 'offered' || params.stage === 'escalated' ? { level: 'red' } : {}),
         incidentId: params.incidentId,
         ...(params.assignmentId ? { assignmentId: params.assignmentId } : {}),
       },
