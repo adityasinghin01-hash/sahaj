@@ -15,7 +15,8 @@ import type { Core1ServicePorts, FamilyMembership } from '../types';
 import { createCommandPorts, type CommandDeps } from './commands';
 import type { ToolContext, ToolName, ToolResult } from './handler';
 import { maskDigits } from '../../../../../../packages/shield/src/tools/mask';
-import { applySarvamResponderDecision, createProductionUrgentHelpDeps, type UrgentHelpServiceDeps } from '../urgent-help-service';
+import { applySarvamResponderDecision, createProductionUrgentHelpDeps, dispatchUrgentCallAndPushForIncident, DEFAULT_OFFER_TIMEOUT_MINUTES, type UrgentHelpServiceDeps } from '../urgent-help-service';
+import { humanWaitSeconds, parseDemoTimerScale } from '../push-notify';
 
 type Database = ReturnType<typeof serviceDatabase>;
 type Sql = ReturnType<typeof getDbPools>['auxSql'];
@@ -124,7 +125,30 @@ export function createProductionSarvamDeps(env: Record<string, string | undefine
     async urgentCommand(ctx, input, key) {
       const ports = await trustedCommandPorts(db, ctx);
       const result = await executeCore1Command(commandRequest(ctx, { subjectPersonId: ctx.parentId, severity: input.severity, action: 'initiate' }, `sarvam-urgent:${key}`), ports, 'urgent_help');
-      return { status: result.status };
+      // Keypad "madad" must start the SAME responder chain as Maa's SOS button (offer + Sarvam responder call + Riya push),
+      // not only queue a command. A replayed tool call, or an incident already open for Maa, never opens a second chain.
+      let responderName: string | undefined;
+      if (!result.deduped) {
+        const open = (await sql`select id from public.incidents where family_id=${ctx.familyId} and person_id=${ctx.parentId}
+          and state not in ('done','closed','resolved','cancelled') and created_at > now() - interval '30 minutes' limit 1`)[0];
+        if (!open) {
+          const deps = urgentDeps();
+          const severity = (['routine', 'urgent', 'critical'].includes(String(input.severity)) ? input.severity : 'urgent') as 'routine' | 'urgent' | 'critical';
+          const created = await deps.store.createUrgentIncidentOfferScaled({
+            familyId: ctx.familyId, subjectPersonId: ctx.parentId, severity,
+            offerTimeoutSeconds: humanWaitSeconds(DEFAULT_OFFER_TIMEOUT_MINUTES, parseDemoTimerScale(env), env),
+          });
+          await dispatchUrgentCallAndPushForIncident(deps, {
+            familyId: ctx.familyId, incidentId: created.incidentId, subjectPersonId: ctx.parentId, severity,
+            assignmentId: created.assignmentId, responderPersonId: created.responderPersonId, state: created.state,
+          });
+          if (created.responderPersonId) {
+            const row = (await sql`select display_name from public.people where family_id=${ctx.familyId} and id=${created.responderPersonId}`)[0];
+            if (row?.display_name) responderName = String(row.display_name);
+          }
+        }
+      }
+      return { status: result.status, ...(responderName ? { responder_name: responderName } : {}) };
     },
     async openIncident(ctx) {
       const incident = (await sql`select i.state,i.promised_at,p.display_name from public.incidents i

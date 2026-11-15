@@ -127,7 +127,10 @@ const CHILD_LINES: Record<string, string> = {
 };
 function spoken(tool: ToolName, result: ToolResult): string {
   switch (tool) {
-    case 'raise_urgent': return 'Main abhi Sharma uncle ko bula rahi hoon';
+    case 'raise_urgent': {
+      const name = result.responder_name ? maskDigits(result.responder_name).slice(0, 60) : '';
+      return name ? `Main abhi ${name} ko bula rahi hoon. Riya ko bhi bata diya hai.` : 'Main abhi parivar ko bula rahi hoon. Riya ko bhi bata diya hai.';
+    }
     case 'child_scam_check': return REAL_NEWS_LINE;
     case 'child_status': return CHILD_LINES[result.status ?? ''] ?? 'Riya ka haal pooch rahe hain. Khabar milte hi bataayenge.';
     case 'check_status':
