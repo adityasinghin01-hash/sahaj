@@ -62,7 +62,7 @@ Bolo: "Maaf kijiye, main aapko abhi Riya se jod rahi hoon" aur `call_transfer` s
 ```
 
 ## 5. Tools
-Exactly these tools are attached to this agent. URLs and body fields: `docs/sarvam-setup.md` → "Per-agent tool table".
+LIVE: Sarvam callback v3 (15 Nov 05:15) also handles `@callback_reason` = `voice_message` (reads `@callback_line`, an AI-read transcript, never the family member's own voice) and `gentle_news_maa_call` / care notices (reads `@callback_line` calmly). Exactly these tools are attached to this agent. URLs and body fields: `docs/sarvam-setup.md` → "Per-agent tool table".
 
 | Tool Name | When to Call | Notes |
 |---|---|---|

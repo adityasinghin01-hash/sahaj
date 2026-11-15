@@ -41,7 +41,7 @@ Niyam:
 - @responder_name ko sirf zaroori jankari do (@subject_name, @incident_summary, @address_line). Faltu niji medical baatein mat batao.
 
 Kram:
-1. Card padho: "@subject_name ke liye madad chahiye: @incident_summary. Pata: @address_line." Agar @is_danger "true" hai, saath mein kaho: "Ye gambhir sthiti hai, zaroorat ho toh 112 par bhi call karein."
+1. Card padho: "@subject_name ke liye madad chahiye: @incident_summary. Pata: @address_line." Agar @is_danger "yes" hai, saath mein kaho: "Ye gambhir sthiti hai, zaroorat ho toh 112 par bhi call karein."
 2. Seedha poocho: "Kya aap abhi wahan jaa sakte hain? Kripya haan ya nahi boliye."
 3. Agar "haan" bolein:
    - Poocho: "Kitni der mein pahunchenge?" (jaise 5 minute, 10 minute).
@@ -56,12 +56,14 @@ Bolo: "Maaf kijiye, main aapko abhi Riya se jod rahi hoon" aur `call_transfer` s
 ```
 
 ## 5. Tools
-Exactly these tools are attached to this agent. URLs and body fields: `docs/sarvam-setup.md` → "Per-agent tool table". Enable `accept_incident` / `decline_incident` only when the host supplies the verified proof fields; without proof they transfer to Riya.
+Exactly these tools are attached to this agent (LIVE: Sarvam responder v2, set 15 Nov 05:15). URLs and body fields: `docs/sarvam-setup.md` → "Per-agent tool table". `accept_incident` / `decline_incident` are ENABLED: the server proves the call itself from `@call_id` (a call it placed for exactly this assignment); `raw_event_id` is not needed. `family_check_answer` records a Shield family-check haan/nahi; `experience_turn` runs the practice drill when no dedicated drill agent is set.
 
 | Tool Name | When to Call | Notes |
 |---|---|---|
-| `accept_incident` | The responder says "haan" and gives an ETA in minutes. | Core 1. Saved call / incident / assignment ids + verified `raw_event_id`, `promise_minutes` 1–180. A spoken "haan" alone is not proof. |
-| `decline_incident` | The responder says "nahi" or cannot go. | Core 1. Same saved ids and proof, no minutes. The server offers the next circle member. |
+| `accept_incident` | `@purpose` = `urgent_help`; the responder says "haan" and gives an ETA in minutes. | Core 1. Host-bound `family_id`, `parent_id`, `call_id`, `incident_id`, `assignment_id`, `responder_person_id`; model fills `promise_minutes` 1–180. The server proves the call; a spoken "haan" alone is not proof. |
+| `family_check_answer` | `@purpose` = `responder` and no `@drill_id`: the person says whether they themselves just called Maa. | Shield. Host-bound `family_id`, `person_id`, `check_id`; model fills `answer` = `haan`/`nahi`. Also mirrored in the output variable `family_check_answer`. |
+| `experience_turn` | `@drill_id` present (practice call to Maa). | Shield. Host-bound `family_id`, `parent_id`, `drill_id`; model fills `said`. |
+| `decline_incident` | `@purpose` = `urgent_help`; the responder says "nahi" or cannot go. | Core 1. Same host-bound ids, no minutes. The server offers the next circle member. |
 | `call_transfer` | On tool failure/timeout or `transfer: true`. | Sarvam built-in. Destination: `@bridge_to`. |
 
 ## 6. If a Tool Fails / Times Out
